@@ -4,6 +4,9 @@ import { notFound } from 'next/navigation'
 import { SiteShell } from '@/components/site-shell'
 import { JobFeed } from '@/components/job-feed'
 import { JobFilters } from '@/components/job-filters'
+import { EmptyState } from '@/components/empty-state'
+import { TrustStrip } from '@/components/trust-strip'
+import { FAQ } from '@/components/faq'
 import {
   countJobs,
   getCategories,
@@ -39,12 +42,13 @@ export async function generateMetadata({
   if (!cat) return {}
   const region = regionLabel(country)
   const title = `${cat.title} jobs in ${region}`
-  const description = `Remote ${cat.title.toLowerCase()} roles open to candidates in ${region}. Verified listings from companies hiring globally.`
+  const description = `Reviewed remote ${cat.title.toLowerCase()} roles open to candidates in ${region}. Direct apply, no fees.`
   return {
     title,
     description,
     alternates: { canonical: `/jobs/${category}/${country}` },
     openGraph: { title, description, type: 'website' },
+    twitter: { card: 'summary', title, description },
   }
 }
 
@@ -53,7 +57,11 @@ export default async function CategoryCountryPage({
   searchParams,
 }: {
   params: Promise<Params>
-  searchParams: Promise<{ employment_type?: string; remote?: string; africa?: string }>
+  searchParams: Promise<{
+    employment_type?: string
+    remote?: string
+    africa?: string
+  }>
 }) {
   const [{ category, country }, sp] = await Promise.all([params, searchParams])
   const cat = await getCategory(category)
@@ -76,12 +84,27 @@ export default async function CategoryCountryPage({
   ])
 
   const region = regionLabel(country)
-  const relatedCategories = allCategories.filter((c) => c.slug !== category).slice(0, 6)
+  const relatedCategories = allCategories
+    .filter((c) => c.slug !== category)
+    .slice(0, 6)
+
+  // Smart suggestions for the empty state.
+  const emptySuggestions = [
+    { label: `All remote ${cat.title.toLowerCase()} jobs`, href: `/jobs/${category}/worldwide` },
+    { label: 'Roles open to Africa', href: '/jobs?africa=1' },
+    ...relatedCategories.slice(0, 2).map((rc) => ({
+      label: `Remote ${rc.title.toLowerCase()}`,
+      href: `/jobs/${rc.slug}/worldwide`,
+    })),
+  ]
 
   return (
     <SiteShell>
-      <div className="mx-auto max-w-6xl px-4 pt-10 sm:px-6">
-        <nav className="text-xs text-muted-foreground" aria-label="Breadcrumb">
+      <div className="mx-auto max-w-6xl px-4 pt-8 sm:px-6 sm:pt-10">
+        <nav
+          className="text-xs text-muted-foreground"
+          aria-label="Breadcrumb"
+        >
           <Link href="/jobs" className="hover:text-foreground">
             All jobs
           </Link>
@@ -92,14 +115,28 @@ export default async function CategoryCountryPage({
         </nav>
 
         <header className="mt-4 max-w-2xl">
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+          <h1 className="text-balance text-2xl font-semibold tracking-tight sm:text-3xl">
             {cat.title} jobs in {region}
           </h1>
-          <p className="mt-3 text-sm text-muted-foreground">
-            {total} active {cat.title.toLowerCase()} role{total === 1 ? '' : 's'} hiring remote in {region}.
+          <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+            {total > 0 ? (
+              <>
+                {total} active {cat.title.toLowerCase()} role
+                {total === 1 ? '' : 's'} hiring remote in {region}.
+              </>
+            ) : (
+              <>
+                We&apos;re tracking {cat.title.toLowerCase()} hiring globally.
+                New roles are added throughout the week.
+              </>
+            )}
             {cat.description ? ` ${cat.description}` : null}
           </p>
         </header>
+
+        <div className="mt-5">
+          <TrustStrip />
+        </div>
 
         <div className="mt-6 flex items-center justify-between gap-3">
           <p className="text-sm text-muted-foreground">
@@ -110,12 +147,11 @@ export default async function CategoryCountryPage({
 
         <div className="mt-4">
           {jobs.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border/70 p-10 text-center">
-              <h2 className="text-base font-medium">No active roles right now</h2>
-              <p className="mt-2 text-sm text-muted-foreground">
-                New roles are posted regularly. Try a related category below or check back soon.
-              </p>
-            </div>
+            <EmptyState
+              title={`No ${cat.title.toLowerCase()} roles open in ${region} right now.`}
+              body="New roles are added throughout the week. Try a wider region or a related category below."
+              suggestions={emptySuggestions}
+            />
           ) : (
             <JobFeed jobs={jobs} />
           )}
@@ -145,7 +181,9 @@ export default async function CategoryCountryPage({
         )}
 
         <section className="mt-10 border-t border-border/60 pt-6">
-          <h2 className="text-sm font-medium text-muted-foreground">Related categories</h2>
+          <h2 className="text-sm font-medium text-muted-foreground">
+            Related categories
+          </h2>
           <ul className="mt-3 flex flex-wrap gap-1.5">
             {relatedCategories.map((c) => (
               <li key={c.slug}>
@@ -160,21 +198,34 @@ export default async function CategoryCountryPage({
           </ul>
         </section>
 
-        <section className="mt-10 mb-12 border-t border-border/60 pt-6">
-          <h2 className="text-base font-semibold tracking-tight">
+        <section className="mt-12 border-t border-border/60 pt-8">
+          <h2 className="text-balance text-lg font-semibold tracking-tight sm:text-xl">
             About {cat.title.toLowerCase()} roles on Nexa
           </h2>
-          <div className="mt-3 space-y-3 text-sm text-muted-foreground">
+          <div className="mt-4 max-w-3xl space-y-4 text-[15px] leading-relaxed text-muted-foreground">
             <p>
-              Nexa surfaces verified {cat.title.toLowerCase()} roles from companies that genuinely hire remote talent across {region}.
-              Every listing is reviewed before it goes live.
+              Nexa surfaces reviewed {cat.title.toLowerCase()} roles from
+              companies that genuinely hire remote talent across {region}. Every
+              listing is checked before it goes live, and closed roles are
+              removed automatically.
             </p>
             <p>
-              Salary ranges are shown in USD where available so you can compare offers across regions.
-              Most companies on Nexa pay in USD or EUR and are open to candidates working from Africa.
+              Pay ranges are shown in USD where available, so you can compare
+              offers across regions. Most companies on Nexa pay in USD or EUR
+              and review applicants directly without intermediaries.
+            </p>
+            <p>
+              You apply on the company site. Nexa never charges candidates and
+              does not partner with recruiters who do.
             </p>
           </div>
         </section>
+
+        <div className="mt-12 border-t border-border/60 pt-10">
+          <FAQ />
+        </div>
+
+        <div className="h-14" />
       </div>
     </SiteShell>
   )

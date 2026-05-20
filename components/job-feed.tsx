@@ -1,12 +1,27 @@
 import { JobCard } from '@/components/job-card'
+import { EmptyState } from '@/components/empty-state'
 import type { Job } from '@/lib/types'
 
-export function JobFeed({ jobs }: { jobs: Job[] }) {
+export function JobFeed({
+  jobs,
+  empty,
+}: {
+  jobs: Job[]
+  empty?: React.ReactNode
+}) {
   if (jobs.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed border-border/70 p-10 text-center">
-        <p className="text-sm text-muted-foreground">No roles match this view yet.</p>
-      </div>
+      empty ?? (
+        <EmptyState
+          title="No roles match this view yet."
+          body="New roles are added regularly. Try a broader search or browse a related category."
+          suggestions={[
+            { label: 'All remote jobs', href: '/jobs' },
+            { label: 'Open to Africa', href: '/jobs?africa=1' },
+            { label: 'Remote engineering', href: '/jobs/engineering/worldwide' },
+          ]}
+        />
+      )
     )
   }
 

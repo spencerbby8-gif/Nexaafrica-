@@ -3,6 +3,8 @@ import Link from 'next/link'
 import { SiteShell } from '@/components/site-shell'
 import { JobFeed } from '@/components/job-feed'
 import { JobFilters } from '@/components/job-filters'
+import { EmptyState } from '@/components/empty-state'
+import { TrustStrip } from '@/components/trust-strip'
 import { getCategories, getJobs } from '@/lib/queries'
 import type { EmploymentType } from '@/lib/types'
 
@@ -11,7 +13,7 @@ export const revalidate = 120
 export const metadata: Metadata = {
   title: 'Remote jobs',
   description:
-    'Browse verified remote roles open to African talent. Engineering, design, product, marketing and more.',
+    'Reviewed remote roles open to African talent. Engineering, design, product, marketing, support and more.',
   alternates: { canonical: '/jobs' },
 }
 
@@ -41,15 +43,29 @@ export default async function JobsPage({
     getCategories(),
   ])
 
+  const hasFilters = Boolean(
+    sp.q || sp.category || sp.employment_type || sp.remote || sp.africa,
+  )
+
   return (
     <SiteShell>
-      <div className="mx-auto max-w-6xl px-4 pt-10 sm:px-6">
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Remote jobs</h1>
-        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Verified roles from companies hiring globally. Filter by category to narrow your search.
+      <div className="mx-auto max-w-6xl px-4 pt-8 sm:px-6 sm:pt-10">
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+          Remote jobs
+        </h1>
+        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+          Reviewed roles from companies hiring remote. Filter by category, type,
+          or eligibility.
         </p>
 
-        <nav aria-label="Categories" className="mt-6 flex flex-wrap gap-1.5">
+        <div className="mt-4">
+          <TrustStrip />
+        </div>
+
+        <nav
+          aria-label="Categories"
+          className="mt-6 flex flex-wrap gap-1.5 border-t border-border/60 pt-6"
+        >
           {categories.map((c) => (
             <Link
               key={c.slug}
@@ -69,8 +85,33 @@ export default async function JobsPage({
           <JobFilters categories={categories} />
         </div>
 
-        <div className="mt-4">
-          <JobFeed jobs={jobs} />
+        <div className="mt-4 pb-14">
+          <JobFeed
+            jobs={jobs}
+            empty={
+              <EmptyState
+                title={
+                  hasFilters
+                    ? 'No roles match these filters right now.'
+                    : 'No roles are live right now.'
+                }
+                body={
+                  hasFilters
+                    ? 'Try widening your search. New roles are added throughout the week.'
+                    : 'New roles are added regularly. Check back soon, or browse a category below.'
+                }
+                suggestions={[
+                  { label: 'All remote jobs', href: '/jobs' },
+                  { label: 'Open to Africa', href: '/jobs?africa=1' },
+                  {
+                    label: 'Remote engineering',
+                    href: '/jobs/engineering/worldwide',
+                  },
+                  { label: 'Remote design', href: '/jobs/design/worldwide' },
+                ]}
+              />
+            }
+          />
         </div>
       </div>
     </SiteShell>

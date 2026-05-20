@@ -1,20 +1,27 @@
 import Link from 'next/link'
 import { Search } from 'lucide-react'
+import { TrustStrip } from '@/components/trust-strip'
 import type { Category } from '@/lib/types'
 
-export function Hero({ categories }: { categories: Category[] }) {
+export function Hero({
+  categories,
+  jobCount,
+}: {
+  categories: Category[]
+  jobCount?: number
+}) {
   return (
     <section className="relative">
-      <div className="mx-auto max-w-4xl px-4 pt-14 pb-10 sm:px-6 sm:pt-20 sm:pb-14">
+      <div className="mx-auto max-w-4xl px-4 pb-10 pt-12 sm:px-6 sm:pb-14 sm:pt-20">
         <p className="text-xs font-medium uppercase tracking-[0.18em] text-accent">
-          Now in private beta
+          Remote work, made legible
         </p>
-        <h1 className="mt-4 text-balance text-4xl font-semibold tracking-tight sm:text-5xl md:text-6xl">
-          Remote work for African talent.
+        <h1 className="mt-4 text-balance text-4xl font-semibold tracking-tight sm:text-5xl md:text-[56px] md:leading-[1.05]">
+          Real remote jobs for African talent.
         </h1>
-        <p className="mt-5 max-w-2xl text-pretty text-base text-muted-foreground sm:text-lg">
-          Nexa lists verified remote roles from companies that hire globally. No
-          spam listings, no fake recruiters, no guesswork on pay.
+        <p className="mt-5 max-w-2xl text-pretty text-base leading-relaxed text-muted-foreground sm:text-lg">
+          Nexa lists reviewed remote roles from companies that hire globally. No
+          fake listings, no recruiter spam, no fees to apply.
         </p>
 
         <form
@@ -42,7 +49,7 @@ export function Hero({ categories }: { categories: Category[] }) {
           </button>
         </form>
 
-        <div className="mt-6 flex flex-wrap gap-2">
+        <div className="mt-5 flex flex-wrap gap-1.5">
           {categories.slice(0, 6).map((c) => (
             <Link
               key={c.slug}
@@ -52,6 +59,19 @@ export function Hero({ categories }: { categories: Category[] }) {
               {c.title}
             </Link>
           ))}
+        </div>
+
+        <div className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-2">
+          <TrustStrip />
+          {typeof jobCount === 'number' && jobCount > 0 && (
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-accent"
+                aria-hidden
+              />
+              {jobCount} active role{jobCount === 1 ? '' : 's'} this week
+            </span>
+          )}
         </div>
       </div>
     </section>

@@ -2,7 +2,11 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { SiteShell } from '@/components/site-shell'
 import { JobFeed } from '@/components/job-feed'
-import { categories, jobs } from '@/lib/data'
+import { JobFilters } from '@/components/job-filters'
+import { getCategories, getJobs } from '@/lib/queries'
+import type { EmploymentType } from '@/lib/types'
+
+export const revalidate = 120
 
 export const metadata: Metadata = {
   title: 'Remote jobs',
@@ -11,21 +15,31 @@ export const metadata: Metadata = {
   alternates: { canonical: '/jobs' },
 }
 
+type SearchParams = {
+  q?: string
+  category?: string
+  employment_type?: string
+  remote?: string
+  africa?: string
+}
+
 export default async function JobsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string }>
+  searchParams: Promise<SearchParams>
 }) {
-  const { q } = await searchParams
-  const query = (q ?? '').trim().toLowerCase()
-  const filtered = query
-    ? jobs.filter(
-        (j) =>
-          j.title.toLowerCase().includes(query) ||
-          j.company.toLowerCase().includes(query) ||
-          j.tags.some((t) => t.toLowerCase().includes(query)),
-      )
-    : jobs
+  const sp = await searchParams
+  const [jobs, categories] = await Promise.all([
+    getJobs({
+      q: sp.q?.trim() || undefined,
+      category: sp.category || undefined,
+      employmentType: (sp.employment_type as EmploymentType) || undefined,
+      remoteOnly: sp.remote === '1',
+      openToAfrica: sp.africa === '1',
+      limit: 100,
+    }),
+    getCategories(),
+  ])
 
   return (
     <SiteShell>
@@ -42,18 +56,21 @@ export default async function JobsPage({
               href={`/jobs/${c.slug}/worldwide`}
               className="rounded-md border border-border/70 bg-secondary px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-foreground/30 hover:text-foreground"
             >
-              {c.label}
+              {c.title}
             </Link>
           ))}
         </nav>
 
-        <div className="mt-8">
-          {query && (
-            <p className="mb-4 text-sm text-muted-foreground">
-              {filtered.length} result{filtered.length === 1 ? '' : 's'} for &ldquo;{q}&rdquo;
-            </p>
-          )}
-          <JobFeed jobs={filtered} />
+        <div className="mt-6 flex items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">
+            {jobs.length} role{jobs.length === 1 ? '' : 's'}
+            {sp.q ? <> for &ldquo;{sp.q}&rdquo;</> : null}
+          </p>
+          <JobFilters categories={categories} />
+        </div>
+
+        <div className="mt-4">
+          <JobFeed jobs={jobs} />
         </div>
       </div>
     </SiteShell>

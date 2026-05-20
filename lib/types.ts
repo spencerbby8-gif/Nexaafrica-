@@ -1,38 +1,46 @@
-export type JobCategory =
-  | 'engineering'
-  | 'design'
-  | 'product'
-  | 'marketing'
-  | 'sales'
-  | 'support'
-  | 'data'
-  | 'operations'
-
-export type Currency = 'USD' | 'EUR' | 'GBP'
+export type EmploymentType = 'full_time' | 'part_time' | 'contract' | 'internship'
 
 export interface Job {
   id: string
   slug: string
   title: string
   company: string
-  companyLogo?: string
-  category: JobCategory
-  country: string // hiring region or "Worldwide"
-  location: string
-  remote: boolean
-  salaryMin?: number
-  salaryMax?: number
-  currency?: Currency
-  postedAt: string // ISO
-  preview: string
-  description: string // markdown
+  company_logo: string | null
+  description_md: string
+  apply_url: string
+  category: string
+  location: string | null
+  country: string
+  salary_range: string | null
+  employment_type: EmploymentType
   tags: string[]
-  verified: boolean
-  applyUrl?: string
+  is_remote: boolean
+  is_open_to_africa: boolean
+  created_at: string
+  expires_at: string | null
 }
 
 export interface Category {
-  slug: JobCategory
-  label: string
-  description: string
+  slug: string
+  title: string
+  description: string | null
+}
+
+export interface Company {
+  id: string
+  name: string
+  logo: string | null
+  website: string | null
+  description: string | null
+  verified: boolean
+}
+
+export interface JobFilters {
+  category?: string
+  country?: string
+  remoteOnly?: boolean
+  openToAfrica?: boolean
+  employmentType?: EmploymentType
+  q?: string
+  limit?: number
 }

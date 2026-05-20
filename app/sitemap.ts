@@ -1,9 +1,16 @@
 import type { MetadataRoute } from 'next'
-import { categories, jobs } from '@/lib/data'
+import { getCategories, getJobs } from '@/lib/queries'
 
-export default function sitemap(): MetadataRoute.Sitemap {
+export const revalidate = 600
+
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const base = 'https://nexa.africa'
   const now = new Date()
+
+  const [categories, jobs] = await Promise.all([
+    getCategories(),
+    getJobs({ limit: 500 }),
+  ])
 
   const staticUrls: MetadataRoute.Sitemap = [
     { url: `${base}/`, lastModified: now, changeFrequency: 'daily', priority: 1 },
@@ -19,7 +26,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
 
   const roleUrls: MetadataRoute.Sitemap = jobs.map((j) => ({
     url: `${base}/role/${j.slug}`,
-    lastModified: new Date(j.postedAt),
+    lastModified: new Date(j.created_at),
     changeFrequency: 'weekly',
     priority: 0.6,
   }))

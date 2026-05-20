@@ -1,11 +1,18 @@
 import Link from 'next/link'
 import { TrustBadge } from '@/components/trust-badge'
-import { formatSalary, relativeTime } from '@/lib/format'
+import { relativeTime } from '@/lib/format'
 import type { Job } from '@/lib/types'
 
-export function JobCard({ job }: { job: Job }) {
-  const salary = formatSalary(job.salaryMin, job.salaryMax, job.currency)
+function firstParagraph(md: string): string {
+  const block = md
+    .split(/\n{2,}/)
+    .map((b) => b.trim())
+    .find((b) => b && !b.startsWith('#') && !b.startsWith('-'))
+  if (!block) return ''
+  return block.length > 180 ? block.slice(0, 180).trimEnd() + '…' : block
+}
 
+export function JobCard({ job }: { job: Job }) {
   return (
     <Link
       href={`/role/${job.slug}`}
@@ -18,20 +25,22 @@ export function JobCard({ job }: { job: Job }) {
               {job.title}
             </h3>
             <p className="mt-0.5 truncate text-sm text-muted-foreground">
-              {job.company} · {job.location}
+              {job.company} · {job.location ?? job.country}
             </p>
           </div>
           <span className="shrink-0 text-xs text-muted-foreground">
-            {relativeTime(job.postedAt)}
+            {relativeTime(job.created_at)}
           </span>
         </div>
 
-        <p className="line-clamp-2 text-sm text-muted-foreground">{job.preview}</p>
+        <p className="line-clamp-2 text-sm text-muted-foreground">
+          {firstParagraph(job.description_md)}
+        </p>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          {job.verified && <TrustBadge variant="verified" />}
-          {job.remote && <TrustBadge variant="remote" />}
-          {salary && <TrustBadge variant="usd" label={salary} />}
+          {job.is_remote && <TrustBadge variant="remote" />}
+          {job.salary_range && <TrustBadge variant="usd" label={job.salary_range} />}
+          {job.is_open_to_africa && <TrustBadge variant="verified" label="Open to Africa" />}
         </div>
       </article>
     </Link>

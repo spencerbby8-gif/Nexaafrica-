@@ -2,16 +2,19 @@ import Link from 'next/link'
 import { SiteShell } from '@/components/site-shell'
 import { Hero } from '@/components/hero'
 import { JobFeed } from '@/components/job-feed'
-import { jobs } from '@/lib/data'
+import { getCategories, getJobs } from '@/lib/queries'
 
-export default function HomePage() {
-  const recent = [...jobs]
-    .sort((a, b) => +new Date(b.postedAt) - +new Date(a.postedAt))
-    .slice(0, 4)
+export const revalidate = 300
+
+export default async function HomePage() {
+  const [recent, categories] = await Promise.all([
+    getJobs({ limit: 4 }),
+    getCategories(),
+  ])
 
   return (
     <SiteShell>
-      <Hero />
+      <Hero categories={categories} />
 
       <section className="mx-auto max-w-6xl px-4 sm:px-6">
         <div className="flex items-end justify-between border-b border-border/60 pb-4">

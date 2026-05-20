@@ -1,8 +1,8 @@
 import Link from 'next/link'
 import { Search } from 'lucide-react'
-import { categories } from '@/lib/data'
+import type { Category } from '@/lib/types'
 
-export function Hero() {
+export function Hero({ categories }: { categories: Category[] }) {
   return (
     <section className="relative">
       <div className="mx-auto max-w-4xl px-4 pt-14 pb-10 sm:px-6 sm:pt-20 sm:pb-14">
@@ -49,7 +49,7 @@ export function Hero() {
               href={`/jobs/${c.slug}/worldwide`}
               className="rounded-md border border-border/70 bg-secondary px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-foreground/30 hover:text-foreground"
             >
-              {c.label}
+              {c.title}
             </Link>
           ))}
         </div>

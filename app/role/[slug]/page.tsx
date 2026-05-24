@@ -3,8 +3,11 @@ import { notFound } from 'next/navigation'
 import { SiteShell } from '@/components/site-shell'
 import { JobDetailLayout } from '@/components/job-detail-layout'
 import { getJobBySlug, getRelatedJobs } from '@/lib/queries'
+import { createClient } from '@/lib/supabase/server'
 
-export const revalidate = 600
+// Per-user apply state needs request cookies, so this route renders dynamically.
+// Job data is short-lived enough that this is fine for SEO; metadata stays cacheable.
+export const dynamic = 'force-dynamic'
 
 type Params = { slug: string }
 
@@ -55,6 +58,21 @@ export default async function RolePage({ params }: { params: Promise<Params> }) 
   const related = await getRelatedJobs(job, 4)
   const description = firstParagraph(job.description_md)
 
+  // Determine apply gate state.
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  let applyState: 'anon' | 'authed-incomplete' | 'authed-complete' = 'anon'
+  if (user) {
+    const { data: prof } = await supabase
+      .from('profiles')
+      .select('status')
+      .eq('id', user.id)
+      .maybeSingle()
+    applyState = prof?.status === 'ready' ? 'authed-complete' : 'authed-incomplete'
+  }
+
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'JobPosting',
@@ -83,7 +101,7 @@ export default async function RolePage({ params }: { params: Promise<Params> }) 
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
-      <JobDetailLayout job={job} related={related} />
+      <JobDetailLayout job={job} related={related} applyState={applyState} />
     </SiteShell>
   )
 }

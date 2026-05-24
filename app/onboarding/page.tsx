@@ -1,51 +1,57 @@
-import type { Metadata } from 'next'
-import { SiteShell } from '@/components/site-shell'
-import { Button } from '@/components/ui/button'
+import { redirect } from "next/navigation"
+import { createClient } from "@/lib/supabase/server"
+import { getCurrentProfile } from "@/lib/profile/queries"
+import { CvUpload } from "@/components/cv-upload"
+import { SiteShell } from "@/components/site-shell"
 
-export const metadata: Metadata = {
-  title: 'Get started',
-  description: 'Set up your Nexa profile in a few steps.',
+export const dynamic = "force-dynamic"
+
+export const metadata = {
+  title: "Set up your profile",
+  description: "Upload your CV. Nexa will format it for global remote applications.",
   robots: { index: false, follow: false },
 }
 
-const steps = [
-  { n: '01', title: 'Tell us about you', body: 'Name, country, and the roles you want.' },
-  { n: '02', title: 'Add your CV', body: 'Upload a PDF or paste a link to your portfolio.' },
-  { n: '03', title: 'Set preferences', body: 'Salary range, time zones, and availability.' },
-]
+export default async function OnboardingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string }>
+}) {
+  const { next } = await searchParams
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
 
-export default function OnboardingPage() {
+  if (!user) {
+    const target = `/onboarding${next ? `?next=${encodeURIComponent(next)}` : ""}`
+    redirect(`/sign-in?next=${encodeURIComponent(target)}`)
+  }
+
+  const { profile } = await getCurrentProfile()
+  if (profile?.status === "ready") {
+    redirect(next && next.startsWith("/") ? next : "/profile")
+  }
+
   return (
     <SiteShell>
-      <div className="mx-auto max-w-2xl px-4 pt-12 sm:px-6">
-        <p className="text-xs font-medium uppercase tracking-[0.18em] text-accent">Onboarding</p>
-        <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
-          Set up your profile
-        </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Three short steps. You can edit anything later.
-        </p>
-
-        <ol className="mt-10 space-y-3">
-          {steps.map((s) => (
-            <li
-              key={s.n}
-              className="flex items-start gap-4 rounded-lg border border-border/70 bg-card p-5"
-            >
-              <span className="font-mono text-xs text-muted-foreground">{s.n}</span>
-              <div className="min-w-0">
-                <h2 className="text-sm font-medium">{s.title}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">{s.body}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
-
-        <div className="mt-8 flex gap-2">
-          <Button>Begin</Button>
-          <Button variant="ghost">Skip for now</Button>
+      <main className="mx-auto w-full max-w-xl px-4 py-10 md:py-16">
+        <div className="mb-8">
+          <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            Onboarding
+          </p>
+          <h1 className="mt-3 text-balance text-2xl font-semibold tracking-tight md:text-3xl">
+            Upload your CV
+          </h1>
+          <p className="mt-3 text-pretty leading-relaxed text-muted-foreground">
+            Nexa formats your CV into a clean profile for remote employers. We remove personal
+            fields that aren&apos;t relevant for global hiring and standardize your titles and
+            skills. You can edit anything before saving.
+          </p>
         </div>
-      </div>
+
+        <CvUpload next={next} />
+      </main>
     </SiteShell>
   )
 }

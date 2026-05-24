@@ -32,8 +32,9 @@ export async function updateSession(request: NextRequest) {
 
   if (isProtected && !user) {
     const redirectUrl = request.nextUrl.clone()
-    redirectUrl.pathname = '/'
-    redirectUrl.searchParams.set('signin', '1')
+    redirectUrl.pathname = '/sign-in'
+    redirectUrl.search = ''
+    redirectUrl.searchParams.set('next', pathname + request.nextUrl.search)
     return NextResponse.redirect(redirectUrl)
   }
 

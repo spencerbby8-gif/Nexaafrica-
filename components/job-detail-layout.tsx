@@ -1,9 +1,9 @@
 import Link from 'next/link'
 import { Building2, Clock, Globe, MapPin } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { TrustBadge } from '@/components/trust-badge'
 import { JobCard } from '@/components/job-card'
 import { CompanyAvatar } from '@/components/company-avatar'
+import { ApplyButton } from '@/components/apply-button'
 import { employmentLabel, postedLabel } from '@/lib/format'
 import type { Job } from '@/lib/types'
 
@@ -134,9 +134,11 @@ function countrySlug(country: string): string {
 export function JobDetailLayout({
   job,
   related,
+  applyState = 'anon',
 }: {
   job: Job
   related: Job[]
+  applyState?: 'anon' | 'authed-incomplete' | 'authed-complete'
 }) {
   const employment = employmentLabel(job.employment_type)
 
@@ -199,11 +201,12 @@ export function JobDetailLayout({
         </div>
 
         <div className="hidden md:block">
-          <Button asChild className="h-10">
-            <a href={job.apply_url} target="_blank" rel="noreferrer">
-              Apply on company site
-            </a>
-          </Button>
+          <ApplyButton
+            applyUrl={job.apply_url}
+            jobSlug={job.slug}
+            state={applyState}
+            className="h-10"
+          />
           <p className="mt-2 text-xs text-muted-foreground">
             No payment required to apply. Nexa never asks for fees.
           </p>
@@ -293,11 +296,15 @@ export function JobDetailLayout({
         role="region"
         aria-label="Apply"
       >
-        <Button asChild className="h-11 w-full text-base">
-          <a href={job.apply_url} target="_blank" rel="noreferrer">
-            Apply for this role
-          </a>
-        </Button>
+        <ApplyButton
+          applyUrl={job.apply_url}
+          jobSlug={job.slug}
+          state={applyState}
+          className="h-11 w-full text-base"
+          fullWidth
+        >
+          Apply for this role
+        </ApplyButton>
         <p className="mt-1.5 text-center text-[11px] text-muted-foreground">
           Free to apply. You go directly to {job.company}.
         </p>

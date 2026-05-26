@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button"
 import { UploadCloud, FileText, RefreshCw, AlertCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-const MAX_BYTES = 8 * 1024 * 1024 // 8MB
+// Match the server limit (4 MB). Vercel serverless caps request bodies near 4.5 MB,
+// so anything larger is dropped at the platform layer and shows up as "Failed to fetch".
+const MAX_BYTES = 4 * 1024 * 1024 // 4 MB
 
 type Status = "idle" | "uploading" | "parsing" | "success" | "error"
 
@@ -35,7 +37,7 @@ export function CvUpload({ next }: Props) {
       return "Please upload a PDF file."
     }
     if (f.size > MAX_BYTES) {
-      return "File is too large. Maximum size is 8MB."
+      return "File is too large. Maximum size is 4MB."
     }
     if (f.size < 1024) {
       return "This file looks empty. Try another PDF."
@@ -84,16 +86,35 @@ export function CvUpload({ next }: Props) {
       setStatus("parsing")
       const stop = startStepRotation()
 
-      const res = await fetch("/api/profile/cv", {
-        method: "POST",
-        body: fd,
-      })
+      let res: Response
+      try {
+        res = await fetch("/api/profile/cv", {
+          method: "POST",
+          body: fd,
+        })
+      } catch (networkErr) {
+        // Browser-level failure: lost connection, body rejected by platform, etc.
+        stop()
+        throw new Error(
+          networkErr instanceof Error && networkErr.message
+            ? `Network error: ${networkErr.message}. Check your connection and try again.`
+            : "Network error. Check your connection and try again.",
+        )
+      }
 
       stop()
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
-        throw new Error(body?.error ?? "We couldn't process this CV. Please try again.")
+        const fallback =
+          res.status === 413
+            ? "This file is too large. Please upload a smaller PDF (under 4MB)."
+            : res.status === 429
+              ? "Too many uploads in a short period. Please wait a moment and try again."
+              : res.status === 401
+                ? "Your session expired. Please sign in again."
+                : "We couldn't process this CV. Please try again."
+        throw new Error(body?.error ?? fallback)
       }
 
       setStatus("success")
@@ -146,7 +167,7 @@ export function CvUpload({ next }: Props) {
         <p className="mt-4 text-sm font-medium">
           {file ? "Selected file" : "Drop your CV here, or tap to choose"}
         </p>
-        <p className="mt-1 text-xs text-muted-foreground">PDF only. Up to 8MB.</p>
+        <p className="mt-1 text-xs text-muted-foreground">PDF only. Up to 4MB.</p>
         <input
           ref={inputRef}
           id="cv-input"

@@ -38,8 +38,8 @@ export function DebugConnectivity() {
     }
   }
 
-  async function runUpload() {
-    const label = "upload POST"
+  async function runUpload(target: "/api/debug-upload" | "/api/debug-upload-minimal") {
+    const label = target === "/api/debug-upload-minimal" ? "minimal upload POST" : "upload POST"
     const file = fileRef.current?.files?.[0]
     if (!file) {
       setResult({ kind: "error", label, message: "Choose a PDF file first.", ms: 0 })
@@ -51,7 +51,7 @@ export function DebugConnectivity() {
     try {
       const fd = new FormData()
       fd.append("file", file)
-      const res = await fetch("/api/debug-upload", {
+      const res = await fetch(target, {
         method: "POST",
         credentials: "same-origin",
         headers: { Accept: "application/json" },
@@ -117,12 +117,23 @@ export function DebugConnectivity() {
           type="button"
           size="sm"
           variant="outline"
-          onClick={runUpload}
+          onClick={() => runUpload("/api/debug-upload-minimal")}
+          disabled={result.kind === "loading"}
+        >
+          {result.kind === "loading" && result.label === "minimal upload POST"
+            ? "Testing…"
+            : "Test Minimal Upload Route"}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => runUpload("/api/debug-upload")}
           disabled={result.kind === "loading"}
         >
           {result.kind === "loading" && result.label === "upload POST"
             ? "Uploading…"
-            : "Test File Upload"}
+            : "Test File Upload (parses)"}
         </Button>
       </div>
 

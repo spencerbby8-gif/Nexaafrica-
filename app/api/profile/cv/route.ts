@@ -242,14 +242,45 @@ export async function POST(req: Request) {
     })
 
     // ---- 11. Persist profile -------------------------------------------
+    logStep(reqId, "profile_save_start", {
+      userId,
+      skills: parsed.skills.length,
+      experience: parsed.experience.length,
+    })
     try {
-      const { saveParsedProfile } = await import("@/lib/profile/queries")
-      await saveParsedProfile(userId, parsed, supabase)
+      const { saveParsedProfile, PersistenceError } = await import("@/lib/profile/queries")
+      try {
+        await saveParsedProfile(userId, parsed, supabase)
+      } catch (e) {
+        if (e instanceof PersistenceError) {
+          // Log the real Postgrest error with table + code so we can diagnose.
+          logStep(reqId, `${e.table}_save_fail`, {
+            userId,
+            table: e.table,
+            code: e.code ?? null,
+            details: e.details ?? null,
+            hint: e.hint ?? null,
+            err: e.message,
+          })
+          // Surface a precise, user-readable reason while keeping it short.
+          const friendly =
+            e.code === "23505"
+              ? `Duplicate value while saving ${e.table}.`
+              : e.code === "23503"
+                ? `Reference error while saving ${e.table}.`
+                : e.code === "42501" || e.code === "PGRST301"
+                  ? `Permission denied while saving ${e.table}. Please sign out and sign back in.`
+                  : `Could not save ${e.table.replace("_", " ")}: ${e.message}`
+          throw new Error(friendly)
+        }
+        logStep(reqId, "profile_save_fail", { userId, err: errMsg(e) })
+        throw e
+      }
     } catch (e) {
-      logStep(reqId, "persist_failed", { userId, err: errMsg(e) })
-      throw new Error("We could not save your profile. Please try again.")
+      // Re-throw to outer catch which writes status=failed and returns JSON 500.
+      throw e
     }
-    logStep(reqId, "persist_ok", { userId })
+    logStep(reqId, "profile_save_success", { userId })
 
     // ---- 12. Side metadata (non-fatal) ---------------------------------
     if (cvPath) {
@@ -277,7 +308,13 @@ export async function POST(req: Request) {
       { onConflict: "profile_id" },
     )
     if (aiMeta.error) {
-      logStep(reqId, "ai_meta_upsert_failed_nonfatal", { userId, err: aiMeta.error.message })
+      logStep(reqId, "metadata_save_fail", {
+        userId,
+        table: "profile_ai_metadata",
+        code: aiMeta.error.code ?? null,
+        details: aiMeta.error.details ?? null,
+        err: aiMeta.error.message,
+      })
     }
 
     logStep(reqId, "response_sent", { userId, totalMs: Date.now() - t0 })

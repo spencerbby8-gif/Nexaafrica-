@@ -1,5 +1,5 @@
 import "server-only"
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient, PostgrestError } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/server"
 import type { ParsedProfile, ProfileExperience, ProfileRecord } from "./types"
 
@@ -34,11 +34,63 @@ export async function getCurrentProfile(): Promise<{
 }
 
 /**
+ * Persistence error tagged with the table that failed and the underlying
+ * Supabase / Postgrest error so the route can log it and surface it cleanly.
+ */
+export class PersistenceError extends Error {
+  table: "profiles" | "profile_skills" | "profile_experience" | "profile_ai_metadata"
+  cause?: PostgrestError | unknown
+  code?: string
+  details?: string
+  hint?: string
+
+  constructor(
+    table: PersistenceError["table"],
+    message: string,
+    cause?: PostgrestError | unknown,
+  ) {
+    super(message)
+    this.name = "PersistenceError"
+    this.table = table
+    this.cause = cause
+    if (cause && typeof cause === "object") {
+      const c = cause as Partial<PostgrestError>
+      this.code = c.code
+      this.details = c.details
+      this.hint = c.hint
+    }
+  }
+}
+
+function asString(v: unknown, fallback = ""): string {
+  if (typeof v === "string") return v
+  if (v == null) return fallback
+  try {
+    return String(v)
+  } catch {
+    return fallback
+  }
+}
+
+function asNullableString(v: unknown): string | null {
+  if (v == null) return null
+  if (typeof v === "string") return v.trim() === "" ? null : v
+  try {
+    const s = String(v)
+    return s.trim() === "" ? null : s
+  } catch {
+    return null
+  }
+}
+
+/**
  * Replace a user's parsed profile in a single flow.
  * Skills and experience are wiped and re-inserted to keep the data clean.
  *
  * Accepts an optional pre-built supabase client so a single API request can
  * reuse one client across all writes (no repeat cookies()/createClient() work).
+ *
+ * Throws PersistenceError tagged with the failing table on any DB error.
  */
 export async function saveParsedProfile(
   userId: string,
@@ -47,9 +99,15 @@ export async function saveParsedProfile(
 ) {
   const supabase = client ?? (await createClient())
 
+  // Defensive coercion — Gemini can omit fields or return null for sparse CVs.
+  const headline = asString(parsed?.headline).slice(0, 160)
+  const summary = asString(parsed?.summary).slice(0, 1200)
+  const skillsArr = Array.isArray(parsed?.skills) ? parsed.skills : []
+  const experienceArr = Array.isArray(parsed?.experience) ? parsed.experience : []
+
   const updates = {
-    headline: parsed.headline.slice(0, 160),
-    summary: parsed.summary.slice(0, 1200),
+    headline,
+    summary,
     status: "ready" as const,
     completed_at: new Date().toISOString(),
   }
@@ -58,32 +116,90 @@ export async function saveParsedProfile(
     .from("profiles")
     .update(updates)
     .eq("id", userId)
-  if (profileErr) throw profileErr
+  if (profileErr) {
+    throw new PersistenceError(
+      "profiles",
+      profileErr.message || "Failed to update profile",
+      profileErr,
+    )
+  }
 
-  await supabase.from("profile_skills").delete().eq("profile_id", userId)
-  if (parsed.skills.length > 0) {
-    const skillRows = Array.from(new Set(parsed.skills.map((s) => s.trim()).filter(Boolean)))
+  // ----- skills ----------------------------------------------------------
+  const delSkills = await supabase.from("profile_skills").delete().eq("profile_id", userId)
+  if (delSkills.error) {
+    throw new PersistenceError(
+      "profile_skills",
+      `Failed to clear skills: ${delSkills.error.message}`,
+      delSkills.error,
+    )
+  }
+
+  if (skillsArr.length > 0) {
+    const skillRows = Array.from(
+      new Set(
+        skillsArr
+          .map((s) => asString(s).trim())
+          .filter((s) => s.length > 0 && s.length <= 80),
+      ),
+    )
       .slice(0, 30)
       .map((name) => ({ profile_id: userId, name }))
+
     if (skillRows.length > 0) {
       const { error } = await supabase.from("profile_skills").insert(skillRows)
-      if (error) throw error
+      if (error) {
+        throw new PersistenceError(
+          "profile_skills",
+          `Failed to save skills: ${error.message}`,
+          error,
+        )
+      }
     }
   }
 
-  await supabase.from("profile_experience").delete().eq("profile_id", userId)
-  if (parsed.experience.length > 0) {
-    const expRows = parsed.experience.slice(0, 12).map((e, i) => ({
-      profile_id: userId,
-      title: e.title.slice(0, 160),
-      company: e.company.slice(0, 160),
-      start_date: e.start_date?.slice(0, 32) ?? null,
-      end_date: e.end_date?.slice(0, 32) ?? null,
-      description: e.description?.slice(0, 1500) ?? null,
-      position: i,
-    }))
-    const { error } = await supabase.from("profile_experience").insert(expRows)
-    if (error) throw error
+  // ----- experience ------------------------------------------------------
+  const delExp = await supabase
+    .from("profile_experience")
+    .delete()
+    .eq("profile_id", userId)
+  if (delExp.error) {
+    throw new PersistenceError(
+      "profile_experience",
+      `Failed to clear experience: ${delExp.error.message}`,
+      delExp.error,
+    )
+  }
+
+  if (experienceArr.length > 0) {
+    const expRows = experienceArr
+      .map((e, i) => {
+        const title = asString(e?.title).trim().slice(0, 160)
+        const company = asString(e?.company).trim().slice(0, 160)
+        // Schema requires title and company NOT NULL — drop rows missing either.
+        if (!title || !company) return null
+        return {
+          profile_id: userId,
+          title,
+          company,
+          start_date: asNullableString(e?.start_date)?.slice(0, 32) ?? null,
+          end_date: asNullableString(e?.end_date)?.slice(0, 32) ?? null,
+          description: asNullableString(e?.description)?.slice(0, 1500) ?? null,
+          position: i,
+        }
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+      .slice(0, 12)
+
+    if (expRows.length > 0) {
+      const { error } = await supabase.from("profile_experience").insert(expRows)
+      if (error) {
+        throw new PersistenceError(
+          "profile_experience",
+          `Failed to save experience: ${error.message}`,
+          error,
+        )
+      }
+    }
   }
 }
 
@@ -94,9 +210,17 @@ export async function markProfileStatus(
   client?: SupabaseClient,
 ) {
   const supabase = client ?? (await createClient())
-  await supabase.from("profiles").update({ status }).eq("id", userId)
+  const { error } = await supabase.from("profiles").update({ status }).eq("id", userId)
+  if (error) {
+    // Non-fatal here — caller decides what to do.
+    throw new PersistenceError(
+      "profiles",
+      `Failed to set status=${status}: ${error.message}`,
+      error,
+    )
+  }
   if (status === "failed" && errorMsg) {
-    await supabase
+    const { error: metaErr } = await supabase
       .from("profile_ai_metadata")
       .upsert(
         {
@@ -106,5 +230,12 @@ export async function markProfileStatus(
         },
         { onConflict: "profile_id" },
       )
+    if (metaErr) {
+      throw new PersistenceError(
+        "profile_ai_metadata",
+        `Failed to record error metadata: ${metaErr.message}`,
+        metaErr,
+      )
+    }
   }
 }

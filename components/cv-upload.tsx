@@ -91,21 +91,36 @@ export function CvUpload({ next }: Props) {
         res = await fetch("/api/profile/cv", {
           method: "POST",
           body: fd,
+          // Send/receive cookies normally; explicit for clarity.
+          credentials: "same-origin",
+          headers: {
+            // Hint to the server we want a JSON response on errors.
+            Accept: "application/json",
+          },
         })
       } catch (networkErr) {
         // Browser-level failure: lost connection, body rejected by platform, etc.
         stop()
-        throw new Error(
+        const detail =
           networkErr instanceof Error && networkErr.message
-            ? `Network error: ${networkErr.message}. Check your connection and try again.`
-            : "Network error. Check your connection and try again.",
-        )
+            ? networkErr.message
+            : "Lost connection while uploading."
+        throw new Error(`${detail} Check your connection and try again.`)
       }
 
       stop()
 
+      // Always try to parse JSON. If the server returned HTML (e.g. a platform
+      // 413/502), fall back to a status-aware message so the user sees something
+      // useful instead of a torn fetch.
+      let body: { error?: string; reqId?: string } = {}
+      try {
+        body = (await res.json()) as { error?: string; reqId?: string }
+      } catch {
+        body = {}
+      }
+
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
         const fallback =
           res.status === 413
             ? "This file is too large. Please upload a smaller PDF (under 4MB)."
@@ -113,7 +128,9 @@ export function CvUpload({ next }: Props) {
               ? "Too many uploads in a short period. Please wait a moment and try again."
               : res.status === 401
                 ? "Your session expired. Please sign in again."
-                : "We couldn't process this CV. Please try again."
+                : res.status === 503
+                  ? "CV parsing is temporarily unavailable. Please try again shortly."
+                  : "We couldn't process this CV. Please try again."
         throw new Error(body?.error ?? fallback)
       }
 

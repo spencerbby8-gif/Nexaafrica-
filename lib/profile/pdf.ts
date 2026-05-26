@@ -1,21 +1,37 @@
 import "server-only"
 
 /**
- * Extract text from a PDF buffer using `unpdf` — a pure-JS, serverless-friendly
- * wrapper around pdf.js. Works on Vercel Node runtime with no native deps,
- * no worker setup, and no font files required.
+ * Extract text from a PDF buffer using `unpdf` — pure-JS, serverless-friendly.
+ *
+ * Both the import and the work are wrapped in a timeout so the API route
+ * can never hang past Vercel's `maxDuration`. If extraction is slow or fails,
+ * we always throw a JSON-friendly Error instead of letting the connection die.
  */
-export async function extractPdfText(buffer: Buffer): Promise<string> {
-  // Lazy import keeps the module out of the cold-start path for non-CV routes.
-  const { extractText } = await import("unpdf")
-
-  // unpdf accepts a Uint8Array. Buffer is one, but we pass an explicit view
-  // so we don't accidentally hand over a shared underlying ArrayBuffer.
+export async function extractPdfText(buffer: Buffer, timeoutMs = 25_000): Promise<string> {
   const data = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
 
-  const result = await extractText(data, { mergePages: true })
-  const text = Array.isArray(result.text) ? result.text.join("\n") : (result.text ?? "")
-  return cleanText(text)
+  const work = (async () => {
+    // Lazy import so a build/bundling problem with unpdf can't crash the
+    // serverless function at module init.
+    const { extractText } = await import("unpdf")
+    const result = await extractText(data, { mergePages: true })
+    const text = Array.isArray(result.text) ? result.text.join("\n") : (result.text ?? "")
+    return cleanText(text)
+  })()
+
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`PDF extraction timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    )
+  })
+
+  try {
+    return await Promise.race([work, timeout])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 export function cleanText(input: string): string {

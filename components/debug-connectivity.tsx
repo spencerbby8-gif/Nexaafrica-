@@ -38,8 +38,15 @@ export function DebugConnectivity() {
     }
   }
 
-  async function runUpload(target: "/api/debug-upload" | "/api/debug-upload-minimal") {
-    const label = target === "/api/debug-upload-minimal" ? "minimal upload POST" : "upload POST"
+  async function runUpload(
+    target: "/api/debug-upload" | "/api/debug-upload-minimal" | "/api/debug-pdf-extract",
+  ) {
+    const label =
+      target === "/api/debug-upload-minimal"
+        ? "minimal upload POST"
+        : target === "/api/debug-pdf-extract"
+          ? "pdf extract POST"
+          : "upload POST"
     const file = fileRef.current?.files?.[0]
     if (!file) {
       setResult({ kind: "error", label, message: "Choose a PDF file first.", ms: 0 })
@@ -179,6 +186,17 @@ export function DebugConnectivity() {
           {result.kind === "loading" && result.label === "upload POST"
             ? "Uploading…"
             : "Test File Upload (parses)"}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => runUpload("/api/debug-pdf-extract")}
+          disabled={result.kind === "loading"}
+        >
+          {result.kind === "loading" && result.label === "pdf extract POST"
+            ? "Extracting…"
+            : "Test PDF Extraction"}
         </Button>
       </div>
 

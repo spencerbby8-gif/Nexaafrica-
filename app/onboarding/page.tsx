@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server"
 import { getCurrentProfile } from "@/lib/profile/queries"
 import { CvUpload } from "@/components/cv-upload"
 import { SiteShell } from "@/components/site-shell"
+import { DebugConnectivity } from "@/components/debug-connectivity"
 
 export const dynamic = "force-dynamic"
 
@@ -51,6 +52,8 @@ export default async function OnboardingPage({
         </div>
 
         <CvUpload next={next} />
+
+        <DebugConnectivity />
       </main>
     </SiteShell>
   )

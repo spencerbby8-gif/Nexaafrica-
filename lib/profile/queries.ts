@@ -105,21 +105,29 @@ export async function saveParsedProfile(
   const skillsArr = Array.isArray(parsed?.skills) ? parsed.skills : []
   const experienceArr = Array.isArray(parsed?.experience) ? parsed.experience : []
 
-  const updates = {
-    headline,
-    summary,
-    status: "ready" as const,
-    completed_at: new Date().toISOString(),
-  }
+  console.log("[v0][persist][skills] type=", Array.isArray(parsed?.skills) ? "array" : typeof parsed?.skills, "len=", skillsArr.length, "sample=", skillsArr.slice(0, 5))
 
+  // Upsert (not update) so the profiles row is guaranteed to exist before
+  // any child rows are inserted. Users created before the handle_new_user
+  // trigger was installed will not have a profiles row yet, which causes
+  // FK violations (Postgres 23503 / "Reference error") on profile_skills
+  // and profile_experience inserts.
   const { error: profileErr } = await supabase
     .from("profiles")
-    .update(updates)
-    .eq("id", userId)
+    .upsert(
+      {
+        id: userId,
+        headline,
+        summary,
+        status: "ready" as const,
+        completed_at: new Date().toISOString(),
+      },
+      { onConflict: "id" },
+    )
   if (profileErr) {
     throw new PersistenceError(
       "profiles",
-      profileErr.message || "Failed to update profile",
+      profileErr.message || "Failed to upsert profile",
       profileErr,
     )
   }
@@ -146,6 +154,7 @@ export async function saveParsedProfile(
       .map((name) => ({ profile_id: userId, name }))
 
     if (skillRows.length > 0) {
+      console.log("[v0][persist][skills] insert count=", skillRows.length, "preview=", skillRows.slice(0, 3))
       const { error } = await supabase.from("profile_skills").insert(skillRows)
       if (error) {
         throw new PersistenceError(

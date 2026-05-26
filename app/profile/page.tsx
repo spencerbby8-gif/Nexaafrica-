@@ -23,16 +23,25 @@ export default async function ProfilePage() {
     return (
       <SiteShell>
         <div className="mx-auto max-w-2xl px-4 py-12 sm:px-6">
-          <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">Your profile</h1>
+          <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            Your profile
+          </p>
+          <h1 className="mt-3 text-balance text-2xl font-semibold tracking-tight md:text-3xl">
+            Build your remote-ready profile
+          </h1>
           <p className="mt-3 text-pretty leading-relaxed text-muted-foreground">
-            You haven&apos;t set up a profile yet. Upload your CV and Nexa will format it for remote
-            applications. You can edit anything before saving.
+            Upload your CV and Nexa will format it for global remote applications. We standardize
+            titles, organize your experience, and remove local fields that aren&apos;t relevant for
+            international hiring. You can review and edit everything before sharing.
           </p>
           <div className="mt-6">
             <Button asChild>
               <Link href="/onboarding">Upload CV</Link>
             </Button>
           </div>
+          <p className="mt-4 text-xs text-muted-foreground">
+            Formatted for global remote hiring · Recruiter-ready structure
+          </p>
         </div>
       </SiteShell>
     )
@@ -45,7 +54,9 @@ export default async function ProfilePage() {
           <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full border border-border">
             <span className="h-2 w-2 animate-pulse rounded-full bg-accent" aria-hidden />
           </div>
-          <h1 className="mt-4 text-xl font-semibold tracking-tight">Preparing your profile</h1>
+          <h1 className="mt-4 text-xl font-semibold tracking-tight">
+            Preparing your remote-ready profile
+          </h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Refresh in a moment. This usually takes about 15 seconds.
           </p>
@@ -58,10 +69,12 @@ export default async function ProfilePage() {
     return (
       <SiteShell>
         <div className="mx-auto max-w-2xl px-4 py-12 sm:px-6">
-          <h1 className="text-2xl font-semibold tracking-tight">We couldn&apos;t process your CV</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            We couldn&apos;t format your CV this time
+          </h1>
           <p className="mt-3 text-pretty leading-relaxed text-muted-foreground">
-            Something went wrong while reading your CV. You can try again with a different file, or
-            fill in your profile manually.
+            Something went wrong while reading your CV. Try again with a different file, or set up
+            your profile manually.
           </p>
           <div className="mt-6 flex gap-2">
             <Button asChild>

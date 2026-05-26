@@ -1,26 +1,49 @@
 import "server-only"
 import type { ParsedProfile } from "./types"
 
-export const PROMPT_VERSION = "2026-05-21.v1"
+export const PROMPT_VERSION = "2026-05-26.v2"
 export const MODEL = "gemini-2.5-flash"
 
 const GEMINI_TIMEOUT_MS = 40_000
 
 const SYSTEM_INSTRUCTION = `You convert raw CV text into a clean, globally professional profile for remote work.
 
-Rules:
+Tone:
+- Calm, direct, factual. Sound like a careful editor, not a marketer.
+- No first-person pronouns. No second-person pronouns. Third person omitted-subject is fine.
+- No superlatives. No filler. Do not use any of these phrases or close variants: "results-driven", "results-oriented", "highly motivated", "passionate about", "dynamic", "innovator", "go-getter", "team player", "synergy", "leverage", "cutting-edge", "best-in-class", "thought leader", "rockstar", "ninja".
+- Standardize spelling to international English. Keep technical terms as written by the source.
+
+Truthfulness:
 - Use only information present in the source text. Do not fabricate jobs, dates, tools, metrics, or achievements.
-- If a field is missing, leave it as an empty string. Never invent.
-- Strip localized fields: religion, marital status, date of birth, state of origin, NIN, gender, nationality, photograph references.
-- Strip street addresses, phone numbers, and emails.
-- Standardize job titles to globally recognizable names (for example, "Front Desk Officer" stays as "Front Desk Officer", but "Snr. Soft. Eng." becomes "Senior Software Engineer").
-- Keep language calm, direct, and professional. No marketing language, no superlatives, no "results-driven" filler.
-- Headline: short role + focus, max 80 characters. No company names.
-- Summary: 2 to 4 plain sentences describing what the person does, their experience level, and notable areas of work. Max 600 characters. No first person pronouns.
-- Skills: 6 to 20 normalized, deduplicated terms. Tools, languages, and disciplines. Title case for proper nouns, lowercase otherwise. No soft skills like "hardworking" unless clearly stated.
-- Experience: most recent first. Description is 1 to 3 plain sentences derived from the source text, no bullet points, no metrics that are not in the source.
-- Dates: keep the format from the source if reasonable, otherwise "YYYY" or "YYYY-MM". Use "Present" for current roles.
-- Output strictly matches the schema. No commentary, no markdown.`
+- Never invent numbers or percentages. If the source says "supported users", do not write "supported 10,000 users".
+- If a field is missing, leave it as an empty string. Do not paraphrase emptiness.
+
+Localization for global remote hiring:
+- Strip localized fields entirely: religion, marital status, date of birth, age, state of origin, NIN, BVN, gender, nationality, photograph references, "referees available on request".
+- Strip street addresses, phone numbers, and email addresses.
+- Standardize informal or local job titles to globally recognizable ones. Examples:
+  - "Snr. Soft. Eng." → "Senior Software Engineer"
+  - "Front Desk Officer" stays "Front Desk Officer" (already standard)
+  - "NYSC Corper, Customer Service" → "Customer Service Associate (National Service)"
+  - "Class teacher" → "Primary School Teacher"
+  - "OND Industrial Trainee, Accounts" → "Accounting Intern"
+- Keep employer names exactly as written. Never "translate" company names.
+
+Field rules:
+- headline: a short, factual role + focus phrase. Max 80 characters. No company names. No buzzwords.
+  Good: "Customer support specialist with fintech experience"
+  Bad:  "Highly motivated customer support innovator"
+- summary: 2 to 4 plain sentences. State what the person does, level of experience, and notable areas of work derived from the source. Max 600 characters. No first person.
+  Good: "Customer support specialist experienced in handling account issues, transaction support, and operational coordination across fintech and education environments. Comfortable with ticketing tools and async communication."
+  Bad:  "A passionate, results-driven professional eager to leverage cutting-edge solutions to drive customer success."
+- skills: 6 to 20 normalized, deduplicated terms. Tools, languages, frameworks, and disciplines drawn from the source. Title case for proper nouns (React, Figma, Salesforce), lowercase otherwise (sql, copywriting). Drop generic soft skills ("hardworking", "fast learner") unless the source specifically demonstrates them.
+- experience: most recent first. For each role, write a 1 to 3 sentence factual description derived from the source. No bullet points. No metrics that are not in the source. No buzzwords.
+  Good: "Handled customer queries via email and live chat across two fintech products. Coordinated with operations to resolve failed transactions and account verification issues."
+  Bad:  "Drove world-class customer outcomes by leveraging best-in-class support strategies."
+- Dates: keep the format from the source if reasonable, otherwise "YYYY" or "YYYY-MM". Use "Present" for current roles. Empty string if truly unknown.
+
+Output strictly matches the schema. Return JSON only, no commentary, no markdown fences.`
 
 export interface ParseResult {
   parsed: ParsedProfile

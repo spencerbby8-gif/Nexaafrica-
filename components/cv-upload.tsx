@@ -1,9 +1,18 @@
 "use client"
 
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { UploadCloud, FileText, RefreshCw, AlertCircle } from "lucide-react"
+import {
+  UploadCloud,
+  FileText,
+  RefreshCw,
+  AlertCircle,
+  Check,
+  ShieldCheck,
+  Globe2,
+  Sparkles,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 
 // Match the server limit (4 MB). Vercel serverless caps request bodies near 4.5 MB,
@@ -12,12 +21,19 @@ const MAX_BYTES = 4 * 1024 * 1024 // 4 MB
 
 type Status = "idle" | "uploading" | "parsing" | "success" | "error"
 
+// Each step is shown for ~3.5s, in order. The server call usually completes
+// somewhere around step 3, but the UI keeps moving forward steadily so users
+// never see a stalled "stuck on step 1" feeling.
 const PARSING_STEPS = [
-  "Reading your CV",
-  "Organizing experience",
-  "Standardizing skills",
-  "Preparing your profile",
+  { label: "Reading your CV", hint: "Extracting text and structure" },
+  { label: "Standardizing job titles", hint: "Aligning with global remote conventions" },
+  { label: "Organizing experience", hint: "Most recent first, clean descriptions" },
+  { label: "Normalizing skills", hint: "Tools, frameworks, and disciplines" },
+  { label: "Improving recruiter readability", hint: "Removing local fields and clutter" },
+  { label: "Preparing your remote-ready profile", hint: "Almost there" },
 ] as const
+
+const STEP_INTERVAL_MS = 3500
 
 type Props = {
   next?: string
@@ -31,6 +47,13 @@ export function CvUpload({ next }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [stepIndex, setStepIndex] = useState(0)
   const [dragActive, setDragActive] = useState(false)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current)
+    }
+  }, [])
 
   const validate = (f: File): string | null => {
     if (f.type !== "application/pdf" && !f.name.toLowerCase().endsWith(".pdf")) {
@@ -67,10 +90,17 @@ export function CvUpload({ next }: Props) {
 
   const startStepRotation = () => {
     setStepIndex(0)
-    const interval = setInterval(() => {
-      setStepIndex((i) => (i + 1) % PARSING_STEPS.length)
-    }, 1400)
-    return () => clearInterval(interval)
+    if (intervalRef.current) clearInterval(intervalRef.current)
+    intervalRef.current = setInterval(() => {
+      setStepIndex((i) => Math.min(i + 1, PARSING_STEPS.length - 1))
+    }, STEP_INTERVAL_MS)
+  }
+
+  const stopStepRotation = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
   }
 
   const submit = async () => {
@@ -84,23 +114,18 @@ export function CvUpload({ next }: Props) {
 
       // Move into parsing UI as soon as upload starts; the API call covers both.
       setStatus("parsing")
-      const stop = startStepRotation()
+      startStepRotation()
 
       let res: Response
       try {
         res = await fetch("/api/profile/cv", {
           method: "POST",
           body: fd,
-          // Send/receive cookies normally; explicit for clarity.
           credentials: "same-origin",
-          headers: {
-            // Hint to the server we want a JSON response on errors.
-            Accept: "application/json",
-          },
+          headers: { Accept: "application/json" },
         })
       } catch (networkErr) {
-        // Browser-level failure: lost connection, body rejected by platform, etc.
-        stop()
+        stopStepRotation()
         const detail =
           networkErr instanceof Error && networkErr.message
             ? networkErr.message
@@ -108,11 +133,8 @@ export function CvUpload({ next }: Props) {
         throw new Error(`${detail} Check your connection and try again.`)
       }
 
-      stop()
+      stopStepRotation()
 
-      // Always try to parse JSON. If the server returned HTML (e.g. a platform
-      // 413/502), fall back to a status-aware message so the user sees something
-      // useful instead of a torn fetch.
       let body: { error?: string; reqId?: string } = {}
       try {
         body = (await res.json()) as { error?: string; reqId?: string }
@@ -134,9 +156,9 @@ export function CvUpload({ next }: Props) {
         throw new Error(body?.error ?? fallback)
       }
 
+      // Land on a brief success/transformation moment before redirecting.
+      // Gives users a sense of completion and reinforces the value created.
       setStatus("success")
-      router.replace(next && next.startsWith("/") ? next : "/profile")
-      router.refresh()
     } catch (e) {
       setStatus("error")
       setError(e instanceof Error ? e.message : "Something went wrong. Please try again.")
@@ -150,14 +172,105 @@ export function CvUpload({ next }: Props) {
     if (inputRef.current) inputRef.current.value = ""
   }
 
+  const goToProfile = () => {
+    router.replace(next && next.startsWith("/") ? next : "/profile")
+    router.refresh()
+  }
+
   if (status === "parsing") {
+    const current = PARSING_STEPS[stepIndex]
+    const completed = stepIndex
     return (
-      <div className="rounded-xl border border-border bg-card p-8 text-center">
-        <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full border border-border">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-accent" aria-hidden />
+      <div className="rounded-xl border border-border bg-card p-6 sm:p-8">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background">
+            <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-medium leading-tight">{current.label}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{current.hint}</p>
+          </div>
         </div>
-        <p className="mt-4 text-base font-medium">{PARSING_STEPS[stepIndex]}</p>
-        <p className="mt-1 text-sm text-muted-foreground">This usually takes about 15 seconds.</p>
+
+        <ol className="mt-6 space-y-2">
+          {PARSING_STEPS.map((step, i) => {
+            const isDone = i < completed
+            const isActive = i === completed
+            return (
+              <li
+                key={step.label}
+                className={cn(
+                  "flex items-center gap-2.5 text-xs leading-relaxed transition-colors",
+                  isDone ? "text-foreground/80" : isActive ? "text-foreground" : "text-muted-foreground/60",
+                )}
+              >
+                <span
+                  aria-hidden
+                  className={cn(
+                    "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
+                    isDone
+                      ? "border-accent/40 bg-accent/15 text-accent"
+                      : isActive
+                        ? "border-foreground/30 bg-foreground/5"
+                        : "border-border",
+                  )}
+                >
+                  {isDone ? (
+                    <Check className="h-2.5 w-2.5" />
+                  ) : isActive ? (
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-foreground/60" />
+                  ) : null}
+                </span>
+                <span>{step.label}</span>
+              </li>
+            )
+          })}
+        </ol>
+
+        <p className="mt-6 border-t border-border/70 pt-4 text-xs text-muted-foreground">
+          Formatted for global remote hiring. This usually takes about 15 seconds.
+        </p>
+      </div>
+    )
+  }
+
+  if (status === "success") {
+    return (
+      <div className="rounded-xl border border-border bg-card p-6 sm:p-8">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-full border border-accent/40 bg-accent/15">
+            <Check className="h-4 w-4 text-accent" aria-hidden />
+          </div>
+          <div>
+            <p className="text-sm font-medium leading-tight">Your remote-ready profile is complete</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Built for global remote applications. Review and edit anything before sharing.
+            </p>
+          </div>
+        </div>
+
+        <ul className="mt-6 space-y-2.5 text-sm">
+          <li className="flex items-start gap-2.5">
+            <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/60" aria-hidden />
+            <span className="text-foreground/85">Job titles standardized for international recruiters</span>
+          </li>
+          <li className="flex items-start gap-2.5">
+            <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/60" aria-hidden />
+            <span className="text-foreground/85">
+              Local fields removed (age, nationality, address, photo)
+            </span>
+          </li>
+          <li className="flex items-start gap-2.5">
+            <Globe2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/60" aria-hidden />
+            <span className="text-foreground/85">Skills and experience structured for remote hiring</span>
+          </li>
+        </ul>
+
+        <div className="mt-6 flex flex-col gap-2 sm:flex-row">
+          <Button onClick={goToProfile} className="sm:flex-1">
+            View your profile
+          </Button>
+        </div>
       </div>
     )
   }

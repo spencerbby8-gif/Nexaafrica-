@@ -72,6 +72,37 @@ export function DebugConnectivity() {
     }
   }
 
+  async function runTextUpload() {
+    const label = "text upload POST"
+    setResult({ kind: "loading", label })
+    const started = performance.now()
+    try {
+      const fd = new FormData()
+      // Tiny in-memory text Blob — no file picker, no PDF, no native file API involved.
+      const blob = new Blob(["hello world"], { type: "text/plain" })
+      fd.append("file", blob, "hello.txt")
+
+      const res = await fetch("/api/debug-text-upload", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+        body: fd,
+      })
+      let body: unknown = null
+      try {
+        body = await res.json()
+      } catch {
+        body = { error: "Response was not valid JSON" }
+      }
+      const ms = Math.round(performance.now() - started)
+      setResult({ kind: "success", label, status: res.status, body, ms })
+    } catch (err) {
+      const ms = Math.round(performance.now() - started)
+      const message = err instanceof Error ? err.message : "Unknown fetch error"
+      setResult({ kind: "error", label, message, ms })
+    }
+  }
+
   return (
     <section className="mt-10 rounded-lg border border-border bg-card p-4">
       <h2 className="text-sm font-semibold tracking-tight">Diagnostics</h2>
@@ -103,6 +134,20 @@ export function DebugConnectivity() {
           {result.kind === "loading" && result.label === "connectivity POST"
             ? "Testing POST…"
             : "Test Backend Connection (POST)"}
+        </Button>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={runTextUpload}
+          disabled={result.kind === "loading"}
+        >
+          {result.kind === "loading" && result.label === "text upload POST"
+            ? "Testing…"
+            : "Test Text Upload"}
         </Button>
       </div>
 

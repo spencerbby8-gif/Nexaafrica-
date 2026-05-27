@@ -47,6 +47,14 @@ export default async function JobsPage({
     sp.q || sp.category || sp.employment_type || sp.remote || sp.africa,
   )
 
+  // Real, data-derived freshness signals. No fake metrics.
+  const now = Date.now()
+  const DAY = 24 * 60 * 60 * 1000
+  const addedToday = jobs.filter((j) => now - new Date(j.created_at).getTime() < DAY).length
+  const addedThisWeek = jobs.filter(
+    (j) => now - new Date(j.created_at).getTime() < 7 * DAY,
+  ).length
+
   return (
     <SiteShell>
       <div className="mx-auto max-w-6xl px-4 pt-8 sm:px-6 sm:pt-10">
@@ -77,11 +85,32 @@ export default async function JobsPage({
           ))}
         </nav>
 
-        <div className="mt-6 flex items-center justify-between gap-3">
-          <p className="text-sm text-muted-foreground">
-            {jobs.length} role{jobs.length === 1 ? '' : 's'}
-            {sp.q ? <> for &ldquo;{sp.q}&rdquo;</> : null}
-          </p>
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <p className="text-sm text-muted-foreground">
+              {jobs.length} role{jobs.length === 1 ? '' : 's'}
+              {sp.q ? <> for &ldquo;{sp.q}&rdquo;</> : null}
+            </p>
+            {jobs.length > 0 && (addedToday > 0 || addedThisWeek > 0) && (
+              <p className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground">
+                <span aria-hidden className="text-muted-foreground/40">{'\u00b7'}</span>
+                {addedToday > 0 ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span
+                      aria-hidden
+                      className="relative inline-flex h-1.5 w-1.5"
+                    >
+                      <span className="absolute inset-0 rounded-full bg-accent/40" />
+                      <span className="relative h-full w-full rounded-full bg-accent" />
+                    </span>
+                    {addedToday} added today
+                  </span>
+                ) : (
+                  <span>{addedThisWeek} added this week</span>
+                )}
+              </p>
+            )}
+          </div>
           <JobFilters categories={categories} />
         </div>
 

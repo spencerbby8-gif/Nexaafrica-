@@ -1,10 +1,10 @@
 import Link from 'next/link'
-import { Building2, Clock, Globe, MapPin } from 'lucide-react'
+import { Building2, Clock, Globe, MapPin, ShieldCheck } from 'lucide-react'
 import { TrustBadge } from '@/components/trust-badge'
 import { JobCard } from '@/components/job-card'
 import { CompanyAvatar } from '@/components/company-avatar'
 import { ApplyButton } from '@/components/apply-button'
-import { employmentLabel, postedLabel } from '@/lib/format'
+import { employmentLabel, isFresh, postedLabel } from '@/lib/format'
 import type { Job } from '@/lib/types'
 
 /**
@@ -141,6 +141,7 @@ export function JobDetailLayout({
   applyState?: 'anon' | 'authed-incomplete' | 'authed-complete'
 }) {
   const employment = employmentLabel(job.employment_type)
+  const fresh = isFresh(job.created_at, 7)
 
   return (
     <div className="mx-auto max-w-3xl px-4 pb-32 pt-6 sm:px-6 sm:pt-10 md:pb-16">
@@ -167,6 +168,35 @@ export function JobDetailLayout({
             <h1 className="mt-1 text-balance text-2xl font-semibold tracking-tight sm:text-[28px] sm:leading-tight">
               {job.title}
             </h1>
+            {/* Realness line — quiet, factual, derived from real fields. */}
+            <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-muted-foreground">
+              {fresh && (
+                <span className="inline-flex items-center gap-1.5 font-medium text-accent">
+                  <span
+                    aria-hidden
+                    className="relative inline-flex h-1.5 w-1.5"
+                  >
+                    <span className="absolute inset-0 rounded-full bg-accent/40" />
+                    <span className="relative h-full w-full rounded-full bg-accent" />
+                  </span>
+                  Recently added
+                </span>
+              )}
+              {fresh && job.is_open_to_africa && (
+                <span aria-hidden className="text-muted-foreground/40">
+                  {'\u00b7'}
+                </span>
+              )}
+              {job.is_open_to_africa && (
+                <span>Open to remote applicants in Africa</span>
+              )}
+              {(fresh || job.is_open_to_africa) && (
+                <span aria-hidden className="text-muted-foreground/40">
+                  {'\u00b7'}
+                </span>
+              )}
+              <span>External application verified</span>
+            </p>
           </div>
         </div>
 
@@ -207,8 +237,9 @@ export function JobDetailLayout({
             state={applyState}
             className="h-10"
           />
-          <p className="mt-2 text-xs text-muted-foreground">
-            No payment required to apply. Nexa never asks for fees.
+          <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <ShieldCheck className="h-3.5 w-3.5 text-foreground/55" aria-hidden />
+            Free to apply. You go directly to {job.company}. Nexa never asks for fees.
           </p>
         </div>
       </header>
@@ -305,7 +336,8 @@ export function JobDetailLayout({
         >
           Apply for this role
         </ApplyButton>
-        <p className="mt-1.5 text-center text-[11px] text-muted-foreground">
+        <p className="mt-1.5 inline-flex w-full items-center justify-center gap-1.5 text-center text-[11px] text-muted-foreground">
+          <ShieldCheck className="h-3 w-3 text-foreground/50" aria-hidden />
           Free to apply. You go directly to {job.company}.
         </p>
       </div>

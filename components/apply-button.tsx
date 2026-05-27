@@ -12,7 +12,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import { ShieldCheck, FileText, ArrowUpRight } from "lucide-react"
+import { ShieldCheck, FileText, ArrowUpRight, ArrowRightFromLine } from "lucide-react"
 
 type Props = {
   applyUrl: string
@@ -91,6 +91,10 @@ export function ApplyButton({
           <li className="flex items-start gap-2">
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-foreground/70" aria-hidden />
             <span>No payment is ever required to apply through Nexa.</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <ArrowRightFromLine className="mt-0.5 h-4 w-4 shrink-0 text-foreground/70" aria-hidden />
+            <span>You apply directly on the company&rsquo;s site. Nexa never handles applications.</span>
           </li>
         </ul>
 

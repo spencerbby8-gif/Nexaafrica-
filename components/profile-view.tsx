@@ -1,10 +1,10 @@
 "use client"
 
-import Link from "next/link"
 import { useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { ProfileEditor } from "@/components/profile-editor"
 import { SignOutButton } from "@/components/sign-out-button"
+import { ReuploadCvButton } from "@/components/reupload-cv-button"
 import {
   Pencil,
   MapPin,
@@ -13,7 +13,6 @@ import {
   Share2,
   Check,
   Briefcase,
-  RefreshCw,
   FileCheck2,
   Eraser,
   Languages,
@@ -209,45 +208,19 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
         <span>Formatted for global remote hiring</span>
       </div>
 
-      {/* Recruiter card — premium hero */}
-      <header className="rounded-2xl border border-border bg-card px-5 py-6 sm:px-7 sm:py-7">
-        <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex min-w-0 items-start gap-4">
-            <div
-              aria-hidden
-              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-border bg-background text-sm font-semibold tracking-tight text-foreground/80"
-            >
-              {initials}
-            </div>
-            <div className="min-w-0">
-              <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                Nexa profile
-              </p>
-              <h1 className="mt-1.5 text-balance text-[22px] font-semibold leading-tight tracking-tight md:text-[26px]">
-                {profile.headline || "Your professional profile"}
-              </h1>
-              <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted-foreground">
-                {profile.country && (
-                  <span className="inline-flex items-center gap-1.5">
-                    <MapPin className="h-3.5 w-3.5" aria-hidden /> {profile.country}
-                  </span>
-                )}
-                {profile.country && experience.length > 0 && (
-                  <span aria-hidden className="text-muted-foreground/40">
-                    {"\u00b7"}
-                  </span>
-                )}
-                {experience.length > 0 && (
-                  <span className="inline-flex items-center gap-1.5">
-                    <Briefcase className="h-3.5 w-3.5" aria-hidden /> {experience.length}{" "}
-                    {experience.length === 1 ? "role" : "roles"}
-                  </span>
-                )}
-              </div>
-            </div>
+      {/* Editorial hero — recruiter-grade identity card.
+          Composition: wordmark stamp + hairline rule above the headline,
+          large display type, calm metadata row, and an institutional
+          readiness footer separated by a hairline. No avatars/photos. */}
+      <header className="rounded-2xl border border-border bg-card px-6 py-7 sm:px-9 sm:py-9">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5 text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+            <span aria-hidden className="h-px w-6 bg-border" />
+            <span>Nexa</span>
+            <span aria-hidden className="text-muted-foreground/40">{"\u00b7"}</span>
+            <span>Verified profile</span>
           </div>
-
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="hidden items-center gap-2 sm:flex">
             <Button
               onClick={handleShare}
               variant="ghost"
@@ -271,10 +244,79 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
           </div>
         </div>
 
-        {/* Calm, factual readiness line — derived from real data, no scores */}
-        <div className="mt-5 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border/60 pt-4 text-[13px]">
+        <div className="mt-7 flex items-start gap-5">
+          <div
+            aria-hidden
+            className="mt-1.5 hidden h-14 w-14 shrink-0 items-center justify-center rounded-full border border-border bg-background text-base font-semibold tracking-tight text-foreground/80 sm:flex"
+          >
+            {initials}
+          </div>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-balance text-[26px] font-semibold leading-[1.15] tracking-[-0.01em] text-foreground sm:text-[30px]">
+              {profile.headline || "Your professional profile"}
+            </h1>
+            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted-foreground">
+              {profile.country && (
+                <span className="inline-flex items-center gap-1.5">
+                  <MapPin className="h-3.5 w-3.5" aria-hidden /> {profile.country}
+                </span>
+              )}
+              {profile.country && experience.length > 0 && (
+                <span aria-hidden className="text-muted-foreground/40">
+                  {"\u00b7"}
+                </span>
+              )}
+              {experience.length > 0 && (
+                <span className="inline-flex items-center gap-1.5">
+                  <Briefcase className="h-3.5 w-3.5" aria-hidden /> {experience.length}{" "}
+                  {experience.length === 1 ? "role" : "roles"}
+                </span>
+              )}
+              {experience.length > 0 && (
+                <span aria-hidden className="text-muted-foreground/40">
+                  {"\u00b7"}
+                </span>
+              )}
+              <span className="inline-flex items-center gap-1.5">
+                <Globe2 className="h-3.5 w-3.5" aria-hidden /> Open to remote
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Mobile actions row — pushed below hero for thumb reach */}
+        <div className="mt-5 flex items-center gap-2 sm:hidden">
+          <Button
+            onClick={() => setEditing(true)}
+            variant="outline"
+            size="sm"
+            className="flex-1"
+          >
+            <Pencil className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            Edit
+          </Button>
+          <Button
+            onClick={handleShare}
+            variant="ghost"
+            size="sm"
+            className="flex-1 text-muted-foreground"
+          >
+            {shareCopied ? (
+              <>
+                <Check className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Copied
+              </>
+            ) : (
+              <>
+                <Share2 className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Share
+              </>
+            )}
+          </Button>
+        </div>
+
+        {/* Institutional readiness strip — derived from real data */}
+        <div className="mt-7 flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-border/60 pt-5 text-[13px]">
           <span className="inline-flex items-center gap-1.5 font-medium text-foreground/85">
-            <ShieldCheck className="h-3.5 w-3.5 text-foreground/60" aria-hidden />
+            <ShieldCheck className="h-3.5 w-3.5 text-foreground/55" aria-hidden />
             {guidance.label}
           </span>
           {guidance.hint && (
@@ -416,12 +458,7 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
       </section>
 
       <section className="mt-6 flex flex-wrap items-center gap-1">
-        <Button asChild variant="ghost" size="sm" className="text-muted-foreground">
-          <Link href="/onboarding?reupload=1">
-            <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-            Re-upload CV
-          </Link>
-        </Button>
+        <ReuploadCvButton />
         <SignOutButton />
       </section>
     </div>

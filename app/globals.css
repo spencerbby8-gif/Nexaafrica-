@@ -177,4 +177,56 @@
   :root:not(.dark) .nexa-rule::before {
     opacity: 0.35;
   }
+
+  /* Editorial typography for institutional pages.
+     Calm, readable, recruiter-grade. Not a marketing landing. */
+  .prose-nexa {
+    color: color-mix(in oklab, var(--foreground) 85%, transparent);
+    font-size: 15.5px;
+    line-height: 1.7;
+  }
+  .prose-nexa h2 {
+    margin-top: 2.25rem;
+    margin-bottom: 0.75rem;
+    font-size: 1.05rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--foreground);
+  }
+  .prose-nexa h3 {
+    margin-top: 1.75rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--foreground);
+  }
+  .prose-nexa p {
+    margin-bottom: 1rem;
+    max-width: 65ch;
+  }
+  .prose-nexa ul {
+    margin: 0.5rem 0 1.25rem;
+    padding-left: 1.1rem;
+    list-style: disc;
+  }
+  .prose-nexa ul li {
+    margin-bottom: 0.4rem;
+    padding-left: 0.25rem;
+  }
+  .prose-nexa ul li::marker {
+    color: color-mix(in oklab, var(--accent) 70%, transparent);
+  }
+  .prose-nexa a {
+    color: var(--foreground);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in oklab, var(--accent) 50%, transparent);
+    text-underline-offset: 3px;
+  }
+  .prose-nexa a:hover {
+    text-decoration-color: var(--accent);
+  }
+  .prose-nexa strong {
+    color: var(--foreground);
+    font-weight: 600;
+  }
 }

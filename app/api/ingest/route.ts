@@ -47,6 +47,88 @@ function validate(job: IncomingJob): string | null {
   return null
 }
 
+/**
+ * Validate that an apply URL points to an actual job listing, not a generic
+ * homepage or "/careers" index. We accept:
+ *   - Known ATS hosts (greenhouse, lever, workable, ashby, etc.) when they
+ *     include a job-id-style path segment.
+ *   - Any URL whose path includes a numeric or slug-style id (>= 2 path
+ *     segments and at least one segment that looks like an id).
+ * We reject:
+ *   - Bare hosts ("acme.com", "acme.com/")
+ *   - Single-segment paths like "/careers", "/jobs", "/work-with-us"
+ */
+const ATS_HOSTS = new Set([
+  'boards.greenhouse.io',
+  'jobs.lever.co',
+  'apply.workable.com',
+  'jobs.ashbyhq.com',
+  'job-boards.greenhouse.io',
+  'jobs.smartrecruiters.com',
+  'careers.smartrecruiters.com',
+  'apply.workable.com',
+  'jobs.workable.com',
+  'jobs.eu.lever.co',
+  'app.dover.com',
+])
+
+const GENERIC_LANDING_SEGMENTS = new Set([
+  'careers',
+  'career',
+  'jobs',
+  'job',
+  'work-with-us',
+  'join',
+  'join-us',
+  'hiring',
+  'opportunities',
+  'roles',
+  'positions',
+  'apply',
+])
+
+function looksLikeJobId(seg: string): boolean {
+  // Numeric id, UUID, or slug containing digits or >= 3 hyphens
+  if (/^\d{3,}$/.test(seg)) return true
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(seg)) return true
+  if (/\d/.test(seg) && seg.length >= 4) return true
+  if ((seg.match(/-/g) ?? []).length >= 2 && seg.length >= 8) return true
+  return false
+}
+
+function validateApplyUrl(raw: string): string | null {
+  let u: URL
+  try {
+    u = new URL(raw)
+  } catch {
+    return 'apply_url is not a valid URL'
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') {
+    return 'apply_url must be http(s)'
+  }
+  const segments = u.pathname.split('/').filter(Boolean)
+  if (segments.length === 0) {
+    return 'apply_url points to a homepage, not a specific role'
+  }
+  // Generic single-segment landing page like /careers
+  if (segments.length === 1 && GENERIC_LANDING_SEGMENTS.has(segments[0].toLowerCase())) {
+    return `apply_url points to a generic "${segments[0]}" landing page, not a specific role`
+  }
+  // Trusted ATS hosts: require >= 2 segments OR an id-shaped segment
+  if (ATS_HOSTS.has(u.hostname)) {
+    const hasIdSegment = segments.some(looksLikeJobId)
+    if (segments.length < 2 && !hasIdSegment) {
+      return 'apply_url is on a known ATS host but lacks a job-id segment'
+    }
+    return null
+  }
+  // Other hosts: require an id-shaped segment somewhere in the path
+  if (!segments.some(looksLikeJobId)) {
+    return 'apply_url does not include a job-id-style path segment'
+  }
+  return null
+}
+
 export async function POST(req: Request) {
   const token = process.env.INGEST_TOKEN
   if (!token) {
@@ -76,6 +158,12 @@ export async function POST(req: Request) {
     const err = validate(job)
     if (err) {
       results.errors.push(err)
+      continue
+    }
+
+    const urlErr = validateApplyUrl(job.apply_url)
+    if (urlErr) {
+      results.errors.push(`${job.title} @ ${job.company}: ${urlErr}`)
       continue
     }
 

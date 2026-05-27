@@ -11,7 +11,6 @@ import {
   Check,
   ShieldCheck,
   Globe2,
-  Sparkles,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -242,35 +241,81 @@ export function CvUpload({ next }: Props) {
             <Check className="h-4 w-4 text-accent" aria-hidden />
           </div>
           <div>
-            <p className="text-sm font-medium leading-tight">Your remote-ready profile is complete</p>
+            <p className="text-sm font-medium leading-tight">
+              Your remote-ready profile is complete
+            </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Built for global remote applications. Review and edit anything before sharing.
+              Review and edit anything before sharing.
             </p>
           </div>
         </div>
 
-        <ul className="mt-6 space-y-2.5 text-sm">
-          <li className="flex items-start gap-2.5">
-            <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/60" aria-hidden />
-            <span className="text-foreground/85">Job titles standardized for international recruiters</span>
-          </li>
-          <li className="flex items-start gap-2.5">
-            <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/60" aria-hidden />
-            <span className="text-foreground/85">
-              Local fields removed (age, nationality, address, photo)
-            </span>
-          </li>
-          <li className="flex items-start gap-2.5">
-            <Globe2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/60" aria-hidden />
-            <span className="text-foreground/85">Skills and experience structured for remote hiring</span>
-          </li>
-        </ul>
+        {/* Before → After transformation moment.
+            Concrete, factual, recruiter-oriented. No metrics, no hype. */}
+        <div className="mt-6">
+          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            What changed
+          </p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-lg border border-border/70 bg-muted/30 p-4">
+              <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground/80">
+                Before
+              </p>
+              <ul className="mt-2 space-y-1.5 text-[13px] leading-relaxed text-muted-foreground line-through decoration-muted-foreground/40">
+                <li>Date of birth, marital status, state of origin</li>
+                <li>NIN, address, photograph, religion</li>
+                <li>&ldquo;Snr. Soft. Eng.&rdquo;, &ldquo;NYSC Corper&rdquo;</li>
+                <li>Buzzword summary &mdash; &ldquo;results-driven&rdquo;</li>
+                <li>&ldquo;Referees available on request&rdquo;</li>
+              </ul>
+            </div>
+            <div className="rounded-lg border border-accent/30 bg-accent/[0.06] p-4">
+              <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-accent">
+                After
+              </p>
+              <ul className="mt-2 space-y-1.5 text-[13px] leading-relaxed text-foreground/85">
+                <li className="flex items-start gap-1.5">
+                  <Check className="mt-0.5 h-3 w-3 shrink-0 text-accent" aria-hidden />
+                  Local fields removed for global hiring
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <Check className="mt-0.5 h-3 w-3 shrink-0 text-accent" aria-hidden />
+                  Standardized job titles for international recruiters
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <Check className="mt-0.5 h-3 w-3 shrink-0 text-accent" aria-hidden />
+                  Factual summary, no buzzwords
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <Check className="mt-0.5 h-3 w-3 shrink-0 text-accent" aria-hidden />
+                  Skills deduplicated and normalized
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <Check className="mt-0.5 h-3 w-3 shrink-0 text-accent" aria-hidden />
+                  Reformatted for ATS readability
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
 
         <div className="mt-6 flex flex-col gap-2 sm:flex-row">
           <Button onClick={goToProfile} className="sm:flex-1">
             View your profile
           </Button>
         </div>
+
+        <p className="mt-4 text-[11px] uppercase tracking-[0.16em] text-muted-foreground/80">
+          <span className="inline-flex items-center gap-1.5">
+            <ShieldCheck className="h-3 w-3" aria-hidden /> Recruiter-ready structure
+          </span>
+          <span aria-hidden className="mx-2 text-muted-foreground/40">
+            {"\u00b7"}
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <Globe2 className="h-3 w-3" aria-hidden /> Built for global remote applications
+          </span>
+        </p>
       </div>
     )
   }

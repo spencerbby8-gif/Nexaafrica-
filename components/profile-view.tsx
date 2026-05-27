@@ -14,6 +14,10 @@ import {
   Check,
   Briefcase,
   RefreshCw,
+  FileCheck2,
+  Eraser,
+  Languages,
+  Sparkles,
 } from "lucide-react"
 import type { ProfileRecord, ProfileExperience } from "@/lib/profile/types"
 
@@ -34,17 +38,61 @@ function formatDateRange(start: string | null, end: string | null) {
 
 function monogram(headline: string | null, email: string | null) {
   const source = (headline || email || "N").trim()
-  // Take the first letter of the first two whitespace-separated tokens.
   const parts = source.split(/[\s@.]+/).filter(Boolean)
   const a = parts[0]?.[0] ?? "N"
   const b = parts[1]?.[0] ?? ""
   return (a + b).toUpperCase()
 }
 
+// Lightweight, factual readiness guidance derived from the actual profile.
+// Returns a single calm sentence + an optional improvement nudge. Never uses
+// percentages or scores; the goal is professional confidence, not gamification.
+function readinessGuidance(args: {
+  summary: string | null
+  skills: string[]
+  experience: ProfileExperience[]
+}): { label: string; hint: string | null } {
+  const summary = (args.summary ?? "").trim()
+  const skills = args.skills.length
+  const exp = args.experience.length
+
+  const hasStrongSummary = summary.length >= 200
+  const hasMinSkills = skills >= 6
+  const hasMinExperience = exp >= 1
+
+  if (hasStrongSummary && hasMinSkills && hasMinExperience) {
+    return {
+      label: "Strong remote-ready profile",
+      hint:
+        exp >= 2
+          ? null
+          : "Add another role to broaden your global hiring signal.",
+    }
+  }
+
+  if (hasMinSkills && hasMinExperience) {
+    return {
+      label: "Well-structured for global applications",
+      hint: "Could be improved with a longer summary or portfolio link.",
+    }
+  }
+
+  if (hasMinExperience) {
+    return {
+      label: "Foundation in place",
+      hint: "Add a few more skills to round out your remote-ready profile.",
+    }
+  }
+
+  return {
+    label: "Profile ready",
+    hint: "Add experience to strengthen your remote-ready profile.",
+  }
+}
+
 // Light heuristic grouping: anything that looks like a tool/proper noun goes to
-// "Tools & technologies", everything else (lowercase short tokens, e.g. "sql",
-// "copywriting") is "Disciplines". Falls back to a flat list when there is no
-// meaningful split. Keeps presentation calm without inventing data.
+// "Tools & technologies", everything else (lowercase short tokens) is
+// "Disciplines". Falls back to a flat list when there's no meaningful split.
 function groupSkills(skills: string[]) {
   const dedup: string[] = []
   const seen = new Set<string>()
@@ -66,7 +114,6 @@ function groupSkills(skills: string[]) {
     else disciplines.push(s)
   }
 
-  // Avoid awkward 1-item groups by collapsing to a flat list.
   if (tools.length < 3 || disciplines.length < 3) {
     return { groups: [{ label: "Skills", items: dedup }], total: dedup.length }
   }
@@ -84,6 +131,10 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
   const [shareCopied, setShareCopied] = useState(false)
   const grouped = useMemo(() => groupSkills(skills), [skills])
   const initials = useMemo(() => monogram(profile.headline, email), [profile.headline, email])
+  const guidance = useMemo(
+    () => readinessGuidance({ summary: profile.summary, skills, experience }),
+    [profile.summary, skills, experience],
+  )
 
   if (editing) {
     return (
@@ -135,13 +186,13 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
       setShareCopied(true)
       setTimeout(() => setShareCopied(false), 2200)
     } catch {
-      // Silent — keep this lightweight, no toast system here.
+      // Silent — keep this lightweight.
     }
   }
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
-      {/* Top trust strip — single calm line above the recruiter card */}
+      {/* Top trust strip — single calm institutional line */}
       <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
         <span className="inline-flex items-center gap-1.5">
           <Globe2 className="h-3 w-3" aria-hidden /> Remote-ready
@@ -197,7 +248,12 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
-            <Button onClick={handleShare} variant="ghost" size="sm" className="text-muted-foreground">
+            <Button
+              onClick={handleShare}
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+            >
               {shareCopied ? (
                 <>
                   <Check className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Copied
@@ -214,14 +270,62 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
             </Button>
           </div>
         </div>
+
+        {/* Calm, factual readiness line — derived from real data, no scores */}
+        <div className="mt-5 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border/60 pt-4 text-[13px]">
+          <span className="inline-flex items-center gap-1.5 font-medium text-foreground/85">
+            <ShieldCheck className="h-3.5 w-3.5 text-foreground/60" aria-hidden />
+            {guidance.label}
+          </span>
+          {guidance.hint && (
+            <>
+              <span aria-hidden className="text-muted-foreground/40">
+                {"\u00b7"}
+              </span>
+              <span className="text-muted-foreground">{guidance.hint}</span>
+            </>
+          )}
+        </div>
       </header>
+
+      {/* What Nexa improved — calm AI explanation block.
+          Always factual, never quantified, never claims things that weren't done. */}
+      <section className="mt-6 rounded-xl border border-border/70 bg-muted/30 px-5 py-4">
+        <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+          What Nexa improved
+        </p>
+        <ul className="mt-3 grid gap-2.5 sm:grid-cols-2">
+          <li className="flex items-start gap-2 text-[13px] leading-relaxed text-foreground/85">
+            <Languages
+              className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/55"
+              aria-hidden
+            />
+            <span>Standardized job titles for international recruiters</span>
+          </li>
+          <li className="flex items-start gap-2 text-[13px] leading-relaxed text-foreground/85">
+            <Eraser className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/55" aria-hidden />
+            <span>Removed local fields not used in global hiring</span>
+          </li>
+          <li className="flex items-start gap-2 text-[13px] leading-relaxed text-foreground/85">
+            <FileCheck2
+              className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/55"
+              aria-hidden
+            />
+            <span>Reformatted for ATS and recruiter readability</span>
+          </li>
+          <li className="flex items-start gap-2 text-[13px] leading-relaxed text-foreground/85">
+            <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/55" aria-hidden />
+            <span>Skills normalized and deduplicated</span>
+          </li>
+        </ul>
+      </section>
 
       {profile.summary && (
         <section className="mt-9">
           <h2 className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
             Summary
           </h2>
-          <p className="mt-3 text-pretty text-[15px] leading-relaxed text-foreground/90">
+          <p className="mt-3 max-w-[68ch] text-pretty text-[15px] leading-relaxed text-foreground/90">
             {profile.summary}
           </p>
         </section>
@@ -233,13 +337,17 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
             <h2 className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
               Skills
             </h2>
-            <span className="text-[11px] text-muted-foreground/70">{grouped.total}</span>
+            <span className="text-[11px] tabular-nums text-muted-foreground/70">
+              {grouped.total}
+            </span>
           </div>
           <div className="mt-3 space-y-4">
             {grouped.groups.map((g) => (
               <div key={g.label}>
                 {grouped.groups.length > 1 && (
-                  <p className="mb-1.5 text-[11px] text-muted-foreground/80">{g.label}</p>
+                  <p className="mb-2 text-[11px] uppercase tracking-[0.14em] text-muted-foreground/80">
+                    {g.label}
+                  </p>
                 )}
                 <ul className="flex flex-wrap gap-1.5">
                   {g.items.map((s) => (
@@ -269,24 +377,28 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
               return (
                 <li
                   key={e.id ?? `${e.title}-${e.company}-${idx}`}
-                  className="grid gap-3 py-5 sm:grid-cols-[120px_1fr]"
+                  className="grid gap-3 py-5 sm:grid-cols-[140px_1fr]"
                 >
-                  <div className="text-xs leading-relaxed text-muted-foreground tabular-nums">
-                    {range || (
-                      <span className="text-muted-foreground/60">{"\u2014"}</span>
-                    )}
+                  <div className="flex flex-col gap-1.5">
+                    <div className="text-xs leading-relaxed text-muted-foreground tabular-nums">
+                      {range || (
+                        <span className="text-muted-foreground/60">{"\u2014"}</span>
+                      )}
+                    </div>
                     {isCurrent && (
-                      <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-accent">
+                      <span className="inline-flex w-fit items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-accent">
                         <span aria-hidden className="h-1 w-1 rounded-full bg-accent" />
-                        Now
+                        Current role
                       </span>
                     )}
                   </div>
                   <div className="min-w-0">
-                    <p className="text-[15px] font-medium leading-snug">{e.title}</p>
+                    <p className="text-[15px] font-semibold leading-snug tracking-tight">
+                      {e.title}
+                    </p>
                     <p className="mt-0.5 text-sm text-muted-foreground">{e.company}</p>
                     {e.description && (
-                      <p className="mt-2.5 text-pretty text-[14px] leading-relaxed text-foreground/85">
+                      <p className="mt-2.5 max-w-[68ch] text-pretty text-[14px] leading-relaxed text-foreground/85">
                         {e.description}
                       </p>
                     )}
@@ -298,12 +410,9 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
         </section>
       )}
 
-      <section className="mt-12 rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-xs text-muted-foreground">
-        <p className="leading-relaxed">
-          This profile is formatted for global remote hiring. Local personal fields have been
-          removed and titles standardized for international recruiters. Nexa never asks for payment
-          to apply.
-        </p>
+      <section className="mt-12 rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
+        Formatted for global remote hiring. Local personal fields have been removed and titles
+        standardized for international recruiters. Nexa never asks for payment to apply.
       </section>
 
       <section className="mt-6 flex flex-wrap items-center gap-1">

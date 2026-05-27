@@ -16,9 +16,9 @@ export const metadata = {
 export default async function OnboardingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>
+  searchParams: Promise<{ next?: string; reupload?: string }>
 }) {
-  const { next } = await searchParams
+  const { next, reupload } = await searchParams
   const supabase = await createClient()
   const {
     data: { user },
@@ -30,24 +30,28 @@ export default async function OnboardingPage({
   }
 
   const { profile } = await getCurrentProfile()
-  if (profile?.status === "ready") {
+  // Allow explicit re-upload via ?reupload=1. Without that flag, send completed
+  // users to /profile so the route isn't accidentally hit by stale links.
+  if (profile?.status === "ready" && reupload !== "1") {
     redirect(next && next.startsWith("/") ? next : "/profile")
   }
+
+  const isReupload = profile?.status === "ready" && reupload === "1"
 
   return (
     <SiteShell>
       <main className="mx-auto w-full max-w-xl px-4 py-10 md:py-16">
         <div className="mb-8">
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-            Step 1 of 1
+            {isReupload ? "Re-upload CV" : "Step 1 of 1"}
           </p>
           <h1 className="mt-3 text-balance text-2xl font-semibold tracking-tight md:text-3xl">
-            Upload your CV
+            {isReupload ? "Upload a new CV" : "Upload your CV"}
           </h1>
           <p className="mt-3 text-pretty leading-relaxed text-muted-foreground">
-            Nexa formats your CV into a clean profile for global remote employers. We standardize
-            your titles and skills, and remove personal fields that aren&apos;t relevant for
-            international hiring. You can review and edit everything before saving.
+            {isReupload
+              ? "Your existing profile will be replaced with the contents of the new CV. You can review everything before it goes live."
+              : "Nexa formats your CV into a clean profile for global remote employers. We standardize your titles and skills, and remove personal fields that aren\u2019t relevant for international hiring. You can review and edit everything before saving."}
           </p>
         </div>
 

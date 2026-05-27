@@ -15,6 +15,8 @@ import {
   getJobs,
 } from '@/lib/queries'
 import type { EmploymentType } from '@/lib/types'
+import { breadcrumbJsonLd, itemListJsonLd, jsonLdString } from '@/lib/seo'
+import { getCountry } from '@/lib/countries'
 
 export const revalidate = 600
 
@@ -84,6 +86,7 @@ export default async function CategoryCountryPage({
   ])
 
   const region = regionLabel(country)
+  const countryEntry = getCountry(country)
   const relatedCategories = allCategories
     .filter((c) => c.slug !== category)
     .slice(0, 6)
@@ -100,6 +103,36 @@ export default async function CategoryCountryPage({
 
   return (
     <SiteShell>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: jsonLdString(
+            breadcrumbJsonLd([
+              { name: 'Nexa', url: '/' },
+              { name: 'Remote jobs', url: '/jobs' },
+              { name: cat.title, url: `/jobs/${category}/worldwide` },
+              { name: region, url: `/jobs/${category}/${country}` },
+            ]),
+          ),
+        }}
+      />
+      {jobs.length > 0 ? (
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: jsonLdString(
+              itemListJsonLd(
+                `${cat.title} jobs in ${region}`,
+                jobs.slice(0, 20).map((j) => ({
+                  name: `${j.title} at ${j.company}`,
+                  url: `/role/${j.slug}`,
+                })),
+              ),
+            ),
+          }}
+        />
+      ) : null}
+
       <div className="mx-auto max-w-6xl px-4 pt-8 sm:px-6 sm:pt-10">
         <nav
           className="text-xs text-muted-foreground"
@@ -219,6 +252,68 @@ export default async function CategoryCountryPage({
               does not partner with recruiters who do.
             </p>
           </div>
+        </section>
+
+        <section className="mt-10 border-t border-border/60 pt-8">
+          <h2 className="text-sm font-medium text-muted-foreground">
+            Helpful next steps
+          </h2>
+          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+            {countryEntry ? (
+              <li>
+                <Link
+                  href={`/remote-jobs/${countryEntry.slug}`}
+                  className="block rounded-lg border border-border/70 bg-card/50 px-4 py-3 text-sm transition-colors hover:border-foreground/30 hover:bg-card"
+                >
+                  <span className="font-medium text-foreground">
+                    All remote jobs in {countryEntry.name}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    Across every category, open to applicants in {countryEntry.name}.
+                  </span>
+                </Link>
+              </li>
+            ) : null}
+            <li>
+              <Link
+                href="/guides/remote-salary-expectations-africa"
+                className="block rounded-lg border border-border/70 bg-card/50 px-4 py-3 text-sm transition-colors hover:border-foreground/30 hover:bg-card"
+              >
+                <span className="font-medium text-foreground">
+                  Remote salary expectations
+                </span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">
+                  Honest USD ranges for African remote candidates in 2026.
+                </span>
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/guides/cv-optimization-for-remote-jobs"
+                className="block rounded-lg border border-border/70 bg-card/50 px-4 py-3 text-sm transition-colors hover:border-foreground/30 hover:bg-card"
+              >
+                <span className="font-medium text-foreground">
+                  CV formatting for global remote jobs
+                </span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">
+                  ATS-safe structure recruiters can scan in 30 seconds.
+                </span>
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/companies"
+                className="block rounded-lg border border-border/70 bg-card/50 px-4 py-3 text-sm transition-colors hover:border-foreground/30 hover:bg-card"
+              >
+                <span className="font-medium text-foreground">
+                  Companies hiring remote in Africa
+                </span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">
+                  Browse every company with active reviewed roles on Nexa.
+                </span>
+              </Link>
+            </li>
+          </ul>
         </section>
 
         <div className="mt-12 border-t border-border/60 pt-10">

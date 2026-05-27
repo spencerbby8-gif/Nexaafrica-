@@ -4,7 +4,7 @@ import { Logo } from '@/components/logo'
 export function SiteFooter() {
   return (
     <footer className="mt-20 border-t border-border/60">
-      <div className="mx-auto grid max-w-6xl gap-10 px-4 py-12 sm:px-6 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
+      <div className="mx-auto grid max-w-6xl gap-10 px-4 py-12 sm:px-6 md:grid-cols-[1.4fr_1fr_1fr_1fr_1fr]">
         <div className="space-y-3">
           <Logo />
           <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
@@ -16,7 +16,7 @@ export function SiteFooter() {
           </p>
         </div>
 
-        <nav aria-label="Browse" className="space-y-3 text-sm">
+        <nav aria-label="Browse roles" className="space-y-3 text-sm">
           <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Browse
           </p>
@@ -51,6 +51,86 @@ export function SiteFooter() {
                 className="text-foreground/80 hover:text-foreground"
               >
                 Open to Africa
+              </Link>
+            </li>
+          </ul>
+        </nav>
+
+        <nav aria-label="Browse by country" className="space-y-3 text-sm">
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            By country
+          </p>
+          <ul className="space-y-2">
+            <li>
+              <Link
+                href="/remote-jobs/nigeria"
+                className="text-foreground/80 hover:text-foreground"
+              >
+                Nigeria
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/remote-jobs/kenya"
+                className="text-foreground/80 hover:text-foreground"
+              >
+                Kenya
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/remote-jobs/south-africa"
+                className="text-foreground/80 hover:text-foreground"
+              >
+                South Africa
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/remote-jobs/ghana"
+                className="text-foreground/80 hover:text-foreground"
+              >
+                Ghana
+              </Link>
+            </li>
+          </ul>
+        </nav>
+
+        <nav aria-label="Resources" className="space-y-3 text-sm">
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Resources
+          </p>
+          <ul className="space-y-2">
+            <li>
+              <Link
+                href="/companies"
+                className="text-foreground/80 hover:text-foreground"
+              >
+                Companies
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/guides"
+                className="text-foreground/80 hover:text-foreground"
+              >
+                Guides
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/guides/cv-optimization-for-remote-jobs"
+                className="text-foreground/80 hover:text-foreground"
+              >
+                CV optimization
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/guides/remote-salary-expectations-africa"
+                className="text-foreground/80 hover:text-foreground"
+              >
+                Salary ranges
               </Link>
             </li>
           </ul>
@@ -93,30 +173,6 @@ export function SiteFooter() {
                 Contact
               </Link>
             </li>
-          </ul>
-        </nav>
-
-        <nav aria-label="Account" className="space-y-3 text-sm">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Account
-          </p>
-          <ul className="space-y-2">
-            <li>
-              <Link
-                href="/profile"
-                className="text-foreground/80 hover:text-foreground"
-              >
-                Profile
-              </Link>
-            </li>
-            <li>
-              <Link
-                href="/onboarding"
-                className="text-foreground/80 hover:text-foreground"
-              >
-                Get started
-              </Link>
-            </li>
             <li>
               <Link
                 href="/privacy"
@@ -146,4 +202,5 @@ export function SiteFooter() {
     </footer>
   )
 }
+
 

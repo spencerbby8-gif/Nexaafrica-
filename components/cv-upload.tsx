@@ -235,9 +235,9 @@ export function CvUpload({ next }: Props) {
 
   if (status === "success") {
     return (
-      <div className="rounded-xl border border-border bg-card p-6 sm:p-8">
+      <div className="nexa-surface nexa-rule relative overflow-hidden rounded-xl border border-border bg-card p-6 sm:p-8">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full border border-accent/40 bg-accent/15">
+          <div className="relative flex h-9 w-9 items-center justify-center rounded-full border border-accent/40 bg-accent/15 ring-1 ring-accent/10 ring-offset-2 ring-offset-card">
             <Check className="h-4 w-4 text-accent" aria-hidden />
           </div>
           <div>

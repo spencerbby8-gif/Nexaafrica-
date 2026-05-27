@@ -99,3 +99,82 @@
     color: var(--foreground);
   }
 }
+
+/* ----------------------------------------------------------------
+   Nexa atmosphere utilities — restrained, premium, dark-first.
+   Used only on hero surfaces and the transformation moment.
+   No animations. No giant glows. No motion.
+   ---------------------------------------------------------------- */
+@layer utilities {
+  /* Ambient page-level wash. Sits behind the hero on profile pages.
+     Two very soft accent halos pinned to the top, blended into bg.
+     On light mode it falls back to near-invisible to preserve calm. */
+  .nexa-ambient {
+    position: relative;
+    isolation: isolate;
+  }
+  .nexa-ambient::before {
+    content: '';
+    position: absolute;
+    inset: -120px -40px auto -40px;
+    height: 360px;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(
+        60% 70% at 18% 20%,
+        color-mix(in oklab, var(--accent) 14%, transparent) 0%,
+        transparent 65%
+      ),
+      radial-gradient(
+        50% 60% at 88% 12%,
+        color-mix(in oklab, var(--accent) 8%, transparent) 0%,
+        transparent 70%
+      );
+    filter: blur(28px);
+    opacity: 0.9;
+  }
+  :root:not(.dark) .nexa-ambient::before {
+    opacity: 0.35;
+  }
+
+  /* Hero surface — adds a subtle vertical lift gradient on top of bg-card.
+     Reads as premium depth without becoming a colored card. */
+  .nexa-surface {
+    background-image:
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--accent) 4%, transparent) 0%,
+        transparent 38%
+      ),
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--foreground) 2%, transparent) 0%,
+        transparent 100%
+      );
+  }
+
+  /* One-pixel accent rule — top hairline of hero. Sits above the wordmark
+     stamp to give the card a printed editorial header. */
+  .nexa-rule {
+    position: relative;
+  }
+  .nexa-rule::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 12%;
+    right: 12%;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in oklab, var(--accent) 55%, transparent) 50%,
+      transparent 100%
+    );
+    opacity: 0.55;
+  }
+  :root:not(.dark) .nexa-rule::before {
+    opacity: 0.35;
+  }
+}

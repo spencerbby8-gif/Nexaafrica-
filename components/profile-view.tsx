@@ -190,7 +190,7 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
+    <div className="nexa-ambient mx-auto max-w-3xl px-4 py-10 sm:px-6">
       {/* Top trust strip — single calm institutional line */}
       <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
         <span className="inline-flex items-center gap-1.5">
@@ -212,13 +212,22 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
           Composition: wordmark stamp + hairline rule above the headline,
           large display type, calm metadata row, and an institutional
           readiness footer separated by a hairline. No avatars/photos. */}
-      <header className="rounded-2xl border border-border bg-card px-6 py-7 sm:px-9 sm:py-9">
+      <header className="nexa-rule nexa-surface relative overflow-hidden rounded-2xl border border-border bg-card px-6 py-7 sm:px-9 sm:py-9">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-2.5 text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
             <span aria-hidden className="h-px w-6 bg-border" />
-            <span>Nexa</span>
+            <span className="font-semibold text-foreground/85">Nexa</span>
             <span aria-hidden className="text-muted-foreground/40">{"\u00b7"}</span>
-            <span>Verified profile</span>
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                aria-hidden
+                className="relative inline-flex h-1.5 w-1.5 items-center justify-center"
+              >
+                <span className="absolute inset-0 rounded-full bg-accent/40" />
+                <span className="relative h-1 w-1 rounded-full bg-accent" />
+              </span>
+              Verified profile
+            </span>
           </div>
           <div className="hidden items-center gap-2 sm:flex">
             <Button
@@ -247,7 +256,7 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
         <div className="mt-7 flex items-start gap-5">
           <div
             aria-hidden
-            className="mt-1.5 hidden h-14 w-14 shrink-0 items-center justify-center rounded-full border border-border bg-background text-base font-semibold tracking-tight text-foreground/80 sm:flex"
+            className="mt-1.5 hidden h-14 w-14 shrink-0 items-center justify-center rounded-full border border-border bg-background text-base font-semibold tracking-tight text-foreground/85 ring-1 ring-accent/15 ring-offset-2 ring-offset-card sm:flex"
           >
             {initials}
           </div>

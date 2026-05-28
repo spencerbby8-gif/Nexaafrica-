@@ -30,12 +30,20 @@ export async function Navbar() {
             Jobs
           </Link>
           {user && (
-            <Link
-              href="/profile"
-              className="rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
-            >
-              Profile
-            </Link>
+            <>
+              <Link
+                href="/saved"
+                className="rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+              >
+                Saved
+              </Link>
+              <Link
+                href="/profile"
+                className="rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+              >
+                Profile
+              </Link>
+            </>
           )}
         </div>
 

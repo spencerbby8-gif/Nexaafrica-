@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 import { SiteShell } from '@/components/site-shell'
 import { JobDetailLayout } from '@/components/job-detail-layout'
 import { getJobBySlug, getRelatedJobs } from '@/lib/queries'
+import { isJobSaved } from '@/lib/saved-jobs'
 import { createClient } from '@/lib/supabase/server'
 
 // Per-user apply state needs request cookies, so this route renders dynamically.
@@ -73,6 +74,8 @@ export default async function RolePage({ params }: { params: Promise<Params> }) 
     applyState = prof?.status === 'ready' ? 'authed-complete' : 'authed-incomplete'
   }
 
+  const initialSaved = user ? await isJobSaved(job.id) : false
+
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'JobPosting',
@@ -101,7 +104,13 @@ export default async function RolePage({ params }: { params: Promise<Params> }) 
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
-      <JobDetailLayout job={job} related={related} applyState={applyState} />
+      <JobDetailLayout
+        job={job}
+        related={related}
+        applyState={applyState}
+        isAuthed={Boolean(user)}
+        initialSaved={initialSaved}
+      />
     </SiteShell>
   )
 }

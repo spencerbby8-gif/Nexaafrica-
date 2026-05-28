@@ -42,6 +42,23 @@ export function isFresh(iso: string, days = 7): boolean {
   return Date.now() - then < days * 24 * 60 * 60 * 1000
 }
 
+const monthFormatter =
+  typeof Intl !== 'undefined'
+    ? new Intl.DateTimeFormat('en', { month: 'long', year: 'numeric' })
+    : null
+
+/**
+ * "Joined March 2025" — used on profile to reinforce continuity of identity.
+ */
+export function joinedLabel(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const formatted = monthFormatter
+    ? monthFormatter.format(d)
+    : `${d.getUTCFullYear()}`
+  return `Joined ${formatted}`
+}
+
 export function companyInitials(name: string): string {
   const parts = name.trim().split(/\s+/).slice(0, 2)
   return parts.map((p) => p[0]?.toUpperCase() ?? '').join('') || '?'

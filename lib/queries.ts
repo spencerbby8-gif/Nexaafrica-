@@ -5,11 +5,18 @@ import type { Category, Job, JobFilters } from '@/lib/types'
 const JOB_COLUMNS =
   'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, employment_type, tags, is_remote, is_open_to_africa, created_at, expires_at'
 
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
+
+function freshIso(days: number): string {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+}
+
 export async function getJobs(filters: JobFilters = {}): Promise<Job[]> {
   const supabase = await createClient()
   let query = supabase
     .from('jobs')
     .select(JOB_COLUMNS)
+    .eq('is_active', true)
     .order('created_at', { ascending: false })
     .limit(filters.limit ?? 50)
 
@@ -18,6 +25,9 @@ export async function getJobs(filters: JobFilters = {}): Promise<Job[]> {
   if (filters.remoteOnly) query = query.eq('is_remote', true)
   if (filters.openToAfrica) query = query.eq('is_open_to_africa', true)
   if (filters.employmentType) query = query.eq('employment_type', filters.employmentType)
+  if (filters.freshDays && filters.freshDays > 0) {
+    query = query.gte('created_at', freshIso(filters.freshDays))
+  }
   if (filters.q) {
     const term = `%${filters.q}%`
     query = query.or(`title.ilike.${term},company.ilike.${term}`)
@@ -33,6 +43,8 @@ export async function getJobs(filters: JobFilters = {}): Promise<Job[]> {
 
 export async function getJobBySlug(slug: string): Promise<Job | null> {
   const supabase = await createClient()
+  // Allow direct-link access even when deactivated, but never index it
+  // (handled at the route level via metadata).
   const { data, error } = await supabase
     .from('jobs')
     .select(JOB_COLUMNS)
@@ -50,6 +62,7 @@ export async function getRelatedJobs(job: Job, limit = 4): Promise<Job[]> {
   const { data, error } = await supabase
     .from('jobs')
     .select(JOB_COLUMNS)
+    .eq('is_active', true)
     .eq('category', job.category)
     .neq('id', job.id)
     .order('created_at', { ascending: false })
@@ -90,12 +103,18 @@ export async function getCategory(slug: string): Promise<Category | null> {
 
 export async function countJobs(filters: JobFilters = {}): Promise<number> {
   const supabase = await createClient()
-  let query = supabase.from('jobs').select('id', { count: 'exact', head: true })
+  let query = supabase
+    .from('jobs')
+    .select('id', { count: 'exact', head: true })
+    .eq('is_active', true)
   if (filters.category) query = query.eq('category', filters.category)
   if (filters.country) query = query.ilike('country', filters.country)
   if (filters.remoteOnly) query = query.eq('is_remote', true)
   if (filters.openToAfrica) query = query.eq('is_open_to_africa', true)
   if (filters.employmentType) query = query.eq('employment_type', filters.employmentType)
+  if (filters.freshDays && filters.freshDays > 0) {
+    query = query.gte('created_at', freshIso(filters.freshDays))
+  }
   const { count, error } = await query
   if (error) {
     console.error('[v0] countJobs error', error.message)
@@ -109,6 +128,7 @@ export async function getDistinctCountriesForCategory(category: string): Promise
   const { data, error } = await supabase
     .from('jobs')
     .select('country')
+    .eq('is_active', true)
     .eq('category', category)
     .limit(500)
   if (error) {
@@ -120,4 +140,36 @@ export async function getDistinctCountriesForCategory(category: string): Promise
     if (row.country) set.add(row.country as string)
   }
   return Array.from(set).sort()
+}
+
+/**
+ * Lightweight platform pulse for the homepage.
+ * Returns counts of jobs added recently. Each filter is independently
+ * accurate so we can render either a single line or a multi-segment row.
+ */
+export async function getFreshnessPulse(): Promise<{
+  addedThisWeek: number
+  openToAfricaThisWeek: number
+}> {
+  const supabase = await createClient()
+  const since = new Date(Date.now() - SEVEN_DAYS_MS).toISOString()
+
+  const [weekRes, africaRes] = await Promise.all([
+    supabase
+      .from('jobs')
+      .select('id', { count: 'exact', head: true })
+      .eq('is_active', true)
+      .gte('created_at', since),
+    supabase
+      .from('jobs')
+      .select('id', { count: 'exact', head: true })
+      .eq('is_active', true)
+      .eq('is_open_to_africa', true)
+      .gte('created_at', since),
+  ])
+
+  return {
+    addedThisWeek: weekRes.count ?? 0,
+    openToAfricaThisWeek: africaRes.count ?? 0,
+  }
 }

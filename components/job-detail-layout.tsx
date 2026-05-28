@@ -4,6 +4,7 @@ import { TrustBadge } from '@/components/trust-badge'
 import { JobCard } from '@/components/job-card'
 import { CompanyAvatar } from '@/components/company-avatar'
 import { ApplyButton } from '@/components/apply-button'
+import { SaveJobButton } from '@/components/save-job-button'
 import { employmentLabel, isFresh, postedLabel } from '@/lib/format'
 import type { Job } from '@/lib/types'
 
@@ -135,10 +136,14 @@ export function JobDetailLayout({
   job,
   related,
   applyState = 'anon',
+  isAuthed = false,
+  initialSaved = false,
 }: {
   job: Job
   related: Job[]
   applyState?: 'anon' | 'authed-incomplete' | 'authed-complete'
+  isAuthed?: boolean
+  initialSaved?: boolean
 }) {
   const employment = employmentLabel(job.employment_type)
   const fresh = isFresh(job.created_at, 7)
@@ -231,12 +236,22 @@ export function JobDetailLayout({
         </div>
 
         <div className="hidden md:block">
-          <ApplyButton
-            applyUrl={job.apply_url}
-            jobSlug={job.slug}
-            state={applyState}
-            className="h-10"
-          />
+          <div className="flex items-center gap-2">
+            <ApplyButton
+              applyUrl={job.apply_url}
+              jobSlug={job.slug}
+              state={applyState}
+              className="h-10"
+            />
+            <SaveJobButton
+              jobId={job.id}
+              jobSlug={job.slug}
+              initialSaved={initialSaved}
+              isAuthed={isAuthed}
+              variant="pill"
+              className="h-10"
+            />
+          </div>
           <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
             <ShieldCheck className="h-3.5 w-3.5 text-foreground/55" aria-hidden />
             Free to apply. You go directly to {job.company}. Nexa never asks for fees.
@@ -327,15 +342,25 @@ export function JobDetailLayout({
         role="region"
         aria-label="Apply"
       >
-        <ApplyButton
-          applyUrl={job.apply_url}
-          jobSlug={job.slug}
-          state={applyState}
-          className="h-11 w-full text-base"
-          fullWidth
-        >
-          Apply for this role
-        </ApplyButton>
+        <div className="flex items-center gap-2">
+          <ApplyButton
+            applyUrl={job.apply_url}
+            jobSlug={job.slug}
+            state={applyState}
+            className="h-11 flex-1 text-base"
+            fullWidth
+          >
+            Apply for this role
+          </ApplyButton>
+          <SaveJobButton
+            jobId={job.id}
+            jobSlug={job.slug}
+            initialSaved={initialSaved}
+            isAuthed={isAuthed}
+            variant="icon"
+            className="h-11 w-11"
+          />
+        </div>
         <p className="mt-1.5 inline-flex w-full items-center justify-center gap-1.5 text-center text-[11px] text-muted-foreground">
           <ShieldCheck className="h-3 w-3 text-foreground/50" aria-hidden />
           Free to apply. You go directly to {job.company}.

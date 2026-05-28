@@ -43,4 +43,5 @@ export interface JobFilters {
   employmentType?: EmploymentType
   q?: string
   limit?: number
+  freshDays?: number
 }

@@ -2,12 +2,13 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, Briefcase, User } from 'lucide-react'
+import { Home, Briefcase, Bookmark, User } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const items = [
   { href: '/', label: 'Home', icon: Home },
   { href: '/jobs', label: 'Jobs', icon: Briefcase },
+  { href: '/saved', label: 'Saved', icon: Bookmark },
   { href: '/profile', label: 'Profile', icon: User },
 ]
 
@@ -19,7 +20,7 @@ export function MobileNav() {
       aria-label="Mobile"
       className="fixed inset-x-0 bottom-0 z-40 border-t border-border/60 bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
     >
-      <ul className="mx-auto grid max-w-md grid-cols-3">
+      <ul className="mx-auto grid max-w-md grid-cols-4">
         {items.map(({ href, label, icon: Icon }) => {
           const active =
             href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`)

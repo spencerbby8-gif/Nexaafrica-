@@ -4,16 +4,31 @@ import { Hero } from '@/components/hero'
 import { JobFeed } from '@/components/job-feed'
 import { HowItWorks } from '@/components/how-it-works'
 import { FAQ } from '@/components/faq'
-import { countJobs, getCategories, getJobs } from '@/lib/queries'
+import {
+  countJobs,
+  getCategories,
+  getFreshnessPulse,
+  getJobs,
+} from '@/lib/queries'
 
 export const revalidate = 300
 
 export default async function HomePage() {
-  const [recent, categories, total] = await Promise.all([
+  const [recent, categories, total, pulse] = await Promise.all([
     getJobs({ limit: 6 }),
     getCategories(),
     countJobs(),
+    getFreshnessPulse(),
   ])
+
+  // Quiet, factual life signal. Hidden when the platform is empty so we
+  // never invent activity that isn't there.
+  const pulseLine =
+    pulse.addedThisWeek > 0
+      ? pulse.openToAfricaThisWeek > 0
+        ? `${pulse.addedThisWeek} new role${pulse.addedThisWeek === 1 ? '' : 's'} this week · ${pulse.openToAfricaThisWeek} open to Africa`
+        : `${pulse.addedThisWeek} new role${pulse.addedThisWeek === 1 ? '' : 's'} this week`
+      : null
 
   return (
     <SiteShell>
@@ -29,10 +44,27 @@ export default async function HomePage() {
               id="recent-heading"
               className="text-lg font-semibold tracking-tight"
             >
-              Recently posted
+              Recently added
             </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Fresh roles reviewed in the past few days.
+            <p className="mt-1 inline-flex items-center gap-x-2 text-sm text-muted-foreground">
+              <span>Fresh roles reviewed in the past few days.</span>
+              {pulseLine && (
+                <>
+                  <span aria-hidden className="text-muted-foreground/40">
+                    {'\u00b7'}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 font-medium text-accent">
+                    <span
+                      aria-hidden
+                      className="relative inline-flex h-1.5 w-1.5"
+                    >
+                      <span className="absolute inset-0 rounded-full bg-accent/40" />
+                      <span className="relative h-full w-full rounded-full bg-accent" />
+                    </span>
+                    {pulseLine}
+                  </span>
+                </>
+              )}
             </p>
           </div>
           <Link

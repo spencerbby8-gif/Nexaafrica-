@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { ProfileEditor } from "@/components/profile-editor"
 import { SignOutButton } from "@/components/sign-out-button"
 import { ReuploadCvButton } from "@/components/reupload-cv-button"
+import { joinedLabel, relativeTime } from "@/lib/format"
 import {
   Pencil,
   MapPin,
@@ -17,6 +18,8 @@ import {
   Eraser,
   Languages,
   Sparkles,
+  CalendarDays,
+  RefreshCw,
 } from "lucide-react"
 import type { ProfileRecord, ProfileExperience } from "@/lib/profile/types"
 
@@ -289,6 +292,29 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
               <span className="inline-flex items-center gap-1.5">
                 <Globe2 className="h-3.5 w-3.5" aria-hidden /> Open to remote
               </span>
+            </div>
+
+            {/* Continuity row — quiet, factual signals that the profile is a
+                persistent identity, not a one-off form. Uses real timestamps. */}
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-muted-foreground/85">
+              <span className="inline-flex items-center gap-1.5">
+                <CalendarDays className="h-3 w-3" aria-hidden />
+                {joinedLabel(profile.created_at)}
+              </span>
+              {profile.updated_at && profile.updated_at !== profile.created_at && (
+                <>
+                  <span aria-hidden className="text-muted-foreground/40">
+                    {"\u00b7"}
+                  </span>
+                  <span
+                    className="inline-flex items-center gap-1.5"
+                    title={new Date(profile.updated_at).toLocaleString()}
+                  >
+                    <RefreshCw className="h-3 w-3" aria-hidden />
+                    Updated {relativeTime(profile.updated_at)}
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </div>

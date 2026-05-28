@@ -4,6 +4,11 @@
  * Run with: pnpm tsx scripts/run-ingest.ts
  */
 import 'dotenv/config'
+import { config as loadEnv } from 'dotenv'
+
+// v0 sandbox: project env lives one level up. Locally a project .env wins.
+loadEnv({ path: '/vercel/share/.env.project' })
+
 import { runAllSources } from '../lib/ingest/run'
 
 async function main() {

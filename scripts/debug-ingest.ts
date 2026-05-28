@@ -31,6 +31,13 @@ async function diag(label: string, fn: () => Promise<any[]>) {
   console.log('rejection reasons:', reasons)
 }
 
-await diag('Greenhouse / gitlab', () => fetchGreenhouseJobs('gitlab', 'GitLab'))
-await diag('Lever / netlify', () => fetchLeverJobs('netlify', 'Netlify'))
-await diag('Ashby / vercel', () => fetchAshbyJobs('vercel', 'Vercel'))
+async function main() {
+  await diag('Greenhouse / gitlab', () => fetchGreenhouseJobs('gitlab', 'GitLab'))
+  await diag('Lever / netlify', () => fetchLeverJobs('netlify', 'Netlify'))
+  await diag('Ashby / vercel', () => fetchAshbyJobs('vercel', 'Vercel'))
+}
+
+main().catch((e) => {
+  console.error(e)
+  process.exit(1)
+})

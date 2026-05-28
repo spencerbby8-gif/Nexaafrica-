@@ -4,6 +4,7 @@ import { Hero } from '@/components/hero'
 import { JobFeed } from '@/components/job-feed'
 import { HowItWorks } from '@/components/how-it-works'
 import { FAQ } from '@/components/faq'
+import { PersonalizedFeed } from '@/components/personalized-feed'
 import {
   countJobs,
   getCategories,
@@ -11,7 +12,9 @@ import {
   getJobs,
 } from '@/lib/queries'
 
-export const revalidate = 300
+// Personalized section reads the user's session — keep this page dynamic
+// per-request rather than statically cached.
+export const dynamic = 'force-dynamic'
 
 export default async function HomePage() {
   const [recent, categories, total, pulse] = await Promise.all([
@@ -33,6 +36,10 @@ export default async function HomePage() {
   return (
     <SiteShell>
       <Hero categories={categories} jobCount={total} />
+
+      <div className="mb-10 sm:mb-14">
+        <PersonalizedFeed />
+      </div>
 
       <section
         className="mx-auto max-w-6xl px-4 sm:px-6"

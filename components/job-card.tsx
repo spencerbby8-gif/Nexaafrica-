@@ -13,7 +13,13 @@ function firstParagraph(md: string): string {
   return block.length > 160 ? block.slice(0, 160).trimEnd() + '…' : block
 }
 
-export function JobCard({ job }: { job: Job }) {
+export function JobCard({
+  job,
+  matchReasons,
+}: {
+  job: Job
+  matchReasons?: string[]
+}) {
   const fresh = isFresh(job.created_at, 3)
   return (
     <Link
@@ -38,6 +44,13 @@ export function JobCard({ job }: { job: Job }) {
             {relativeTime(job.created_at)}
           </span>
         </div>
+
+        {matchReasons && matchReasons.length > 0 && (
+          <p className="-mt-1 inline-flex items-center gap-1.5 text-[11px] font-medium text-accent">
+            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-accent" />
+            {matchReasons[0]}
+          </p>
+        )}
 
         <p className="line-clamp-2 text-sm leading-relaxed text-muted-foreground">
           {firstParagraph(job.description_md)}

@@ -119,6 +119,14 @@ export function SiteFooter() {
             </li>
             <li>
               <Link
+                href="/saved"
+                className="text-foreground/80 hover:text-foreground"
+              >
+                Saved jobs
+              </Link>
+            </li>
+            <li>
+              <Link
                 href="/guides/cv-optimization-for-remote-jobs"
                 className="text-foreground/80 hover:text-foreground"
               >

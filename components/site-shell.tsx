@@ -10,7 +10,11 @@ export async function SiteShell({ children }: { children: React.ReactNode }) {
       <main id="main" className="flex-1 pb-20 md:pb-0">
         {children}
       </main>
-      <SiteFooter />
+      {/* Informational footer. Collapsed on mobile so the sticky bottom
+          nav owns the lower viewport and the app rhythm stays clean. */}
+      <div className="hidden md:block">
+        <SiteFooter />
+      </div>
       <MobileNav />
     </div>
   )

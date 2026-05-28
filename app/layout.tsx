@@ -62,7 +62,13 @@ export const viewport: Viewport = {
   themeColor: '#0a0a0a',
   width: 'device-width',
   initialScale: 1,
+  // Allow pinch-zoom (a11y) but cap at 5× so accidental gestures
+  // don't lock users into a half-zoomed "desktop view" state.
   maximumScale: 5,
+  // Cover the full physical viewport including notch / status bar
+  // areas. Without this, some Android browsers leave a thin band
+  // that triggers desktop-site auto-zoom heuristics.
+  viewportFit: 'cover',
 }
 
 export default function RootLayout({

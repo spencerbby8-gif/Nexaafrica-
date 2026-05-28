@@ -89,10 +89,25 @@
   html {
     -webkit-text-size-adjust: 100%;
     text-rendering: optimizeLegibility;
+    /* Mobile stability: pin the document width so a single overflowing
+       child cannot flip Chrome Android into auto-zoomed "desktop mode."
+       The viewport meta tag is necessary but not sufficient — overflow-x
+       clip on the document element is what actually pins width. */
+    overflow-x: clip;
   }
   body {
     @apply bg-background text-foreground;
     font-feature-settings: 'cv11', 'ss01';
+    /* Match the html-level clip so transformed children (sticky headers,
+       sheets, modals) cannot widen layout. clip > hidden because clip
+       does not establish a scroll container, preserving sticky/fixed. */
+    overflow-x: clip;
+    /* Prevent rubber-band overscroll from flashing background on iOS,
+       and stop horizontal swipe from triggering navigator back/forward. */
+    overscroll-behavior-y: none;
+    /* Use the dynamic viewport height so mobile browser chrome
+       collapsing doesn't cause sudden layout jumps. */
+    min-height: 100dvh;
   }
   ::selection {
     background: color-mix(in oklab, var(--accent) 30%, transparent);

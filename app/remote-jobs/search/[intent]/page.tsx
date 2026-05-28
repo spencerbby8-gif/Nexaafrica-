@@ -37,7 +37,7 @@ export async function generateMetadata({
   const url = `/remote-jobs/search/${slug}`
   const ogUrl = ogImage({
     kind: 'intent',
-    title: intent.h1,
+    title: intent.title,
     subtitle: intent.lede.slice(0, 130),
     meta: 'Live inventory \u00b7 Updated daily',
     badge: slug === 'open-to-africa' ? 'Open to Africa' : undefined,

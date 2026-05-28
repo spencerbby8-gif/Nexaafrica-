@@ -76,8 +76,7 @@ export function track<E extends NexaEvent>(event: E): void {
 
   // Defensive: respect Do Not Track. Vercel Analytics already does this,
   // but we double-check so future sinks inherit the same behaviour.
-  // @ts-expect-error - non-standard but widely supported
-  if (typeof navigator !== 'undefined' && navigator.doNotTrack === '1') return
+  if (typeof navigator !== 'undefined' && (navigator as Navigator & { doNotTrack?: string }).doNotTrack === '1') return
 
   try {
     vercelTrack(event.name, (event.props ?? {}) as Record<string, string | number | boolean | null>)

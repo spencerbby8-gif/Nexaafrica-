@@ -32,7 +32,7 @@ export default function RouteError({
         className="mb-10 inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
         aria-label="Nexa home"
       >
-        <Logo size={20} />
+        <Logo className="h-5 w-5" />
         <span className="font-medium tracking-tight text-foreground">Nexa</span>
       </Link>
       <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-card">

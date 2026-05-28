@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { ProfileEditor } from "@/components/profile-editor"
 import { SignOutButton } from "@/components/sign-out-button"
 import { ReuploadCvButton } from "@/components/reupload-cv-button"
+import { ProfileUtilityBar } from "@/components/profile-utility-bar"
 import { joinedLabel, relativeTime } from "@/lib/format"
 import {
   Pencil,
@@ -396,6 +397,8 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
           </li>
         </ul>
       </section>
+
+      <ProfileUtilityBar summary={profile.summary} experience={experience} />
 
       {profile.summary && (
         <section className="mt-9">

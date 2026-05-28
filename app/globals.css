@@ -250,12 +250,14 @@
      Slow, calm, premium. Disabled for prefers-reduced-motion users.
      ---------------------------------------------------------------- */
   .nexa-loader-ring {
-    animation: nexa-loader-breath 1.8s ease-in-out infinite;
+    /* Faster cadence reads as immediate responsiveness without
+       sacrificing the calm "breathing" character. */
+    animation: nexa-loader-breath 1.2s ease-in-out infinite;
     transform-origin: center;
     will-change: transform, opacity;
   }
   .nexa-loader-ring--delayed {
-    animation-delay: 0.6s;
+    animation-delay: 0.4s;
   }
   @keyframes nexa-loader-breath {
     0%,

@@ -65,6 +65,10 @@ type NexaEvent =
   | { name: 'share_click'; props: { kind: 'role' | 'profile' | 'company' | 'intent' | 'guide'; channel: 'whatsapp' | 'twitter' | 'copy' | 'native'; slug: string } }
   | { name: 'feed_card_click'; props: { jobId: string; position: number; surface: string } }
 
+  // Profile reuse
+  | { name: 'profile_cv_download'; props?: Record<string, never> }
+  | { name: 'profile_snippet_copied'; props: { kind: 'summary' | 'experience' } }
+
 /**
  * Track a Nexa product event.
  *

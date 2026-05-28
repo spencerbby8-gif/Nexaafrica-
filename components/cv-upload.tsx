@@ -13,6 +13,9 @@ import {
   Globe2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { CvUploadGuidance } from "@/components/cv-upload-guidance"
+import { NexaLoader } from "@/components/nexa-loader"
+import { humanizeError, type ErrorContext } from "@/lib/errors"
 
 // Match the server limit (4 MB). Vercel serverless caps request bodies near 4.5 MB,
 // so anything larger is dropped at the platform layer and shows up as "Failed to fetch".
@@ -43,7 +46,7 @@ export function CvUpload({ next }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [status, setStatus] = useState<Status>("idle")
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ title: string; hint?: string } | null>(null)
   const [stepIndex, setStepIndex] = useState(0)
   const [dragActive, setDragActive] = useState(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -54,15 +57,25 @@ export function CvUpload({ next }: Props) {
     }
   }, [])
 
-  const validate = (f: File): string | null => {
+  const setHumanError = (input: unknown, ctx: ErrorContext = "cv-upload") => {
+    setError(humanizeError(input as Parameters<typeof humanizeError>[0], ctx))
+  }
+
+  const validate = (f: File): { title: string; hint?: string } | null => {
     if (f.type !== "application/pdf" && !f.name.toLowerCase().endsWith(".pdf")) {
-      return "Please upload a PDF file."
+      return { title: "Please upload a PDF file.", hint: "Other file types aren\u2019t supported." }
     }
     if (f.size > MAX_BYTES) {
-      return "File is too large. Maximum size is 4MB."
+      return {
+        title: "That file is a bit too large.",
+        hint: "Please upload a PDF under 4MB.",
+      }
     }
     if (f.size < 1024) {
-      return "This file looks empty. Try another PDF."
+      return {
+        title: "We couldn\u2019t read this PDF correctly.",
+        hint: "If you opened the file from cloud storage like Google Drive, download it to your device first, then upload that copy.",
+      }
     }
     return null
   }
@@ -125,11 +138,9 @@ export function CvUpload({ next }: Props) {
         })
       } catch (networkErr) {
         stopStepRotation()
-        const detail =
-          networkErr instanceof Error && networkErr.message
-            ? networkErr.message
-            : "Lost connection while uploading."
-        throw new Error(`${detail} Check your connection and try again.`)
+        setStatus("error")
+        setHumanError(networkErr, "cv-upload")
+        return
       }
 
       stopStepRotation()
@@ -142,17 +153,15 @@ export function CvUpload({ next }: Props) {
       }
 
       if (!res.ok) {
-        const fallback =
-          res.status === 413
-            ? "This file is too large. Please upload a smaller PDF (under 4MB)."
-            : res.status === 429
-              ? "Too many uploads in a short period. Please wait a moment and try again."
-              : res.status === 401
-                ? "Your session expired. Please sign in again."
-                : res.status === 503
-                  ? "CV parsing is temporarily unavailable. Please try again shortly."
-                  : "We couldn't process this CV. Please try again."
-        throw new Error(body?.error ?? fallback)
+        setStatus("error")
+        // Server status drives the mapping. Server-supplied error message
+        // is treated as supporting context, not the user-facing copy.
+        setHumanError(
+          { status: res.status, message: body?.error },
+          // 422-class parse failures get the more specific "scanned image" copy.
+          res.status === 422 ? "cv-parse" : "cv-upload",
+        )
+        return
       }
 
       // Land on a brief success/transformation moment before redirecting.
@@ -160,7 +169,7 @@ export function CvUpload({ next }: Props) {
       setStatus("success")
     } catch (e) {
       setStatus("error")
-      setError(e instanceof Error ? e.message : "Something went wrong. Please try again.")
+      setHumanError(e, "cv-upload")
     }
   }
 
@@ -182,9 +191,7 @@ export function CvUpload({ next }: Props) {
     return (
       <div className="rounded-xl border border-border bg-card p-6 sm:p-8">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background">
-            <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden />
-          </div>
+          <NexaLoader size={36} label="Preparing your profile" />
           <div className="min-w-0">
             <p className="text-sm font-medium leading-tight">{current.label}</p>
             <p className="mt-1 text-xs text-muted-foreground">{current.hint}</p>
@@ -367,17 +374,29 @@ export function CvUpload({ next }: Props) {
             onClick={reset}
             className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
           >
-            Replace
+            Choose a different PDF
           </button>
         </div>
       )}
 
       {error && (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+        <div
+          role="alert"
+          className="flex items-start gap-2.5 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+        >
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-          <span>{error}</span>
+          <div className="min-w-0">
+            <p className="font-medium leading-tight">{error.title}</p>
+            {error.hint && (
+              <p className="mt-1 text-[13px] leading-relaxed text-destructive/85">
+                {error.hint}
+              </p>
+            )}
+          </div>
         </div>
       )}
+
+      <CvUploadGuidance />
 
       <div className="flex flex-col gap-2 sm:flex-row">
         <Button onClick={submit} disabled={!file || status === "uploading"} className="sm:flex-1">

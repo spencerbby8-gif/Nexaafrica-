@@ -229,4 +229,62 @@
     color: var(--foreground);
     font-weight: 600;
   }
+
+  /* ----------------------------------------------------------------
+     Nexa signature loader — two breathing rings around the monogram.
+     Slow, calm, premium. Disabled for prefers-reduced-motion users.
+     ---------------------------------------------------------------- */
+  .nexa-loader-ring {
+    animation: nexa-loader-breath 1.8s ease-in-out infinite;
+    transform-origin: center;
+    will-change: transform, opacity;
+  }
+  .nexa-loader-ring--delayed {
+    animation-delay: 0.6s;
+  }
+  @keyframes nexa-loader-breath {
+    0%,
+    100% {
+      transform: scale(0.92);
+      opacity: 0.3;
+    }
+    50% {
+      transform: scale(1.08);
+      opacity: 0.85;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .nexa-loader-ring {
+      animation: none;
+      opacity: 0.45;
+    }
+  }
+
+  /* ----------------------------------------------------------------
+     Save-action confirmation pulse. Fired once on save success so the
+     user gets a tactile "yes, that worked" without a toast. Honors
+     prefers-reduced-motion via no-op fallback.
+     ---------------------------------------------------------------- */
+  .nexa-pulse-once {
+    animation: nexa-pulse-once 480ms ease-out 1;
+  }
+  @keyframes nexa-pulse-once {
+    0% {
+      transform: scale(1);
+      box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 45%, transparent);
+    }
+    60% {
+      transform: scale(1.04);
+      box-shadow: 0 0 0 6px color-mix(in oklab, var(--accent) 0%, transparent);
+    }
+    100% {
+      transform: scale(1);
+      box-shadow: 0 0 0 0 transparent;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .nexa-pulse-once {
+      animation: none;
+    }
+  }
 }

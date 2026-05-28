@@ -349,7 +349,24 @@ export function JobDetailLayout({
             kind="role"
             slug={job.slug}
             path={`/role/${job.slug}`}
-            message={`${job.title} at ${job.company} — open remote role on Nexa`}
+            // WhatsApp-native multi-line share text. Plain text only, no
+            // markdown, separated by line breaks because WhatsApp renders
+            // them faithfully and chat skimmers scan vertically. Each line
+            // is trimmed under ~50 chars to survive WhatsApp's preview crop.
+            message={[
+              `${job.title} — ${job.company}`,
+              [
+                job.is_remote ? 'Remote' : null,
+                job.is_open_to_africa ? 'Open to Africa' : job.country,
+                job.salary_range,
+              ]
+                .filter(Boolean)
+                .join(' · '),
+              '',
+              'Verified on Nexa — direct apply, no recruiter spam.',
+            ]
+              .filter((l) => l !== null)
+              .join('\n')}
           />
         </div>
       </section>

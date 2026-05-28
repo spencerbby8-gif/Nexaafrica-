@@ -69,8 +69,15 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: 0.7,
   }))
 
-  // Individual roles
-  const roleUrls: MetadataRoute.Sitemap = jobs.map((j) => ({
+  // Individual roles. Drop stale roles (expired or >90d old) — submitting
+  // stale URLs to Google wastes crawl budget and hurts Job Posting trust.
+  const ninetyDaysAgo = Date.now() - 90 * 24 * 60 * 60 * 1000
+  const freshJobs = jobs.filter((j) => {
+    if (j.expires_at && new Date(j.expires_at).getTime() < Date.now()) return false
+    if (new Date(j.created_at).getTime() < ninetyDaysAgo) return false
+    return true
+  })
+  const roleUrls: MetadataRoute.Sitemap = freshJobs.map((j) => ({
     url: `${base}/role/${j.slug}`,
     lastModified: new Date(j.created_at),
     changeFrequency: 'weekly',

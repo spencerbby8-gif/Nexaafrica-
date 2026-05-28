@@ -35,8 +35,23 @@ export async function GET() {
   // at a glance whether the inventory is healthy.
   const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
   const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
+  const ninetyDaysAgo = Date.now() - 90 * 24 * 60 * 60 * 1000
   const last7d = jobs.filter((j) => new Date(j.created_at).getTime() >= sevenDaysAgo).length
   const last30d = jobs.filter((j) => new Date(j.created_at).getTime() >= thirtyDaysAgo).length
+
+  // Stale counts — these are excluded from the sitemap and noindexed at the
+  // role level, but tracking them surfaces if the ingest pipeline has stalled.
+  const expired = jobs.filter(
+    (j) => j.expires_at && new Date(j.expires_at).getTime() < Date.now(),
+  ).length
+  const olderThan90d = jobs.filter(
+    (j) => new Date(j.created_at).getTime() < ninetyDaysAgo,
+  ).length
+  const indexableRoles = jobs.length - expired - olderThan90d
+
+  // Open-to-Africa is the strategic SEO moat — call it out separately so
+  // the founder watches the moat depth grow week over week.
+  const openToAfrica = jobs.filter((j) => j.is_open_to_africa).length
 
   return NextResponse.json(
     {
@@ -44,8 +59,15 @@ export async function GET() {
       siteUrl: base,
       sitemap: `${base}/sitemap.xml`,
       robots: `${base}/robots.txt`,
+      verification: {
+        google: Boolean(process.env.GOOGLE_SITE_VERIFICATION),
+        bing: Boolean(process.env.BING_SITE_VERIFICATION),
+        yandex: Boolean(process.env.YANDEX_VERIFICATION),
+      },
       counts: {
         roles: jobs.length,
+        rolesIndexable: indexableRoles,
+        rolesOpenToAfrica: openToAfrica,
         companies: companies.length,
         countries: COUNTRIES.length,
         guides: GUIDES.length,
@@ -54,6 +76,8 @@ export async function GET() {
       freshness: {
         rolesLast7d: last7d,
         rolesLast30d: last30d,
+        rolesExpired: expired,
+        rolesOlderThan90d: olderThan90d,
       },
       sample: {
         // First few canonical URLs of each kind — useful for visually

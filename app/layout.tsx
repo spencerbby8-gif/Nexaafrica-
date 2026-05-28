@@ -55,6 +55,15 @@ export const metadata: Metadata = {
     description: 'Remote work for African talent.',
     images: [defaultOg],
   },
+  // Verification tokens are env-driven so the founder can add Search Console
+  // / Bing / Yandex without a code change. Empty values are skipped by Next.
+  verification: {
+    google: process.env.GOOGLE_SITE_VERIFICATION,
+    yandex: process.env.YANDEX_VERIFICATION,
+    other: process.env.BING_SITE_VERIFICATION
+      ? { 'msvalidate.01': process.env.BING_SITE_VERIFICATION }
+      : undefined,
+  },
   robots: { index: true, follow: true },
 }
 

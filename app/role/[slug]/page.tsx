@@ -104,8 +104,32 @@ export async function generateMetadata({
   const { slug } = await params
   const job = await getJobBySlug(slug)
   if (!job) return {}
-  const description = firstParagraph(job.description_md).slice(0, 200)
-  const title = `${job.title} at ${job.company}`
+  // Description: prepend a calm trust prefix that compounds CTR by giving the
+  // SERP snippet a recognisable Nexa shape. Falls back to body text when the
+  // description is rich enough to stand on its own (>140 chars of real prose).
+  const body = firstParagraph(job.description_md)
+  const trustPrefix = job.is_open_to_africa
+    ? 'Open to African applicants. '
+    : ''
+  const description = (trustPrefix + (body || `${job.title} at ${job.company}.`)).slice(0, 200)
+  // SERP-grade title: lead with role, anchor in Remote, append the strongest
+  // trust modifier we can. Order: Open to Africa > USD > country. Each modifier
+  // is shown at most once and trimmed to keep the title under ~60 chars where
+  // possible (Google truncates around there for mobile SERPs).
+  const trustModifier = job.is_open_to_africa
+    ? 'Open to Africa'
+    : /\$|usd/i.test(job.salary_range ?? '')
+      ? 'USD'
+      : job.country || null
+  const titleSuffix = trustModifier ? ` (Remote, ${trustModifier})` : ' (Remote)'
+  const title = `${job.title} at ${job.company}${titleSuffix}`
+  // Stale jobs hurt Google Jobs trust + waste crawl budget. If the role is
+  // past its validThrough (or older than 90 days when none is set), noindex
+  // it but keep the page reachable for any inbound link with deep equity.
+  const ageMs = Date.now() - new Date(job.created_at).getTime()
+  const stale = job.expires_at
+    ? Date.now() > new Date(job.expires_at).getTime()
+    : ageMs > 90 * 24 * 60 * 60 * 1000
   const metaParts: string[] = []
   if (job.is_remote) metaParts.push('Remote')
   if (job.country) metaParts.push(job.country)
@@ -121,6 +145,9 @@ export async function generateMetadata({
     title,
     description,
     alternates: { canonical: `/role/${job.slug}` },
+    // Stale jobs: keep crawlable but excluded from index; Google still
+    // follows outbound links to fresher inventory.
+    ...(stale ? { robots: { index: false, follow: true } } : {}),
     openGraph: {
       title,
       description,

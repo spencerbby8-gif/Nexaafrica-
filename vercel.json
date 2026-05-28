@@ -1,6 +1,10 @@
 {
   "crons": [
     {
+      "path": "/api/ingest/run",
+      "schedule": "0 4 * * *"
+    },
+    {
       "path": "/api/jobs/deactivate-stale",
       "schedule": "0 6 * * *"
     }

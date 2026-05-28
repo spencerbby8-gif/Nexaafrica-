@@ -5,6 +5,7 @@ import { JobFeed } from '@/components/job-feed'
 import { JobFilters } from '@/components/job-filters'
 import { EmptyState } from '@/components/empty-state'
 import { TrustStrip } from '@/components/trust-strip'
+import { IntentRail } from '@/components/intent-rail'
 import { getCategories, getJobs } from '@/lib/queries'
 import type { EmploymentType } from '@/lib/types'
 
@@ -68,6 +69,10 @@ export default async function JobsPage({
 
         <div className="mt-4">
           <TrustStrip />
+        </div>
+
+        <div className="mt-6 border-t border-border/60 pt-6">
+          <IntentRail />
         </div>
 
         <nav

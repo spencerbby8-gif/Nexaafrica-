@@ -47,10 +47,34 @@ export function SiteFooter() {
             </li>
             <li>
               <Link
-                href="/jobs?africa=1"
+                href="/remote-jobs/search/open-to-africa"
                 className="text-foreground/80 hover:text-foreground"
               >
                 Open to Africa
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/remote-jobs/search/usd-paying"
+                className="text-foreground/80 hover:text-foreground"
+              >
+                USD-paying
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/remote-jobs/search/beginner-friendly"
+                className="text-foreground/80 hover:text-foreground"
+              >
+                Beginner-friendly
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/remote-jobs/search/ai-jobs"
+                className="text-foreground/80 hover:text-foreground"
+              >
+                AI jobs
               </Link>
             </li>
           </ul>

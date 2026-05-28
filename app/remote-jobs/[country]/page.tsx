@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { SiteShell } from '@/components/site-shell'
 import { JobFeed } from '@/components/job-feed'
 import { TrustStrip } from '@/components/trust-strip'
+import { IntentRail } from '@/components/intent-rail'
 import { FAQ } from '@/components/faq'
 import { breadcrumbJsonLd, itemListJsonLd, jsonLdString } from '@/lib/seo'
 import { COUNTRIES, getCountry } from '@/lib/countries'
@@ -115,6 +116,10 @@ export default async function CountryHubPage({
 
         <div className="mt-5">
           <TrustStrip />
+        </div>
+
+        <div className="mt-6 border-t border-border/60 pt-6">
+          <IntentRail />
         </div>
 
         <section className="mt-8">

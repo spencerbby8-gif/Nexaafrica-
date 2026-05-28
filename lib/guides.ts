@@ -374,6 +374,73 @@ export const GUIDES: Guide[] = [
       { label: 'Companies hiring remote in Africa', href: '/companies' },
     ],
   },
+  {
+    slug: 'usd-payments-from-africa',
+    title: 'How to receive USD salaries from Africa, legally',
+    description:
+      'A practical breakdown of how international payroll, tax, and currency actually work for African candidates earning in USD or EUR — covering Deel, Remote, Payoneer, Wise, and local-bank options.',
+    lede:
+      'Getting paid in USD from a remote job is the easy part. The infrastructure exists, it works, and millions of African workers already use it. Here is how it actually flows.',
+    publishedAt: today,
+    readMinutes: 6,
+    sections: [
+      {
+        heading: 'Three ways the money reaches you',
+        paragraphs: [
+          'There are three legitimate channels for receiving USD or EUR salaries in Africa, and most remote-first companies will offer at least one of them:',
+        ],
+        bullets: [
+          'Employer of Record (EoR) payroll — the company hires you through Deel, Remote, Oyster, Multiplier, or Velocity Global. The EoR is your legal employer in your country, files local tax on your behalf, and pays you in USD or local currency at the day\'s exchange rate.',
+          'International contractor payments — you sign a contractor agreement and invoice the company directly. Funds land in a Payoneer, Wise, or Mercury USD account. You handle tax declaration locally.',
+          'Direct USD wire to a domiciliary account — many Nigerian, Kenyan, and Ghanaian banks now offer USD-denominated accounts. The company wires you directly. Slower and more expensive in fees, but cuts out third parties.',
+        ],
+      },
+      {
+        heading: 'How to choose between EoR and contractor',
+        paragraphs: [
+          'EoR payroll is more expensive for the company but gives you employee benefits — paid time off, sometimes health stipends, sometimes equity vesting that works the same as a US employee. Choose this if the company offers it and you want stability.',
+          'Contractor status is cheaper for the company and gives you slightly more flexibility, but you lose employee protections and you are responsible for your own tax filing. Most senior remote engineers start as EoR employees and convert later if it makes sense.',
+        ],
+      },
+      {
+        heading: 'Tax, honestly',
+        paragraphs: [
+          'You owe tax in your country of residence — not the US, not the UK, not the country where the company is based. International tax treaties prevent double taxation in almost all cases. If you are an EoR employee, the EoR usually files local tax for you. If you are a contractor, you declare it yourself.',
+          'In Nigeria, this means filing with FIRS. In Kenya, with KRA. In South Africa, with SARS. The amounts and brackets vary, but the principle is the same: declare global income, pay local tax. Use a local accountant for your first year — it costs little and saves a lot.',
+        ],
+      },
+      {
+        heading: 'Currency and conversion',
+        paragraphs: [
+          'When the dollar reaches your local bank, you usually get converted at the official interbank rate, not the parallel market rate. In Nigeria specifically, this matters — keeping funds in a Payoneer or Wise USD wallet and converting only what you need each month often nets a meaningfully better effective rate.',
+          'Wise gives the cleanest conversion globally. Payoneer is more widely supported by US-based payroll. Mercury is engineering-friendly but harder to open from some African countries.',
+        ],
+      },
+    ],
+    faq: [
+      {
+        q: 'Do I need a US LLC or company to receive USD?',
+        a: 'No. None of the legitimate channels above require a US entity. People sometimes set up Delaware LLCs to access US banking, but for ordinary salary payments it is unnecessary overhead.',
+      },
+      {
+        q: 'Will the bank flag my incoming USD payments?',
+        a: 'Sometimes — usually only on the first one or two. Most African banks now have established categories for international remote-work income. Keep your contract and the EoR\'s payment notice handy in case compliance asks.',
+      },
+      {
+        q: 'How long does the money take to arrive?',
+        a: 'Through Deel or Remote, typically 1-3 business days from payday. Direct international wire, 3-7 business days. Payoneer, near-instant from the company side, 1-2 days for you to withdraw locally.',
+      },
+      {
+        q: 'Do I need a Domiciliary account in Nigeria?',
+        a: 'Helpful but not required. A Payoneer or Wise USD wallet works for almost all use cases. Domiciliary accounts are useful if you receive large lump sums or want to keep funds in USD long-term.',
+      },
+    ],
+    related: [
+      { label: 'Remote salary expectations for African candidates', href: '/guides/remote-salary-expectations-africa' },
+      { label: 'USD-paying remote roles', href: '/remote-jobs/search/usd-paying' },
+      { label: 'Open-to-Africa roles', href: '/remote-jobs/search/open-to-africa' },
+    ],
+  },
 ]
 
 export const GUIDES_BY_SLUG = new Map(GUIDES.map((g) => [g.slug, g]))

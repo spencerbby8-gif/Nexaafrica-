@@ -3,6 +3,7 @@ import { getCategories, getJobs } from '@/lib/queries'
 import { getCompanies } from '@/lib/companies'
 import { COUNTRIES } from '@/lib/countries'
 import { GUIDES } from '@/lib/guides'
+import { INTENTS } from '@/lib/intents'
 
 export const revalidate = 600
 
@@ -75,8 +76,18 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: 0.6,
   }))
 
+  // Search-intent landing pages
+  const intentUrls: MetadataRoute.Sitemap = INTENTS.map((i) => ({
+    url: `${base}/remote-jobs/search/${i.slug}`,
+    lastModified: new Date(i.updatedAt),
+    changeFrequency: 'daily',
+    // Open-to-Africa is the strategic flagship — surface it strongly.
+    priority: i.slug === 'open-to-africa' ? 0.9 : 0.75,
+  }))
+
   return [
     ...staticUrls,
+    ...intentUrls,
     ...countryUrls,
     ...categoryCountryUrls,
     ...companyUrls,

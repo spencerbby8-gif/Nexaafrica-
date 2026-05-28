@@ -2,9 +2,9 @@ import 'dotenv/config'
 import { config as loadEnv } from 'dotenv'
 loadEnv({ path: '/vercel/share/.env.project' })
 
-import { fetchGreenhouseJobs } from '../lib/ingest/sources/greenhouse'
-import { fetchLeverJobs } from '../lib/ingest/sources/lever'
-import { fetchAshbyJobs } from '../lib/ingest/sources/ashby'
+import { fetchGreenhouse } from '../lib/ingest/sources/greenhouse'
+import { fetchLever } from '../lib/ingest/sources/lever'
+import { fetchAshby } from '../lib/ingest/sources/ashby'
 import { validateNormalizedJob } from '../lib/ingest/validate'
 
 async function diag(label: string, fn: () => Promise<any[]>) {
@@ -24,17 +24,17 @@ async function diag(label: string, fn: () => Promise<any[]>) {
   let pass = 0
   for (const j of jobs) {
     const r = validateNormalizedJob(j)
-    if (r.ok) pass++
-    else reasons[r.reason] = (reasons[r.reason] ?? 0) + 1
+    if (r === null) pass++
+    else reasons[r] = (reasons[r] ?? 0) + 1
   }
   console.log(`passed: ${pass} / ${jobs.length}`)
   console.log('rejection reasons:', reasons)
 }
 
 async function main() {
-  await diag('Greenhouse / gitlab', () => fetchGreenhouseJobs('gitlab', 'GitLab'))
-  await diag('Lever / netlify', () => fetchLeverJobs('netlify', 'Netlify'))
-  await diag('Ashby / vercel', () => fetchAshbyJobs('vercel', 'Vercel'))
+  await diag('Greenhouse / gitlab', () => fetchGreenhouse('gitlab', 'GitLab'))
+  await diag('Lever / netlify', () => fetchLever('netlify', 'Netlify'))
+  await diag('Ashby / vercel', () => fetchAshby('vercel', 'Vercel'))
 }
 
 main().catch((e) => {

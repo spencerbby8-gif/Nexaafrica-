@@ -13,6 +13,7 @@ import {
 import { getIntent, listIntentSlugs } from '@/lib/intents'
 import { getJobs } from '@/lib/queries'
 import type { Job } from '@/lib/types'
+import { ogImage } from '@/lib/og'
 
 // Intent pages are crawl targets — keep them statically rendered with a
 // short revalidate so freshness counts and titles update without hammering
@@ -34,6 +35,13 @@ export async function generateMetadata({
   const intent = getIntent(slug)
   if (!intent) return {}
   const url = `/remote-jobs/search/${slug}`
+  const ogUrl = ogImage({
+    kind: 'intent',
+    title: intent.h1,
+    subtitle: intent.lede.slice(0, 130),
+    meta: 'Live inventory \u00b7 Updated daily',
+    badge: slug === 'open-to-africa' ? 'Open to Africa' : undefined,
+  })
   return {
     title: intent.title,
     description: intent.description,
@@ -43,8 +51,14 @@ export async function generateMetadata({
       description: intent.description,
       type: 'website',
       url,
+      images: [{ url: ogUrl, width: 1200, height: 630, alt: intent.title }],
     },
-    twitter: { card: 'summary_large_image', title: intent.title, description: intent.description },
+    twitter: {
+      card: 'summary_large_image',
+      title: intent.title,
+      description: intent.description,
+      images: [ogUrl],
+    },
   }
 }
 

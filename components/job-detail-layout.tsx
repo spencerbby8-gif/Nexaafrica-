@@ -5,6 +5,8 @@ import { JobCard } from '@/components/job-card'
 import { CompanyAvatar } from '@/components/company-avatar'
 import { ApplyButton } from '@/components/apply-button'
 import { SaveJobButton } from '@/components/save-job-button'
+import { ShareSheet } from '@/components/share-sheet'
+import { RoleViewTracker } from '@/components/role-view-tracker'
 import { employmentLabel, isFresh, postedLabel } from '@/lib/format'
 import type { Job } from '@/lib/types'
 
@@ -239,6 +241,7 @@ export function JobDetailLayout({
           <div className="flex items-center gap-2">
             <ApplyButton
               applyUrl={job.apply_url}
+              jobId={job.id}
               jobSlug={job.slug}
               state={applyState}
               className="h-10"
@@ -336,6 +339,28 @@ export function JobDetailLayout({
         </section>
       )}
 
+      <section className="mt-10 border-t border-border/60 pt-6" aria-label="Share this role">
+        <h2 className="text-sm font-medium text-muted-foreground">Share this role</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Send it to a friend who&apos;d be a great fit. The link opens with a clean preview.
+        </p>
+        <div className="mt-3">
+          <ShareSheet
+            kind="role"
+            slug={job.slug}
+            path={`/role/${job.slug}`}
+            message={`${job.title} at ${job.company} — open remote role on Nexa`}
+          />
+        </div>
+      </section>
+
+      <RoleViewTracker
+        jobId={job.id}
+        slug={job.slug}
+        company={job.company}
+        openToAfrica={job.is_open_to_africa}
+      />
+
       {/* Sticky mobile apply CTA */}
       <div
         className="fixed inset-x-0 bottom-14 z-30 border-t border-border/60 bg-background/95 px-4 pb-[calc(0.625rem+env(safe-area-inset-bottom))] pt-2.5 backdrop-blur md:hidden"
@@ -345,6 +370,7 @@ export function JobDetailLayout({
         <div className="flex items-center gap-2">
           <ApplyButton
             applyUrl={job.apply_url}
+            jobId={job.id}
             jobSlug={job.slug}
             state={applyState}
             className="h-11 flex-1 text-base"

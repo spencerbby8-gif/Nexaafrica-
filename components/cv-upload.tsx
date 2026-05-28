@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils"
 import { CvUploadGuidance } from "@/components/cv-upload-guidance"
 import { NexaLoader } from "@/components/nexa-loader"
 import { humanizeError, type ErrorContext } from "@/lib/errors"
+import { track } from "@/lib/analytics"
 
 // Match the server limit (4 MB). Vercel serverless caps request bodies near 4.5 MB,
 // so anything larger is dropped at the platform layer and shows up as "Failed to fetch".
@@ -117,6 +118,8 @@ export function CvUpload({ next }: Props) {
 
   const submit = async () => {
     if (!file) return
+    const sizeKb = Math.round(file.size / 1024)
+    track({ name: "cv_upload_start", props: { sizeKb } })
     setStatus("uploading")
     setError(null)
 
@@ -139,6 +142,7 @@ export function CvUpload({ next }: Props) {
       } catch (networkErr) {
         stopStepRotation()
         setStatus("error")
+        track({ name: "cv_upload_failed", props: { reason: "network" } })
         setHumanError(networkErr, "cv-upload")
         return
       }
@@ -156,6 +160,10 @@ export function CvUpload({ next }: Props) {
         setStatus("error")
         // Server status drives the mapping. Server-supplied error message
         // is treated as supporting context, not the user-facing copy.
+        track({
+          name: "cv_upload_failed",
+          props: { reason: res.status === 422 ? "parse_failed" : `http_${res.status}` },
+        })
         setHumanError(
           { status: res.status, message: body?.error },
           // 422-class parse failures get the more specific "scanned image" copy.
@@ -167,8 +175,10 @@ export function CvUpload({ next }: Props) {
       // Land on a brief success/transformation moment before redirecting.
       // Gives users a sense of completion and reinforces the value created.
       setStatus("success")
+      track({ name: "cv_upload_success", props: { sizeKb } })
     } catch (e) {
       setStatus("error")
+      track({ name: "cv_upload_failed", props: { reason: "unknown" } })
       setHumanError(e, "cv-upload")
     }
   }

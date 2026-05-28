@@ -13,9 +13,11 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { ShieldCheck, FileText, ArrowUpRight, ArrowRightFromLine } from "lucide-react"
+import { track } from "@/lib/analytics"
 
 type Props = {
   applyUrl: string
+  jobId?: string
   jobSlug: string
   /**
    * "authed-incomplete" → user signed in, no profile yet → show gate, send to onboarding
@@ -32,6 +34,7 @@ type Props = {
 
 export function ApplyButton({
   applyUrl,
+  jobId,
   jobSlug,
   state,
   className,
@@ -46,7 +49,15 @@ export function ApplyButton({
   if (state === "authed-complete") {
     return (
       <Button asChild variant={variant} size={size} className={className}>
-        <a href={applyUrl} target="_blank" rel="noopener noreferrer nofollow">
+        <a
+          href={applyUrl}
+          target="_blank"
+          rel="noopener noreferrer nofollow"
+          onClick={() => {
+            track({ name: 'apply_gate_click', props: { jobId: jobId ?? jobSlug, state } })
+            track({ name: 'apply_outbound', props: { jobId: jobId ?? jobSlug, slug: jobSlug } })
+          }}
+        >
           {children ?? "Apply on company site"}
           <ArrowUpRight className="ml-1 h-4 w-4" />
         </a>
@@ -60,7 +71,15 @@ export function ApplyButton({
       : `/onboarding?next=${encodeURIComponent(`/role/${jobSlug}?apply=1`)}`
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (o) {
+          track({ name: 'apply_gate_click', props: { jobId: jobId ?? jobSlug, state } })
+        }
+        setOpen(o)
+      }}
+    >
       <DialogTrigger asChild>
         <Button
           variant={variant}

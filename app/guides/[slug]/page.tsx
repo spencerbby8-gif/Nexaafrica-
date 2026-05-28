@@ -9,6 +9,7 @@ import {
   jsonLdString,
 } from '@/lib/seo'
 import { GUIDES, getGuide } from '@/lib/guides'
+import { ogImage } from '@/lib/og'
 
 type Params = { slug: string }
 
@@ -24,6 +25,12 @@ export async function generateMetadata({
   const { slug } = await params
   const guide = getGuide(slug)
   if (!guide) return {}
+  const ogUrl = ogImage({
+    kind: 'guide',
+    title: guide.title,
+    subtitle: guide.description.slice(0, 130),
+    meta: `${guide.readMinutes} min read`,
+  })
   return {
     title: guide.title,
     description: guide.description,
@@ -34,11 +41,13 @@ export async function generateMetadata({
       type: 'article',
       publishedTime: guide.publishedAt,
       modifiedTime: guide.updatedAt ?? guide.publishedAt,
+      images: [{ url: ogUrl, width: 1200, height: 630, alt: guide.title }],
     },
     twitter: {
       card: 'summary_large_image',
       title: guide.title,
       description: guide.description,
+      images: [ogUrl],
     },
   }
 }

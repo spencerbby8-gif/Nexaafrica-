@@ -1,0 +1,235 @@
+import { ImageResponse } from 'next/og'
+import type { NextRequest } from 'next/server'
+import { siteHost } from '@/lib/site'
+
+export const runtime = 'edge'
+// 24h cache + immutable for crawlers; the URL embeds enough state to
+// invalidate naturally when content changes.
+export const revalidate = 86400
+
+const WIDTH = 1200
+const HEIGHT = 630
+
+// Brand tokens duplicated as raw values because next/og can't read CSS variables.
+// Keep these in sync with globals.css if the brand palette ever changes.
+const BG = '#0a0a0a'
+const FG = '#fafafa'
+const MUTED = '#a1a1aa'
+const ACCENT = '#34d399' // calm green — Nexa signature
+const BORDER = '#27272a'
+
+type Params = {
+  kind: 'role' | 'intent' | 'company' | 'guide' | 'profile' | 'default'
+  title: string
+  subtitle?: string
+  meta?: string // small label, e.g. "Open to Africa · USD · Engineering"
+  badge?: string // top-right pill text, e.g. "Open to Africa"
+}
+
+function clamp(s: string | undefined | null, max: number): string {
+  if (!s) return ''
+  const t = s.trim()
+  if (t.length <= max) return t
+  return t.slice(0, max - 1) + '\u2026'
+}
+
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url)
+  const kind = (searchParams.get('kind') as Params['kind']) || 'default'
+  const title = clamp(searchParams.get('title') || 'Nexa', 110)
+  const subtitle = clamp(searchParams.get('subtitle') || '', 130)
+  const meta = clamp(searchParams.get('meta') || '', 80)
+  const badge = clamp(searchParams.get('badge') || '', 32)
+
+  const kindLabel: Record<Params['kind'], string> = {
+    role: 'Remote role',
+    intent: 'Remote jobs',
+    company: 'Hiring on Nexa',
+    guide: 'Guide',
+    profile: 'Verified profile',
+    default: 'Nexa',
+  }
+
+  return new ImageResponse(
+    (
+      <div
+        style={{
+          width: '100%',
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          background: BG,
+          color: FG,
+          padding: '64px 72px',
+          fontFamily: 'Inter, system-ui, sans-serif',
+          position: 'relative',
+        }}
+      >
+        {/* Subtle ambient gradient bloom (no flashy gradients on body) */}
+        <div
+          style={{
+            position: 'absolute',
+            top: -200,
+            right: -200,
+            width: 600,
+            height: 600,
+            borderRadius: 9999,
+            background: `radial-gradient(circle, ${ACCENT}22 0%, transparent 70%)`,
+            display: 'flex',
+          }}
+        />
+
+        {/* Header row */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            zIndex: 1,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 12,
+                background: ACCENT,
+                color: BG,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 26,
+                fontWeight: 700,
+                letterSpacing: -1,
+              }}
+            >
+              N
+            </div>
+            <div
+              style={{
+                fontSize: 26,
+                fontWeight: 600,
+                letterSpacing: -0.5,
+                display: 'flex',
+              }}
+            >
+              Nexa
+            </div>
+            <div
+              style={{
+                fontSize: 18,
+                color: MUTED,
+                marginLeft: 12,
+                paddingLeft: 14,
+                borderLeft: `1px solid ${BORDER}`,
+                display: 'flex',
+              }}
+            >
+              {kindLabel[kind]}
+            </div>
+          </div>
+
+          {badge ? (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '8px 16px',
+                borderRadius: 999,
+                border: `1px solid ${ACCENT}55`,
+                background: `${ACCENT}15`,
+                color: ACCENT,
+                fontSize: 18,
+                fontWeight: 500,
+              }}
+            >
+              <div
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 999,
+                  background: ACCENT,
+                  display: 'flex',
+                }}
+              />
+              {badge}
+            </div>
+          ) : (
+            <div style={{ display: 'flex' }} />
+          )}
+        </div>
+
+        {/* Body — flex-grow pushes footer to bottom */}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            flexGrow: 1,
+            zIndex: 1,
+            paddingTop: 32,
+            paddingBottom: 32,
+          }}
+        >
+          <div
+            style={{
+              fontSize: title.length > 60 ? 56 : 68,
+              lineHeight: 1.08,
+              fontWeight: 700,
+              letterSpacing: -1.5,
+              color: FG,
+              display: 'flex',
+              maxWidth: 1000,
+            }}
+          >
+            {title}
+          </div>
+          {subtitle ? (
+            <div
+              style={{
+                marginTop: 22,
+                fontSize: 28,
+                lineHeight: 1.4,
+                color: MUTED,
+                display: 'flex',
+                maxWidth: 1000,
+              }}
+            >
+              {subtitle}
+            </div>
+          ) : (
+            <div style={{ display: 'flex' }} />
+          )}
+        </div>
+
+        {/* Footer row */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            zIndex: 1,
+            borderTop: `1px solid ${BORDER}`,
+            paddingTop: 24,
+          }}
+        >
+          <div style={{ display: 'flex', fontSize: 20, color: MUTED }}>
+            {meta || 'Remote work for African talent'}
+          </div>
+          <div style={{ display: 'flex', fontSize: 20, color: MUTED }}>
+            {siteHost()}
+          </div>
+        </div>
+      </div>
+    ),
+    {
+      width: WIDTH,
+      height: HEIGHT,
+      headers: {
+        'Cache-Control': 'public, max-age=86400, s-maxage=86400, immutable',
+      },
+    },
+  )
+}

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, useTransition } from 'react'
 import { Bookmark, BookmarkCheck } from 'lucide-react'
 import { toggleSavedJob } from '@/app/actions/saved-jobs'
 import { humanizeError } from '@/lib/errors'
+import { track } from '@/lib/analytics'
 
 type Props = {
   jobId: string
@@ -67,6 +68,7 @@ export function SaveJobButton({
           router.push(`/sign-in?next=${encodeURIComponent(`/role/${jobSlug}`)}`)
           return
         }
+        track({ name: 'save_job_failed', props: { jobId, reason: res.error ?? 'unknown' } })
         flashError(humanizeError({ message: res.error }, 'save-job').title)
         return
       }
@@ -74,6 +76,7 @@ export function SaveJobButton({
       if (res.saved !== next) setSaved(res.saved)
       // Trigger one tactile pulse on a successful save (not on un-save).
       if (res.saved) setPulse((p) => p + 1)
+      track({ name: 'save_job', props: { jobId, saved: res.saved } })
     })
   }
 

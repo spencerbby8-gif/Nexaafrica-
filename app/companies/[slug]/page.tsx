@@ -13,6 +13,7 @@ import {
 } from '@/lib/seo'
 import { getCompanyBySlug } from '@/lib/companies'
 import { getCategories } from '@/lib/queries'
+import { ogImage } from '@/lib/og'
 
 export const revalidate = 600
 
@@ -31,11 +32,28 @@ export async function generateMetadata({
   const description = `${company.jobCount} open remote ${
     company.jobCount === 1 ? 'role' : 'roles'
   } at ${company.name}. Direct apply on the company&apos;s site. Reviewed by Nexa.`
+  const ogUrl = ogImage({
+    kind: 'company',
+    title: company.name,
+    subtitle: `${company.jobCount} open remote ${company.jobCount === 1 ? 'role' : 'roles'}`,
+    meta: 'Reviewed by Nexa',
+  })
   return {
     title,
     description,
     alternates: { canonical: `/companies/${slug}` },
-    openGraph: { title, description, type: 'website' },
+    openGraph: {
+      title,
+      description,
+      type: 'website',
+      images: [{ url: ogUrl, width: 1200, height: 630, alt: company.name }],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description,
+      images: [ogUrl],
+    },
   }
 }
 

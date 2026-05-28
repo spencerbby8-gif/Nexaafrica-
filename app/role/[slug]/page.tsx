@@ -5,6 +5,7 @@ import { JobDetailLayout } from '@/components/job-detail-layout'
 import { getJobBySlug, getRelatedJobs } from '@/lib/queries'
 import { isJobSaved } from '@/lib/saved-jobs'
 import { createClient } from '@/lib/supabase/server'
+import { ogImage } from '@/lib/og'
 
 // Per-user apply state needs request cookies, so this route renders dynamically.
 // Job data is short-lived enough that this is fine for SEO; metadata stays cacheable.
@@ -105,6 +106,17 @@ export async function generateMetadata({
   if (!job) return {}
   const description = firstParagraph(job.description_md).slice(0, 200)
   const title = `${job.title} at ${job.company}`
+  const metaParts: string[] = []
+  if (job.is_remote) metaParts.push('Remote')
+  if (job.country) metaParts.push(job.country)
+  if (job.salary_range) metaParts.push(job.salary_range)
+  const ogUrl = ogImage({
+    kind: 'role',
+    title: `${job.title}`,
+    subtitle: `at ${job.company}`,
+    meta: metaParts.join(' \u00b7 ') || 'Remote',
+    badge: job.is_open_to_africa ? 'Open to Africa' : undefined,
+  })
   return {
     title,
     description,
@@ -114,8 +126,14 @@ export async function generateMetadata({
       description,
       type: 'article',
       url: `/role/${job.slug}`,
+      images: [{ url: ogUrl, width: 1200, height: 630, alt: title }],
     },
-    twitter: { card: 'summary_large_image', title, description },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description,
+      images: [ogUrl],
+    },
   }
 }
 

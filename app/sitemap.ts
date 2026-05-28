@@ -4,11 +4,12 @@ import { getCompanies } from '@/lib/companies'
 import { COUNTRIES } from '@/lib/countries'
 import { GUIDES } from '@/lib/guides'
 import { INTENTS } from '@/lib/intents'
+import { siteUrl } from '@/lib/site'
 
 export const revalidate = 600
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const base = 'https://nexa.africa'
+  const base = siteUrl()
   const now = new Date()
 
   const [categories, jobs, companies] = await Promise.all([

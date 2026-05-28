@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from 'next'
 import { Inter, Geist_Mono } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
+import { ogImage } from '@/lib/og'
+import { siteUrl } from '@/lib/site'
 import './globals.css'
 
 const inter = Inter({
@@ -15,8 +17,16 @@ const geistMono = Geist_Mono({
   display: 'swap',
 })
 
+const defaultOg = ogImage({
+  kind: 'default',
+  title: 'Remote work for African talent',
+  subtitle: 'Verified roles. Transparent pay. Direct apply.',
+  meta: '1,500+ live remote roles \u00b7 Updated daily',
+  badge: 'Open to Africa',
+})
+
 export const metadata: Metadata = {
-  metadataBase: new URL('https://nexa.africa'),
+  metadataBase: new URL(siteUrl()),
   title: {
     default: 'Nexa — Remote work for African talent',
     template: '%s · Nexa',
@@ -34,14 +44,16 @@ export const metadata: Metadata = {
     title: 'Nexa — Remote work for African talent',
     description:
       'Legitimate global remote work for African professionals. Verified roles, transparent pay.',
-    url: 'https://nexa.africa',
+    url: siteUrl(),
     siteName: 'Nexa',
     type: 'website',
+    images: [{ url: defaultOg, width: 1200, height: 630, alt: 'Nexa — Remote work for African talent' }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Nexa',
     description: 'Remote work for African talent.',
+    images: [defaultOg],
   },
   robots: { index: true, follow: true },
 }

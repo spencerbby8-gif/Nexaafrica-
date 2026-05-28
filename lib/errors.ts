@@ -18,13 +18,7 @@ export type ErrorContext =
   | 'profile'
   | 'generic'
 
-type Input =
-  | Error
-  | { message?: string; status?: number; code?: string }
-  | { ok: false; error?: string; status?: number }
-  | string
-  | null
-  | undefined
+type Input = unknown
 
 interface Mapped {
   /** One-line, human, calm. */

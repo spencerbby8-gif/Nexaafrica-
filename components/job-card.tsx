@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { TrustBadge } from '@/components/trust-badge'
 import { CompanyAvatar } from '@/components/company-avatar'
-import { employmentLabel, isFresh, postedLabel, relativeTime } from '@/lib/format'
+import { employmentLabel, isFresh, postedLabel, relativeTime, salaryDisplay } from '@/lib/format'
 import type { Job } from '@/lib/types'
 
 function firstParagraph(md: string): string {
@@ -21,6 +21,7 @@ export function JobCard({
   matchReasons?: string[]
 }) {
   const fresh = isFresh(job.created_at, 3)
+  const salary = salaryDisplay(job.salary_range, { openToAfrica: job.is_open_to_africa })
   return (
     <Link
       href={`/role/${job.slug}`}
@@ -58,7 +59,13 @@ export function JobCard({
 
         <div className="flex flex-wrap items-center gap-1.5">
           {job.is_remote && <TrustBadge variant="remote" />}
-          {job.salary_range && <TrustBadge variant="usd" label={job.salary_range} />}
+          {salary.isExplicit ? (
+            <TrustBadge variant="usd" label={salary.label} />
+          ) : (
+            <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+              {salary.label}
+            </span>
+          )}
           {job.is_open_to_africa && <TrustBadge variant="verified" label="Open to Africa" />}
           <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-foreground/70">
             {employmentLabel(job.employment_type)}

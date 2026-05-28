@@ -43,6 +43,12 @@ export async function Navbar() {
               >
                 Profile
               </Link>
+              <Link
+                href="/settings"
+                className="rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+              >
+                Settings
+              </Link>
             </>
           )}
         </div>

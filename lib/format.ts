@@ -74,3 +74,34 @@ const employmentLabelMap: Record<string, string> = {
 export function employmentLabel(type: string): string {
   return employmentLabelMap[type] ?? type
 }
+
+/**
+ * Salary display normalization.
+ *
+ * Returns either the original salary string (when present and clean) or a
+ * graceful fallback line so the compensation slot is never visually empty.
+ * The fallback varies based on what we know about the role — open-to-Africa
+ * roles get a region-aware variant since pay often differs by location.
+ */
+export type SalaryDisplay = {
+  /** Short label suited to a badge (max ~28 chars). */
+  label: string
+  /** True when this is a real published salary, false for fallback copy. */
+  isExplicit: boolean
+}
+
+export function salaryDisplay(
+  raw: string | null | undefined,
+  opts: { openToAfrica?: boolean } = {},
+): SalaryDisplay {
+  const trimmed = (raw ?? '').trim()
+  if (trimmed) {
+    // Light cleanup: collapse whitespace, strip trailing punctuation.
+    const cleaned = trimmed.replace(/\s+/g, ' ').replace(/[\s.;,]+$/g, '')
+    return { label: cleaned, isExplicit: true }
+  }
+  if (opts.openToAfrica) {
+    return { label: 'Salary varies by region', isExplicit: false }
+  }
+  return { label: 'Compensation not publicly listed', isExplicit: false }
+}

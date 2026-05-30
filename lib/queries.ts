@@ -24,6 +24,11 @@ export async function getJobs(filters: JobFilters = {}): Promise<Job[]> {
   if (filters.country) query = query.ilike('country', filters.country)
   if (filters.remoteOnly) query = query.eq('is_remote', true)
   if (filters.openToAfrica) query = query.eq('is_open_to_africa', true)
+  // USD-paying is a core positioning pillar. salary_range is free text, so
+  // match the common ways USD compensation is expressed ($ symbol or "USD").
+  if (filters.usdOnly) {
+    query = query.or('salary_range.ilike.%$%,salary_range.ilike.%USD%')
+  }
   if (filters.employmentType) query = query.eq('employment_type', filters.employmentType)
   if (filters.freshDays && filters.freshDays > 0) {
     query = query.gte('created_at', freshIso(filters.freshDays))

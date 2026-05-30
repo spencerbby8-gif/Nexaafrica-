@@ -3,7 +3,17 @@
  * fields we can vouch for. Google penalises stuffed/inaccurate structured data.
  */
 
-const SITE = 'https://nexa.africa'
+import { siteUrl } from '@/lib/site'
+
+/**
+ * Resolve a possibly-relative URL to an absolute canonical using the same
+ * resolver that powers page canonicals, OG URLs, and the sitemap. This keeps
+ * structured-data URLs aligned with the real deployment domain — a mismatch
+ * here tells Google a different page is authoritative and dilutes indexing.
+ */
+function abs(url: string): string {
+  return url.startsWith('http') ? url : siteUrl(url)
+}
 
 export function breadcrumbJsonLd(
   items: { name: string; url: string }[],
@@ -15,7 +25,7 @@ export function breadcrumbJsonLd(
       '@type': 'ListItem',
       position: i + 1,
       name: item.name,
-      item: item.url.startsWith('http') ? item.url : `${SITE}${item.url}`,
+      item: abs(item.url),
     })),
   }
 }
@@ -33,7 +43,7 @@ export function itemListJsonLd(
       '@type': 'ListItem',
       position: i + 1,
       name: item.name,
-      url: item.url.startsWith('http') ? item.url : `${SITE}${item.url}`,
+      url: abs(item.url),
     })),
   }
 }
@@ -71,12 +81,12 @@ export function articleJsonLd(args: {
     dateModified: args.dateModified ?? args.datePublished,
     mainEntityOfPage: {
       '@type': 'WebPage',
-      '@id': args.url.startsWith('http') ? args.url : `${SITE}${args.url}`,
+      '@id': abs(args.url),
     },
     publisher: {
       '@type': 'Organization',
       name: 'Nexa',
-      url: SITE,
+      url: siteUrl(),
     },
   }
 }

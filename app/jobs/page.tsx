@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { SiteShell } from '@/components/site-shell'
 import { JobFeed } from '@/components/job-feed'
 import { JobFilters } from '@/components/job-filters'
+import { JobSearchControls } from '@/components/job-search-controls'
 import { EmptyState } from '@/components/empty-state'
 import { TrustStrip } from '@/components/trust-strip'
 import { IntentRail } from '@/components/intent-rail'
@@ -24,6 +25,7 @@ type SearchParams = {
   employment_type?: string
   remote?: string
   africa?: string
+  usd?: string
 }
 
 export default async function JobsPage({
@@ -39,13 +41,14 @@ export default async function JobsPage({
       employmentType: (sp.employment_type as EmploymentType) || undefined,
       remoteOnly: sp.remote === '1',
       openToAfrica: sp.africa === '1',
+      usdOnly: sp.usd === '1',
       limit: 100,
     }),
     getCategories(),
   ])
 
   const hasFilters = Boolean(
-    sp.q || sp.category || sp.employment_type || sp.remote || sp.africa,
+    sp.q || sp.category || sp.employment_type || sp.remote || sp.africa || sp.usd,
   )
 
   // Real, data-derived freshness signals. No fake metrics.
@@ -67,7 +70,11 @@ export default async function JobsPage({
           or eligibility.
         </p>
 
-        <div className="mt-4">
+        <div className="mt-5">
+          <JobSearchControls />
+        </div>
+
+        <div className="mt-5">
           <TrustStrip />
         </div>
 

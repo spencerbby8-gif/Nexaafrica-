@@ -40,6 +40,7 @@ export interface JobFilters {
   country?: string
   remoteOnly?: boolean
   openToAfrica?: boolean
+  usdOnly?: boolean
   employmentType?: EmploymentType
   q?: string
   limit?: number

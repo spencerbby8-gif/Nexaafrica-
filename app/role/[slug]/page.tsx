@@ -6,6 +6,7 @@ import { getJobBySlug, getRelatedJobs } from '@/lib/queries'
 import { isJobSaved } from '@/lib/saved-jobs'
 import { createClient } from '@/lib/supabase/server'
 import { ogImage } from '@/lib/og'
+import { siteUrl } from '@/lib/site'
 
 // Per-user apply state needs request cookies, so this route renders dynamically.
 // Job data is short-lived enough that this is fine for SEO; metadata stays cacheable.
@@ -226,7 +227,10 @@ export default async function RolePage({ params }: { params: Promise<Params> }) 
     applicantLocationRequirements: applicantLocations,
     ...(baseSalary ? { baseSalary } : {}),
     directApply: false,
-    url: `https://nexa.africa/role/${job.slug}`,
+    // Canonical must match the page canonical exactly (resolved via the
+    // shared siteUrl resolver) so Google Jobs attributes the posting to the
+    // right URL across preview/prod/custom domains.
+    url: siteUrl(`/role/${job.slug}`),
   }
 
   return (

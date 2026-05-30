@@ -74,12 +74,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const ninetyDaysAgo = Date.now() - 90 * 24 * 60 * 60 * 1000
   const freshJobs = jobs.filter((j) => {
     if (j.expires_at && new Date(j.expires_at).getTime() < Date.now()) return false
-    if (new Date(j.created_at).getTime() < ninetyDaysAgo) return false
+    // Staleness judged on the real posting date, matching JobPosting datePosted.
+    if (new Date(j.posted_at).getTime() < ninetyDaysAgo) return false
     return true
   })
   const roleUrls: MetadataRoute.Sitemap = freshJobs.map((j) => ({
     url: `${base}/role/${j.slug}`,
-    lastModified: new Date(j.created_at),
+    lastModified: new Date(j.posted_at),
     changeFrequency: 'weekly',
     priority: 0.6,
   }))

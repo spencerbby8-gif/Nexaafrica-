@@ -192,9 +192,9 @@ export function scoreJob(job: Job, signals: MatchSignals): MatchedJob | null {
     if (reasons.length === 0) reasons.push('Remote-ready fit')
   }
 
-  // Mild freshness nudge.
+  // Mild freshness nudge, based on the real posting date.
   const ageDays =
-    (Date.now() - new Date(job.created_at).getTime()) / 86_400_000
+    (Date.now() - new Date(job.posted_at).getTime()) / 86_400_000
   if (ageDays <= 7) score += 1
 
   if (score < 4) return null
@@ -218,10 +218,10 @@ export async function getMatchedJobs(
   const { data, error } = await supabase
     .from('jobs')
     .select(
-      'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, employment_type, tags, is_remote, is_open_to_africa, created_at, expires_at',
+      'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, employment_type, tags, is_remote, is_open_to_africa, eligibility, posted_at, created_at, expires_at',
     )
     .eq('is_active', true)
-    .order('created_at', { ascending: false })
+    .order('posted_at', { ascending: false })
     .limit(200)
 
   if (error || !data) return []
@@ -235,8 +235,8 @@ export async function getMatchedJobs(
   scored.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score
     return (
-      new Date(b.job.created_at).getTime() -
-      new Date(a.job.created_at).getTime()
+      new Date(b.job.posted_at).getTime() -
+      new Date(a.job.posted_at).getTime()
     )
   })
   return scored.slice(0, limit)

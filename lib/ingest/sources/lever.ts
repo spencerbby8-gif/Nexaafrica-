@@ -1,10 +1,12 @@
 import {
   categorizeTitle,
+  classifyEligibility,
   detectEmploymentType,
-  detectOpenToAfrica,
   detectRemote,
   extractSalary,
   htmlToMarkdown,
+  isOpenToAfrica,
+  parsePostedDate,
   resolveCountry,
   type NormalizedJob,
 } from '@/lib/ingest/normalize'
@@ -52,6 +54,8 @@ export async function fetchLever(
       continue
     }
 
+    const eligibility = classifyEligibility(location, j.text, description_md)
+
     out.push({
       title: j.text.trim(),
       company: companyName,
@@ -65,7 +69,9 @@ export async function fetchLever(
       employment_type: detectEmploymentType(commitment, j.text, description_md),
       tags: team ? [team] : [],
       is_remote: true,
-      is_open_to_africa: detectOpenToAfrica(location, description_md),
+      is_open_to_africa: isOpenToAfrica(eligibility),
+      eligibility,
+      posted_at: parsePostedDate(j.createdAt),
       source: 'lever',
       source_id: `lever:${companySlug}:${j.id}`,
       expires_at: null,

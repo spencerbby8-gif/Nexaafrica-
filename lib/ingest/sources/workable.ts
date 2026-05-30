@@ -1,10 +1,11 @@
 import {
   categorizeTitle,
+  classifyEligibility,
   detectEmploymentType,
-  detectOpenToAfrica,
   detectRemote,
   extractSalary,
   htmlToMarkdown,
+  isOpenToAfrica,
   resolveCountry,
   type NormalizedJob,
 } from '@/lib/ingest/normalize'
@@ -58,6 +59,8 @@ export async function fetchWorkable(
       detectRemote(locationStr, j.title, description_md)
     if (!isRemoteFlag) continue
 
+    const eligibility = classifyEligibility(locationStr, j.title, description_md)
+
     out.push({
       title: j.title.trim(),
       company: companyName,
@@ -71,7 +74,10 @@ export async function fetchWorkable(
       employment_type: detectEmploymentType(j.employment_type, j.title, description_md),
       tags: j.department ? [j.department] : [],
       is_remote: true,
-      is_open_to_africa: detectOpenToAfrica(locationStr, description_md),
+      is_open_to_africa: isOpenToAfrica(eligibility),
+      eligibility,
+      // Workable's widget feed exposes no posting date; fall back to created_at.
+      posted_at: null,
       source: 'workable',
       source_id: `workable:${subdomain}:${j.shortcode}`,
       expires_at: null,

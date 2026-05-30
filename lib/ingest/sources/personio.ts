@@ -1,10 +1,11 @@
 import {
   categorizeTitle,
+  classifyEligibility,
   detectEmploymentType,
-  detectOpenToAfrica,
   detectRemote,
   extractSalary,
   htmlToMarkdown,
+  isOpenToAfrica,
   resolveCountry,
   type NormalizedJob,
 } from '@/lib/ingest/normalize'
@@ -50,6 +51,8 @@ export async function fetchPersonio(
     if (!applyUrl || !j.name) continue
     if (!detectRemote(j.office, j.name, description_md)) continue
 
+    const eligibility = classifyEligibility(j.office, j.name, description_md)
+
     out.push({
       title: j.name.trim(),
       company: companyName,
@@ -63,7 +66,10 @@ export async function fetchPersonio(
       employment_type: detectEmploymentType(j.employmentType, j.schedule, j.name, description_md),
       tags: j.department ? [j.department] : [],
       is_remote: true,
-      is_open_to_africa: detectOpenToAfrica(j.office, description_md),
+      is_open_to_africa: isOpenToAfrica(eligibility),
+      eligibility,
+      // Personio's JSON feed exposes no posting date; fall back to created_at.
+      posted_at: null,
       source: 'personio',
       source_id: `personio:${companySlug}:${j.id}`,
       expires_at: null,

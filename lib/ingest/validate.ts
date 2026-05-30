@@ -70,6 +70,8 @@ export function validateApplyUrl(raw: string): string | null {
   return null
 }
 
+const VALID_ELIGIBILITY = new Set(['explicit', 'likely', 'restricted', 'unknown'])
+
 /**
  * Final gate before upsert. We're strict on purpose: bad rows damage trust.
  */
@@ -82,5 +84,48 @@ export function validateNormalizedJob(j: NormalizedJob): string | null {
   if (urlErr) return urlErr
   if (!j.is_remote) return 'not remote'
   if (!j.source_id) return 'source_id missing'
+
+  // --- Trust safeguards (Phase 14) ---
+  if (!VALID_ELIGIBILITY.has(j.eligibility)) return `invalid eligibility "${j.eligibility}"`
+  // is_open_to_africa must agree with the tier — guards against a regression
+  // where the derived flag drifts away from the classifier.
+  const derivedOpen = j.eligibility === 'explicit' || j.eligibility === 'likely'
+  if (j.is_open_to_africa !== derivedOpen) {
+    return `is_open_to_africa (${j.is_open_to_africa}) disagrees with eligibility "${j.eligibility}"`
+  }
+  // posted_at, when present, must be a valid non-future date. parsePostedDate
+  // should already guarantee this; this is the belt-and-braces gate.
+  if (j.posted_at != null) {
+    const t = new Date(j.posted_at).getTime()
+    if (Number.isNaN(t)) return 'posted_at is not a valid date'
+    if (t > Date.now() + 24 * 60 * 60 * 1000) return 'posted_at is in the future'
+  }
   return null
+}
+
+/**
+ * Non-fatal data-quality audit. Returns a list of human-readable warnings for
+ * classifications that pass validation but look suspicious and deserve eyes.
+ * The ingest layer logs these (it does NOT reject the row) so we can monitor
+ * classifier drift over time without silently dropping jobs.
+ */
+const SUSPICIOUS_RESTRICTION = [
+  /\bauthoriz(?:ed|ation)\s+to\s+work\s+in\s+the\s+(us|uk|eu)\b/i,
+  /\b(us|uk|eu|canada|united\s+states)\s+(?:based\s+)?only\b/i,
+  /\bvisa\s+sponsorship\s+(?:not\s+available|unavailable)\b/i,
+  /\bmust\s+(?:reside|be\s+based|be\s+located)\b/i,
+]
+
+export function auditClassification(j: NormalizedJob): string[] {
+  const warnings: string[] = []
+  const text = `${j.location ?? ''} ${j.description_md}`.toLowerCase()
+
+  // A positive Africa signal that co-occurs with hard restriction language is
+  // the classic false-positive pattern the audit flagged.
+  if (j.is_open_to_africa && SUSPICIOUS_RESTRICTION.some((re) => re.test(text))) {
+    warnings.push(
+      `open-to-africa=${j.eligibility} but restriction language detected for "${j.title}" @ ${j.company}`,
+    )
+  }
+  return warnings
 }

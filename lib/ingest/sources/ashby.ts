@@ -1,10 +1,12 @@
 import {
   categorizeTitle,
+  classifyEligibility,
   detectEmploymentType,
-  detectOpenToAfrica,
   detectRemote,
   extractSalary,
   htmlToMarkdown,
+  isOpenToAfrica,
+  parsePostedDate,
   resolveCountry,
   type NormalizedJob,
 } from '@/lib/ingest/normalize'
@@ -53,6 +55,8 @@ export async function fetchAshby(
     if (!applyUrl || !j.title) continue
     if (!j.isRemote && !detectRemote(location, j.title, description_md)) continue
 
+    const eligibility = classifyEligibility(location, j.title, description_md)
+
     out.push({
       title: j.title.trim(),
       company: companyName,
@@ -66,7 +70,9 @@ export async function fetchAshby(
       employment_type: detectEmploymentType(j.employmentType, j.title, description_md),
       tags: [j.team, j.department].filter(Boolean) as string[],
       is_remote: true,
-      is_open_to_africa: detectOpenToAfrica(location, description_md),
+      is_open_to_africa: isOpenToAfrica(eligibility),
+      eligibility,
+      posted_at: parsePostedDate(j.publishedAt),
       source: 'ashby',
       source_id: `ashby:${orgSlug}:${j.id}`,
       expires_at: null,

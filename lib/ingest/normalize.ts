@@ -146,32 +146,89 @@ export function detectRemote(...fields: Array<string | null | undefined>): boole
   return REMOTE_PATTERNS.some((re) => re.test(text))
 }
 
-const AFRICA_INDICATORS = [
+import type { Eligibility } from '@/lib/types'
+
+/**
+ * EXPLICIT Africa signals — eligibility is clearly compatible with African
+ * applicants. These are strong enough to override soft restriction noise.
+ */
+const AFRICA_EXPLICIT = [
   /\bafrica\b/i,
   /\bemea\b/i,
+  /\b(nigeria|kenya|south\s+africa|ghana|egypt|morocco|ethiopia|tanzania|uganda|rwanda|senegal|tunisia|ivory\s+coast|côte\s+d['’]ivoire|cameroon|zambia|zimbabwe|botswana|namibia|mozambique|angola)\b/i,
+]
+
+/**
+ * GLOBAL-REMOTE signals. On their own these mean "likely open" at best — NOT
+ * explicit Africa eligibility. The audit showed treating these as sufficient
+ * produced the bulk of false positives, so they only ever yield 'likely'.
+ */
+const GLOBAL_REMOTE = [
   /\bworldwide\b/i,
   /\banywhere\b/i,
-  /\bglobal\b/i,
-  /\b(nigeria|kenya|south\s+africa|ghana|egypt|morocco|ethiopia|tanzania|uganda|rwanda|senegal)\b/i,
+  /\bglobal(ly)?\b/i,
+  /\bany\s+(time\s*zone|location|country)\b/i,
+  /\bfully\s+remote\b/i,
+  /\bremote\s*[-—,]?\s*(global|worldwide|anywhere|international)\b/i,
 ]
 
-const AFRICA_NEGATIVE = [
-  /\bus\s+only\b/i,
-  /\bunited\s+states\s+only\b/i,
-  /\bna\s+only\b/i,
-  /\bnorth\s+america\s+only\b/i,
-  /\beu\s+only\b/i,
-  /\beurope\s+only\b/i,
-  /\buk\s+only\b/i,
-  /\bcanada\s+only\b/i,
-  /\bauthorized\s+to\s+work\s+in\s+the\s+us\b/i,
+/**
+ * RESTRICTION signals — region, residency, or work-authorization limits that
+ * exclude (or very likely exclude) African applicants. Expanded well beyond
+ * the old "X only" list to catch how restrictions are really phrased.
+ */
+const RESTRICTION = [
+  // explicit "X only"
+  /\b(us|u\.s\.|usa|united\s+states|na|north\s+america|eu|europe|uk|u\.k\.|united\s+kingdom|canada|emea\s+excluding\s+africa|latam|apac|australia|india)\s+(?:based\s+)?only\b/i,
+  // residency / location requirements
+  /\bmust\s+(?:be\s+)?(?:reside|live|be\s+located|be\s+based)\b/i,
+  /\b(?:based|located|residing|resident)\s+in\s+the\s+(us|usa|united\s+states|uk|united\s+kingdom|eu|european\s+union|canada|us\b)/i,
+  /\bcandidates?\s+(?:must\s+be\s+)?(?:located|based|residing)\s+in\b/i,
+  /\bapplicants?\s+(?:must\s+be\s+)?from\b/i,
+  /\bresidents?\s+only\b/i,
+  // work authorization
+  /\b(?:work\s+)?authoriz(?:ed|ation)\s+(?:to\s+work\s+)?in\s+the\s+(us|usa|united\s+states|uk|united\s+kingdom|eu|european\s+union|canada)\b/i,
+  /\beligible\s+to\s+work\s+in\s+the\s+(us|usa|united\s+states|uk|united\s+kingdom|eu|european\s+union|canada)\b/i,
+  /\b(us|u\.s\.|uk|u\.k\.|eu)\s+work\s+authoriz(?:ation|ed)\b/i,
+  /\b(?:legally\s+)?authorized\s+to\s+work\b/i,
+  /\bvisa\s+sponsorship\s+(?:is\s+)?(?:not\s+available|unavailable|not\s+provided)\b/i,
+  /\bno\s+visa\s+sponsorship\b/i,
+  /\bsecurity\s+clearance\b/i,
+  /\b(?:gc|green\s+card)\s+(?:holder|required)\b/i,
 ]
 
-export function detectOpenToAfrica(...fields: Array<string | null | undefined>): boolean {
+/**
+ * Classify Africa eligibility into a confidence tier. Accuracy over optimism:
+ * - A restriction signal forces 'restricted' UNLESS Africa is explicitly named
+ *   (some global postings list region carve-outs but still welcome Africa).
+ * - Explicit Africa wording => 'explicit'.
+ * - Global-remote signals with no restriction => 'likely' (a hedge, not a claim).
+ * - Otherwise => 'unknown'. We never guess 'open' from silence.
+ */
+export function classifyEligibility(...fields: Array<string | null | undefined>): Eligibility {
   const text = fields.filter(Boolean).join(' ').toLowerCase()
-  if (!text) return false
-  if (AFRICA_NEGATIVE.some((re) => re.test(text))) return false
-  return AFRICA_INDICATORS.some((re) => re.test(text))
+  if (!text) return 'unknown'
+
+  const explicit = AFRICA_EXPLICIT.some((re) => re.test(text))
+  const restricted = RESTRICTION.some((re) => re.test(text))
+  const global = GLOBAL_REMOTE.some((re) => re.test(text))
+
+  // Explicit Africa mention wins — even over a region carve-out, since the
+  // employer has named Africa/an African country as welcome.
+  if (explicit) return 'explicit'
+  // Any restriction without explicit Africa support => restricted.
+  if (restricted) return 'restricted'
+  // Global remote with no restriction => moderate confidence.
+  if (global) return 'likely'
+  return 'unknown'
+}
+
+/**
+ * Derived convenience flag preserved for existing filters/hubs. Only the two
+ * confident-positive tiers count as "open to Africa".
+ */
+export function isOpenToAfrica(eligibility: Eligibility): boolean {
+  return eligibility === 'explicit' || eligibility === 'likely'
 }
 
 export function detectEmploymentType(
@@ -258,6 +315,25 @@ export function extractSalary(...fields: Array<string | null | undefined>): stri
   return m[0].trim()
 }
 
+/**
+ * Parse a provider posting date into an ISO string. Accepts ISO strings and
+ * epoch milliseconds (Lever). Rejects implausible dates (future, or before
+ * 2005 — older than any live remote ATS listing) so a bad provider value can
+ * never poison freshness. Returns null when no trustworthy date is available;
+ * the ingest layer then falls back to the existing created_at.
+ */
+export function parsePostedDate(raw: string | number | null | undefined): string | null {
+  if (raw == null || raw === '') return null
+  const d = typeof raw === 'number' ? new Date(raw) : new Date(raw)
+  const t = d.getTime()
+  if (Number.isNaN(t)) return null
+  const now = Date.now()
+  // Allow a small clock-skew window into the future, reject the rest.
+  if (t > now + 24 * 60 * 60 * 1000) return null
+  if (t < new Date('2005-01-01').getTime()) return null
+  return d.toISOString()
+}
+
 export interface NormalizedJob {
   title: string
   company: string
@@ -272,6 +348,9 @@ export interface NormalizedJob {
   tags: string[]
   is_remote: boolean
   is_open_to_africa: boolean
+  eligibility: Eligibility
+  /** Real provider posting date (ISO), or null when the source exposes none. */
+  posted_at: string | null
   source: string
   source_id: string
   expires_at: string | null

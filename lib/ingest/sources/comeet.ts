@@ -1,10 +1,12 @@
 import {
   categorizeTitle,
+  classifyEligibility,
   detectEmploymentType,
-  detectOpenToAfrica,
   detectRemote,
   extractSalary,
   htmlToMarkdown,
+  isOpenToAfrica,
+  parsePostedDate,
   resolveCountry,
   type NormalizedJob,
 } from '@/lib/ingest/normalize'
@@ -25,6 +27,7 @@ interface ComeetJob {
   department?: string
   category?: string
   job_type_code?: string
+  time_updated?: string
 }
 
 export async function fetchComeet(
@@ -54,6 +57,8 @@ export async function fetchComeet(
     if (!applyUrl || !j.name) continue
     if (!detectRemote(locationStr, j.name, description_md)) continue
 
+    const eligibility = classifyEligibility(locationStr, j.name, description_md)
+
     out.push({
       title: j.name.trim(),
       company: companyName,
@@ -67,7 +72,9 @@ export async function fetchComeet(
       employment_type: detectEmploymentType(j.job_type_code, j.name, description_md),
       tags: [j.department, j.category].filter(Boolean) as string[],
       is_remote: true,
-      is_open_to_africa: detectOpenToAfrica(locationStr, description_md),
+      is_open_to_africa: isOpenToAfrica(eligibility),
+      eligibility,
+      posted_at: parsePostedDate(j.time_updated),
       source: 'comeet',
       source_id: `comeet:${companyUid}:${j.uid}`,
       expires_at: null,

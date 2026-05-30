@@ -1,10 +1,12 @@
 import {
   categorizeTitle,
+  classifyEligibility,
   detectEmploymentType,
-  detectOpenToAfrica,
   detectRemote,
   extractSalary,
   htmlToMarkdown,
+  isOpenToAfrica,
+  parsePostedDate,
   resolveCountry,
   type NormalizedJob,
 } from '@/lib/ingest/normalize'
@@ -26,6 +28,7 @@ interface RecruiteeJob {
   department?: string
   employment_type_code?: string
   remote?: boolean
+  published_at?: string
 }
 
 export async function fetchRecruitee(
@@ -50,6 +53,8 @@ export async function fetchRecruitee(
     const isRemoteFlag = j.remote === true || detectRemote(locationStr, j.title, description_md)
     if (!isRemoteFlag) continue
 
+    const eligibility = classifyEligibility(locationStr, j.title, description_md)
+
     out.push({
       title: j.title.trim(),
       company: companyName,
@@ -63,7 +68,9 @@ export async function fetchRecruitee(
       employment_type: detectEmploymentType(j.employment_type_code, j.title, description_md),
       tags: j.department ? [j.department] : [],
       is_remote: true,
-      is_open_to_africa: detectOpenToAfrica(locationStr, description_md),
+      is_open_to_africa: isOpenToAfrica(eligibility),
+      eligibility,
+      posted_at: parsePostedDate(j.published_at),
       source: 'recruitee',
       source_id: `recruitee:${companySlug}:${j.id}`,
       expires_at: null,

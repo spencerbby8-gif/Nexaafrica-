@@ -1,10 +1,12 @@
 import {
   categorizeTitle,
+  classifyEligibility,
   detectEmploymentType,
-  detectOpenToAfrica,
   detectRemote,
   extractSalary,
   htmlToMarkdown,
+  isOpenToAfrica,
+  parsePostedDate,
   resolveCountry,
   type NormalizedJob,
 } from '@/lib/ingest/normalize'
@@ -60,6 +62,8 @@ export async function fetchSmartRecruiters(
       j.location?.remote === true || detectRemote(locationStr, j.name, description_md)
     if (!isRemoteFlag) continue
 
+    const eligibility = classifyEligibility(locationStr, j.name, description_md)
+
     out.push({
       title: j.name.trim(),
       company: companyName,
@@ -73,7 +77,9 @@ export async function fetchSmartRecruiters(
       employment_type: detectEmploymentType(j.typeOfEmployment?.label, j.name, description_md),
       tags: [j.department?.label, j.function?.label].filter(Boolean) as string[],
       is_remote: true,
-      is_open_to_africa: detectOpenToAfrica(locationStr, description_md),
+      is_open_to_africa: isOpenToAfrica(eligibility),
+      eligibility,
+      posted_at: parsePostedDate(j.releasedDate),
       source: 'smartrecruiters',
       source_id: `smartrecruiters:${companySlug}:${j.id}`,
       expires_at: null,

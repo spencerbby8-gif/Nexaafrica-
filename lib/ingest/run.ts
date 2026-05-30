@@ -10,7 +10,7 @@ import { fetchRecruitee } from '@/lib/ingest/sources/recruitee'
 import { fetchSmartRecruiters } from '@/lib/ingest/sources/smartrecruiters'
 import { fetchWorkable } from '@/lib/ingest/sources/workable'
 import type { NormalizedJob } from '@/lib/ingest/normalize'
-import { validateNormalizedJob } from '@/lib/ingest/validate'
+import { auditClassification, validateNormalizedJob } from '@/lib/ingest/validate'
 
 export interface SourceResult {
   source: string
@@ -70,8 +70,13 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
         result.rejected += 1
         continue
       }
+      // Non-fatal: surface suspicious classifications for monitoring without
+      // dropping the row. Visible in serverless logs as [v0][ingest-audit].
+      for (const warning of auditClassification(job)) {
+        console.log(`[v0][ingest-audit] ${warning}`)
+      }
       const slug = buildJobSlug(job.title, job.company, job.country)
-      const row = {
+      const row: Record<string, unknown> = {
         slug,
         title: job.title,
         company: job.company,
@@ -86,11 +91,17 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
         tags: job.tags,
         is_remote: job.is_remote,
         is_open_to_africa: job.is_open_to_africa,
+        eligibility: job.eligibility,
         source: job.source,
         source_id: job.source_id,
         expires_at: job.expires_at,
         is_active: true,
       }
+      // Only write posted_at when the provider gave a real, trustworthy date.
+      // Omitting it means: on INSERT it stays NULL (display falls back to
+      // created_at); on conflict UPDATE the existing real date is preserved
+      // rather than being clobbered with a fake "fresh" timestamp.
+      if (job.posted_at) row.posted_at = job.posted_at
       // (source, source_id) is unique at the DB level — upsert on that key
       // so refreshes overwrite stale data and revive previously-deactivated
       // roles when they reappear in the feed.

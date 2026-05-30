@@ -1,5 +1,17 @@
 export type EmploymentType = 'full_time' | 'part_time' | 'contract' | 'internship'
 
+/**
+ * Eligibility confidence tier for Africa-based applicants. Replaces the old
+ * binary is_open_to_africa mindset with an honest, evidence-graded signal:
+ * - 'explicit'   — Africa / an African country is explicitly welcomed
+ * - 'likely'     — global-remote signals, no restriction detected (a hedge)
+ * - 'restricted' — region / work-authorization / country restriction detected
+ * - 'unknown'    — insufficient evidence either way
+ * is_open_to_africa remains as a derived convenience flag (explicit || likely)
+ * so existing filters and hubs keep working without a rename.
+ */
+export type Eligibility = 'explicit' | 'likely' | 'restricted' | 'unknown'
+
 export interface Job {
   id: string
   slug: string
@@ -16,6 +28,10 @@ export interface Job {
   tags: string[]
   is_remote: boolean
   is_open_to_africa: boolean
+  eligibility: Eligibility
+  /** Real provider posting date (ISO). Falls back to created_at when unknown. */
+  posted_at: string
+  /** Ingestion timestamp — when Nexa first saw the row. Never a posting date. */
   created_at: string
   expires_at: string | null
 }

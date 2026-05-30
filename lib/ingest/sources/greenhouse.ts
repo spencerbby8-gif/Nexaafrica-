@@ -1,10 +1,12 @@
 import { htmlToMarkdown, type NormalizedJob } from '@/lib/ingest/normalize'
 import {
   categorizeTitle,
+  classifyEligibility,
   detectEmploymentType,
-  detectOpenToAfrica,
   detectRemote,
   extractSalary,
+  isOpenToAfrica,
+  parsePostedDate,
   resolveCountry,
 } from '@/lib/ingest/normalize'
 
@@ -50,6 +52,8 @@ export async function fetchGreenhouse(
     if (!j.absolute_url || !j.title) continue
     if (!detectRemote(locationName, j.title, description_md)) continue
 
+    const eligibility = classifyEligibility(locationName, j.title, description_md)
+
     out.push({
       title: j.title.trim(),
       company: companyName,
@@ -63,7 +67,9 @@ export async function fetchGreenhouse(
       employment_type: detectEmploymentType(j.title, description_md),
       tags: departmentHint ? [departmentHint] : [],
       is_remote: true,
-      is_open_to_africa: detectOpenToAfrica(locationName, description_md),
+      is_open_to_africa: isOpenToAfrica(eligibility),
+      eligibility,
+      posted_at: parsePostedDate(j.updated_at),
       source: 'greenhouse',
       source_id: `greenhouse:${boardSlug}:${j.id}`,
       expires_at: null,

@@ -109,7 +109,9 @@ export async function generateMetadata({
   // SERP snippet a recognisable Nexa shape. Falls back to body text when the
   // description is rich enough to stand on its own (>140 chars of real prose).
   const body = firstParagraph(job.description_md)
-  const trustPrefix = job.is_open_to_africa
+  // Only the confident 'explicit' tier earns the definitive SERP claim. 'likely'
+  // roles stay neutral so we never over-promise eligibility in search results.
+  const trustPrefix = job.eligibility === 'explicit'
     ? 'Open to African applicants. '
     : ''
   const description = (trustPrefix + (body || `${job.title} at ${job.company}.`)).slice(0, 200)
@@ -117,7 +119,7 @@ export async function generateMetadata({
   // trust modifier we can. Order: Open to Africa > USD > country. Each modifier
   // is shown at most once and trimmed to keep the title under ~60 chars where
   // possible (Google truncates around there for mobile SERPs).
-  const trustModifier = job.is_open_to_africa
+  const trustModifier = job.eligibility === 'explicit'
     ? 'Open to Africa'
     : /\$|usd/i.test(job.salary_range ?? '')
       ? 'USD'
@@ -127,7 +129,8 @@ export async function generateMetadata({
   // Stale jobs hurt Google Jobs trust + waste crawl budget. If the role is
   // past its validThrough (or older than 90 days when none is set), noindex
   // it but keep the page reachable for any inbound link with deep equity.
-  const ageMs = Date.now() - new Date(job.created_at).getTime()
+  // Staleness is judged against the real posting date, not ingestion time.
+  const ageMs = Date.now() - new Date(job.posted_at).getTime()
   const stale = job.expires_at
     ? Date.now() > new Date(job.expires_at).getTime()
     : ageMs > 90 * 24 * 60 * 60 * 1000
@@ -140,7 +143,7 @@ export async function generateMetadata({
     title: `${job.title}`,
     subtitle: `at ${job.company}`,
     meta: metaParts.join(' \u00b7 ') || 'Remote',
-    badge: job.is_open_to_africa ? 'Open to Africa' : undefined,
+    badge: job.eligibility === 'explicit' ? 'Open to Africa' : undefined,
   })
   return {
     title,
@@ -174,11 +177,15 @@ export default async function RolePage({ params }: { params: Promise<Params> }) 
   const description = firstParagraph(job.description_md)
 
   const baseSalary = parseSalaryToSchema(job.salary_range)
-  // Africa-friendly roles get a richer applicantLocationRequirements list
-  // so Google Jobs can surface them for African geo-aware searches.
-  const applicantLocations = job.is_open_to_africa
-    ? AFRICA_COUNTRIES.map((name) => ({ '@type': 'Country', name }))
-    : [{ '@type': 'Country', name: job.country || 'Worldwide' }]
+  // applicantLocationRequirements must reflect real confidence, not optimism.
+  // Only 'explicit' (Africa named) publishes the broad African-country list to
+  // Google Jobs. 'likely' is global-remote with no restriction, so we claim
+  // only the conservative job country/Worldwide rather than asserting Africa
+  // eligibility we can't confirm. 'restricted'/'unknown' never claim Africa.
+  const applicantLocations =
+    job.eligibility === 'explicit'
+      ? AFRICA_COUNTRIES.map((name) => ({ '@type': 'Country', name }))
+      : [{ '@type': 'Country', name: job.country || 'Worldwide' }]
 
   // Determine apply gate state.
   const supabase = await createClient()
@@ -202,14 +209,15 @@ export default async function RolePage({ params }: { params: Promise<Params> }) 
     '@type': 'JobPosting',
     title: job.title,
     description: description || job.title,
-    datePosted: job.created_at,
+    // Real provider posting date (posted_at), never the ingestion timestamp.
+    datePosted: job.posted_at,
     ...(job.expires_at
       ? { validThrough: job.expires_at }
-      : // Google Jobs needs a validThrough — fall back to 60 days from posting
-        // so freshness signals stay healthy without overstating.
+      : // Google Jobs needs a validThrough — fall back to 60 days from the real
+        // posting date so freshness signals stay healthy without overstating.
         {
           validThrough: new Date(
-            new Date(job.created_at).getTime() + 60 * 24 * 60 * 60 * 1000,
+            new Date(job.posted_at).getTime() + 60 * 24 * 60 * 60 * 1000,
           ).toISOString(),
         }),
     employmentType: employmentSchemaMap[job.employment_type] ?? 'FULL_TIME',

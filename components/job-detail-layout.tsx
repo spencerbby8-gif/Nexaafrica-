@@ -148,7 +148,16 @@ export function JobDetailLayout({
   initialSaved?: boolean
 }) {
   const employment = employmentLabel(job.employment_type)
-  const fresh = isFresh(job.created_at, 7)
+  // Freshness + posted label derive from the real provider posting date.
+  const fresh = isFresh(job.posted_at, 7)
+  // Honest, tier-aware eligibility wording. 'explicit' = confidently welcomed;
+  // 'likely' = global-remote with no restriction (hedged, not a promise).
+  const eligibilityLine =
+    job.eligibility === 'explicit'
+      ? 'Open to remote applicants in Africa'
+      : job.eligibility === 'likely'
+        ? 'Global remote — likely open to Africa'
+        : null
 
   return (
     <div className="mx-auto max-w-3xl px-4 pb-32 pt-6 sm:px-6 sm:pt-10 md:pb-16">
@@ -189,15 +198,13 @@ export function JobDetailLayout({
                   Recently added
                 </span>
               )}
-              {fresh && job.is_open_to_africa && (
+              {fresh && eligibilityLine && (
                 <span aria-hidden className="text-muted-foreground/40">
                   {'\u00b7'}
                 </span>
               )}
-              {job.is_open_to_africa && (
-                <span>Open to remote applicants in Africa</span>
-              )}
-              {(fresh || job.is_open_to_africa) && (
+              {eligibilityLine && <span>{eligibilityLine}</span>}
+              {(fresh || eligibilityLine) && (
                 <span aria-hidden className="text-muted-foreground/40">
                   {'\u00b7'}
                 </span>
@@ -222,15 +229,18 @@ export function JobDetailLayout({
           </li>
           <li className="flex items-center gap-2">
             <Clock className="h-3.5 w-3.5" aria-hidden />
-            {postedLabel(job.created_at)}
+            {postedLabel(job.posted_at)}
           </li>
         </ul>
 
         <div className="flex flex-wrap items-center gap-1.5">
           {job.is_remote && <TrustBadge variant="remote" />}
           {job.salary_range && <TrustBadge variant="usd" label={job.salary_range} />}
-          {job.is_open_to_africa && (
+          {job.eligibility === 'explicit' && (
             <TrustBadge variant="verified" label="Open to Africa" />
+          )}
+          {job.eligibility === 'likely' && (
+            <TrustBadge variant="verified" label="Likely open to Africa" />
           )}
           <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-foreground/70">
             {employment}

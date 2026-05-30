@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import type { Category, Job, JobFilters } from '@/lib/types'
 
 const JOB_COLUMNS =
-  'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, employment_type, tags, is_remote, is_open_to_africa, created_at, expires_at'
+  'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, employment_type, tags, is_remote, is_open_to_africa, eligibility, posted_at, created_at, expires_at'
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
 
@@ -17,7 +17,9 @@ export async function getJobs(filters: JobFilters = {}): Promise<Job[]> {
     .from('jobs')
     .select(JOB_COLUMNS)
     .eq('is_active', true)
-    .order('created_at', { ascending: false })
+    // Order by the real posting date so the freshest *actual* postings lead,
+    // not whichever rows Nexa happened to ingest most recently.
+    .order('posted_at', { ascending: false })
     .limit(filters.limit ?? 50)
 
   if (filters.category) query = query.eq('category', filters.category)
@@ -31,7 +33,7 @@ export async function getJobs(filters: JobFilters = {}): Promise<Job[]> {
   }
   if (filters.employmentType) query = query.eq('employment_type', filters.employmentType)
   if (filters.freshDays && filters.freshDays > 0) {
-    query = query.gte('created_at', freshIso(filters.freshDays))
+    query = query.gte('posted_at', freshIso(filters.freshDays))
   }
   if (filters.q) {
     const term = `%${filters.q}%`
@@ -70,7 +72,7 @@ export async function getRelatedJobs(job: Job, limit = 4): Promise<Job[]> {
     .eq('is_active', true)
     .eq('category', job.category)
     .neq('id', job.id)
-    .order('created_at', { ascending: false })
+    .order('posted_at', { ascending: false })
     .limit(limit)
   if (error) {
     console.error('[v0] getRelatedJobs error', error.message)
@@ -118,7 +120,7 @@ export async function countJobs(filters: JobFilters = {}): Promise<number> {
   if (filters.openToAfrica) query = query.eq('is_open_to_africa', true)
   if (filters.employmentType) query = query.eq('employment_type', filters.employmentType)
   if (filters.freshDays && filters.freshDays > 0) {
-    query = query.gte('created_at', freshIso(filters.freshDays))
+    query = query.gte('posted_at', freshIso(filters.freshDays))
   }
   const { count, error } = await query
   if (error) {

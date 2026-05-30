@@ -20,7 +20,10 @@ export function JobCard({
   job: Job
   matchReasons?: string[]
 }) {
-  const fresh = isFresh(job.created_at, 3)
+  // Freshness + posted label use the real provider posting date, not the
+  // ingestion timestamp. posted_at is always populated (provider date, or
+  // created_at fallback via DB trigger).
+  const fresh = isFresh(job.posted_at, 3)
   const salary = salaryDisplay(job.salary_range, { openToAfrica: job.is_open_to_africa })
   return (
     <Link
@@ -40,9 +43,9 @@ export function JobCard({
           </div>
           <span
             className="shrink-0 text-xs text-muted-foreground"
-            title={postedLabel(job.created_at)}
+            title={postedLabel(job.posted_at)}
           >
-            {relativeTime(job.created_at)}
+            {relativeTime(job.posted_at)}
           </span>
         </div>
 
@@ -66,7 +69,12 @@ export function JobCard({
               {salary.label}
             </span>
           )}
-          {job.is_open_to_africa && <TrustBadge variant="verified" label="Open to Africa" />}
+          {job.eligibility === 'explicit' && (
+            <TrustBadge variant="verified" label="Open to Africa" />
+          )}
+          {job.eligibility === 'likely' && (
+            <TrustBadge variant="verified" label="Likely open" />
+          )}
           <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-foreground/70">
             {employmentLabel(job.employment_type)}
           </span>

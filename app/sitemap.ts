@@ -6,11 +6,14 @@ import { GUIDES } from '@/lib/guides'
 import { INTENTS } from '@/lib/intents'
 import { siteUrl } from '@/lib/site'
 
-// Statically render with ISR. The sitemap reads only public data through a
-// cookie-free client, so it can be cached at the edge and regenerated every
-// 10 minutes instead of hitting the database on every crawler request.
-export const dynamic = 'force-static'
-export const revalidate = 600
+// NOTE: intentionally no `export const dynamic`/`revalidate` route config.
+// The data fetch uses the cookie-reading server client, which makes this route
+// render dynamically at REQUEST time — the only point at which the Supabase
+// NEXT_PUBLIC_* env vars are reliably injected in this deployment. (An explicit
+// `force-dynamic`/`force-static`/`revalidate` export was observed to break that
+// env injection here and 500 the route.) The work is light and every query is
+// isolated so a DB hiccup degrades to a smaller sitemap instead of a 5xx
+// ("Couldn't fetch" in Search Console).
 
 /** Clamp a date to a valid Date, falling back to `now` for null/invalid. */
 function safeDate(value: string | null | undefined, fallback: Date): Date {
@@ -34,6 +37,8 @@ interface CategoryRow {
 }
 
 async function fetchSitemapData() {
+  // Cookie-free client that resolves env tolerantly (SUPABASE_URL first) so the
+  // sitemap never 500s on the metadata-route env quirk described in public.ts.
   const supabase = createPublicClient()
 
   // Each query is isolated: a single failure degrades gracefully to an empty

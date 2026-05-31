@@ -1,25 +1,28 @@
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 
 /**
- * Cookie-free, read-only Supabase client for PUBLIC, cacheable routes
- * (sitemap, RSS, fully-static SEO pages).
+ * Cookie-free, read-only Supabase client for PUBLIC routes (sitemap, RSS,
+ * static SEO surfaces).
  *
- * Unlike `lib/supabase/server.ts`, this client does NOT touch `cookies()`.
- * Reading cookies opts a route into fully dynamic rendering, which would
- * defeat ISR/`revalidate` and force a live database round-trip on every
- * crawler request — a reliability risk that surfaces in Search Console as
- * "Couldn't fetch". Because the sitemap only reads public, non-user-scoped
- * data, the anon client is the correct, cacheable choice.
+ * Env resolution is deliberately tolerant. Inside Next.js *metadata routes*
+ * (e.g. the compiled `sitemap--route-entry.js`) the build-time-inlined
+ * `NEXT_PUBLIC_*` variables were observed to be undefined at runtime in this
+ * deployment, which made the Supabase client throw "supabaseUrl is required"
+ * and 500 the sitemap ("Couldn't fetch" in Search Console). The non-public
+ * twins (`SUPABASE_URL` / `SUPABASE_ANON_KEY`) are plain server-runtime vars
+ * that are reliably present, so we prefer them and fall back to the public
+ * names. This avoids reading cookies (no dynamic-render requirement) and is
+ * the correct, cacheable choice because the sitemap only reads public data.
  */
 export function createPublicClient() {
-  return createSupabaseClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-      },
-    },
-  )
+  const url =
+    process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
+  const key =
+    process.env.SUPABASE_ANON_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+    ''
+
+  return createSupabaseClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
 }

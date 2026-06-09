@@ -7,6 +7,7 @@ import { ApplyButton } from '@/components/apply-button'
 import { SaveJobButton } from '@/components/save-job-button'
 import { ShareSheet } from '@/components/share-sheet'
 import { RoleViewTracker } from '@/components/role-view-tracker'
+import { EvidencePanel } from '@/components/evidence-panel'
 import { employmentLabel, isFresh, postedLabel } from '@/lib/format'
 import type { Job } from '@/lib/types'
 
@@ -271,6 +272,13 @@ export function JobDetailLayout({
           </p>
         </div>
       </header>
+
+      {/* Evidence check — the opportunity-intelligence layer. Placed before
+          the description so mobile users can evaluate accessibility before
+          reading the full posting. Server-rendered, unique per job. */}
+      <div className="pt-6">
+        <EvidencePanel job={job} />
+      </div>
 
       <section className="pt-8" aria-label="Role description">
         <Markdown source={job.description_md} />

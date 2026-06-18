@@ -11,6 +11,53 @@ import { fetchSmartRecruiters } from '@/lib/ingest/sources/smartrecruiters'
 import { fetchWorkable } from '@/lib/ingest/sources/workable'
 import type { NormalizedJob } from '@/lib/ingest/normalize'
 import { auditClassification, validateNormalizedJob } from '@/lib/ingest/validate'
+import {
+  extractIntelligence,
+  formatSalary,
+  type JobIntelligence,
+} from '@/lib/intelligence'
+
+/**
+ * Phase 16: run the deterministic Intelligence Engine over a normalized job
+ * and merge the results. Single source of extraction for all 8 ATS adapters —
+ * no per-adapter duplication. Salary text already extracted by an adapter is
+ * preserved; the engine adds structured values + the evidence signal store and
+ * an authoritative employment_type (no silent full_time default).
+ */
+function enrichIntelligence(job: NormalizedJob): {
+  intelligence: JobIntelligence
+  salary_range: string | null
+  salary_min: number | null
+  salary_max: number | null
+  salary_currency: string | null
+  salary_period: string | null
+  employment_type: NormalizedJob['employment_type']
+} {
+  const intelligence = extractIntelligence(
+    {
+      title: job.title,
+      description: job.description_md,
+      location: job.location,
+      tags: job.tags,
+    },
+    // Trust an explicit adapter-provided type over free-text inference, but
+    // only when it is a confident value (not the legacy 'unknown').
+    job.employment_type && job.employment_type !== 'unknown'
+      ? job.employment_type
+      : null,
+  )
+  const s = intelligence.salary
+  return {
+    intelligence,
+    // Preserve any adapter salary text; otherwise use the engine's formatting.
+    salary_range: job.salary_range ?? formatSalary(s),
+    salary_min: s?.min ?? null,
+    salary_max: s?.max ?? null,
+    salary_currency: s?.currency ?? null,
+    salary_period: s?.period ?? null,
+    employment_type: intelligence.employment_type,
+  }
+}
 
 export interface SourceResult {
   source: string
@@ -75,6 +122,8 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
       for (const warning of auditClassification(job)) {
         console.log(`[v0][ingest-audit] ${warning}`)
       }
+      // Phase 16: deterministic intelligence extraction (persisted, evidence-backed).
+      const intel = enrichIntelligence(job)
       const slug = buildJobSlug(job.title, job.company, job.country)
       const row: Record<string, unknown> = {
         slug,
@@ -86,8 +135,13 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
         category: job.category,
         location: job.location,
         country: job.country,
-        salary_range: job.salary_range,
-        employment_type: job.employment_type,
+        salary_range: intel.salary_range,
+        salary_min: intel.salary_min,
+        salary_max: intel.salary_max,
+        salary_currency: intel.salary_currency,
+        salary_period: intel.salary_period,
+        employment_type: intel.employment_type,
+        intelligence: intel.intelligence,
         tags: job.tags,
         is_remote: job.is_remote,
         is_open_to_africa: job.is_open_to_africa,

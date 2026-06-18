@@ -68,7 +68,13 @@ const employmentLabelMap: Record<string, string> = {
   full_time: 'Full-time',
   part_time: 'Part-time',
   contract: 'Contract',
+  freelance: 'Freelance',
+  consultant: 'Consultant',
+  temporary: 'Temporary',
   internship: 'Internship',
+  // 'unknown' intentionally maps to '' so we never show a meaningless badge —
+  // honest absence is better than fake certainty (Phase 16).
+  unknown: '',
 }
 
 export function employmentLabel(type: string): string {

@@ -75,9 +75,11 @@ export function JobCard({
           {job.eligibility === 'likely' && (
             <TrustBadge variant="verified" label="Likely open" />
           )}
-          <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-foreground/70">
-            {employmentLabel(job.employment_type)}
-          </span>
+          {employmentLabel(job.employment_type) && (
+            <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-foreground/70">
+              {employmentLabel(job.employment_type)}
+            </span>
+          )}
           {fresh && (
             <span className="inline-flex items-center gap-1 text-[11px] font-medium text-accent">
               <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />

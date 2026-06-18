@@ -1,4 +1,14 @@
-export type EmploymentType = 'full_time' | 'part_time' | 'contract' | 'internship'
+import type { JobIntelligence } from '@/lib/intelligence'
+
+export type EmploymentType =
+  | 'full_time'
+  | 'part_time'
+  | 'contract'
+  | 'freelance'
+  | 'consultant'
+  | 'temporary'
+  | 'internship'
+  | 'unknown'
 
 /**
  * Eligibility confidence tier for Africa-based applicants. Replaces the old
@@ -24,11 +34,21 @@ export interface Job {
   location: string | null
   country: string
   salary_range: string | null
+  /** Structured salary (Phase 16). Null when not disclosed. */
+  salary_min: number | null
+  salary_max: number | null
+  salary_currency: string | null
+  salary_period: string | null
   employment_type: EmploymentType
   tags: string[]
   is_remote: boolean
   is_open_to_africa: boolean
   eligibility: Eligibility
+  /**
+   * Persisted, evidence-backed intelligence signal store (Phase 16).
+   * Generic JSON so future AI extractors can write the same shape.
+   */
+  intelligence: JobIntelligence | Record<string, never>
   /** Real provider posting date (ISO). Falls back to created_at when unknown. */
   posted_at: string
   /** Ingestion timestamp — when Nexa first saw the row. Never a posting date. */

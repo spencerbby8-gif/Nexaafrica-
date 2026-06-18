@@ -1,4 +1,8 @@
 import type { Job } from '@/lib/types'
+import {
+  isCurrentIntelligence,
+  type IntelligenceSignal,
+} from '@/lib/intelligence'
 
 /**
  * Job Evidence Layer V1
@@ -117,6 +121,48 @@ const EOR_GENERIC_RE =
 /* ------------------------------------------------------------------ */
 /* Derivation                                                           */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Phase 16: surface async-culture and benefits signals from the PERSISTED
+ * intelligence store. These were extracted once at ingestion (evidence-backed,
+ * versioned) rather than re-parsed here — keeping the render path cheap and the
+ * evidence auditable. Eligibility/scope/EOR/timezone are still derived inline
+ * below so rows ingested before Phase 16 (empty `intelligence`) keep working;
+ * those overlap signals are de-duplicated by id in the panel.
+ */
+function fromPersistedIntelligence(job: Job): EvidenceSignal[] {
+  if (!isCurrentIntelligence(job.intelligence)) return []
+  const out: EvidenceSignal[] = []
+  const seenAsync = new Set<string>()
+  const seenBenefit = new Set<string>()
+
+  for (const sig of job.intelligence.signals as IntelligenceSignal[]) {
+    if (sig.type === 'async_culture' && sig.value && !seenAsync.has(sig.value)) {
+      seenAsync.add(sig.value)
+      out.push({
+        id: `async-${sig.value.toLowerCase().replace(/[^a-z]+/g, '-')}`,
+        tone: 'positive',
+        label: sig.value,
+        reason:
+          'The posting describes asynchronous or flexible working culture, which typically eases collaboration across timezones.',
+        excerpt: sig.evidence ?? undefined,
+        source: 'posting-text',
+      })
+    }
+    if (sig.type === 'benefit' && sig.value && !seenBenefit.has(sig.value)) {
+      seenBenefit.add(sig.value)
+      out.push({
+        id: `benefit-${sig.value.toLowerCase().replace(/[^a-z]+/g, '-')}`,
+        tone: 'neutral',
+        label: sig.value,
+        reason: `The posting lists ${sig.value.toLowerCase()} as a benefit.`,
+        excerpt: sig.evidence ?? undefined,
+        source: 'posting-text',
+      })
+    }
+  }
+  return out
+}
 
 export function deriveEvidence(job: Job): EvidenceSignal[] {
   const signals: EvidenceSignal[] = []
@@ -300,6 +346,15 @@ export function deriveEvidence(job: Job): EvidenceSignal[] {
       excerpt: extractExcerpt(haystack, EOR_GENERIC_RE),
       source: 'posting-text',
     })
+  }
+
+  /* -- Async culture + benefits (from persisted Phase 16 store) ------ */
+  const seen = new Set(signals.map((s) => s.id))
+  for (const s of fromPersistedIntelligence(job)) {
+    if (!seen.has(s.id)) {
+      seen.add(s.id)
+      signals.push(s)
+    }
   }
 
   /* -- Freshness / verification -------------------------------------- */

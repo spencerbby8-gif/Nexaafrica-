@@ -1,4 +1,5 @@
 import type { EmploymentType } from '@/lib/types'
+import type { JobIntelligence } from '@/lib/intelligence'
 
 /**
  * Shared normalization for ingested jobs. Every ATS adapter should run its
@@ -231,14 +232,25 @@ export function isOpenToAfrica(eligibility: Eligibility): boolean {
   return eligibility === 'explicit' || eligibility === 'likely'
 }
 
+/**
+ * Legacy adapter-level employment hint. Phase 16 removed the silent
+ * `full_time` default — when nothing matches we now return 'unknown' and let
+ * the Intelligence Engine (lib/intelligence.ts) make the authoritative call at
+ * enrichment time. Adapters still pass their real ATS commitment field first,
+ * which remains the strongest signal.
+ */
 export function detectEmploymentType(
   ...fields: Array<string | null | undefined>
 ): EmploymentType {
   const text = fields.filter(Boolean).join(' ').toLowerCase()
   if (/\b(intern(ship)?)\b/.test(text)) return 'internship'
-  if (/\b(contract|contractor|freelance|temporary|temp)\b/.test(text)) return 'contract'
+  if (/\bfreelancer?\b/.test(text)) return 'freelance'
+  if (/\bconsultant\b/.test(text)) return 'consultant'
+  if (/\b(contract|contractor|independent contractor|1099)\b/.test(text)) return 'contract'
+  if (/\btemporary\b|\btemp\s+(role|position|contract)\b/.test(text)) return 'temporary'
   if (/\bpart[\s-]?time\b/.test(text)) return 'part_time'
-  return 'full_time'
+  if (/\bfull[\s-]?time\b|\bpermanent\b/.test(text)) return 'full_time'
+  return 'unknown'
 }
 
 /**
@@ -344,11 +356,24 @@ export interface NormalizedJob {
   location: string | null
   country: string
   salary_range: string | null
+  /**
+   * Structured salary (Phase 16). Adapters may omit these; they are populated
+   * centrally by enrichIntelligence() in run.ts before upsert.
+   */
+  salary_min?: number | null
+  salary_max?: number | null
+  salary_currency?: string | null
+  salary_period?: string | null
   employment_type: EmploymentType
   tags: string[]
   is_remote: boolean
   is_open_to_africa: boolean
   eligibility: Eligibility
+  /**
+   * Persisted intelligence signal store (Phase 16). Populated centrally by
+   * enrichIntelligence() in run.ts; adapters need not set it.
+   */
+  intelligence?: JobIntelligence
   /** Real provider posting date (ISO), or null when the source exposes none. */
   posted_at: string | null
   source: string

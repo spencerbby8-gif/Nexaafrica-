@@ -226,7 +226,7 @@ export function JobDetailLayout({
           </li>
           <li className="flex items-center gap-2">
             <Building2 className="h-3.5 w-3.5" aria-hidden />
-            {employment}
+            {employment || 'Employment type not stated'}
           </li>
           <li className="flex items-center gap-2">
             <Clock className="h-3.5 w-3.5" aria-hidden />
@@ -243,9 +243,11 @@ export function JobDetailLayout({
           {job.eligibility === 'likely' && (
             <TrustBadge variant="verified" label="Likely open to Africa" />
           )}
-          <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-foreground/70">
-            {employment}
-          </span>
+          {employment && (
+            <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-foreground/70">
+              {employment}
+            </span>
+          )}
         </div>
 
         <div className="hidden md:block">

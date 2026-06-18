@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { buildJobSlug } from '@/lib/slug'
 import type { EmploymentType } from '@/lib/types'
+import { extractIntelligence, formatSalary } from '@/lib/intelligence'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -40,7 +41,16 @@ function validate(job: IncomingJob): string | null {
   }
   if (
     job.employment_type &&
-    !['full_time', 'part_time', 'contract', 'internship'].includes(job.employment_type)
+    ![
+      'full_time',
+      'part_time',
+      'contract',
+      'freelance',
+      'consultant',
+      'temporary',
+      'internship',
+      'unknown',
+    ].includes(job.employment_type)
   ) {
     return `Invalid employment_type: ${job.employment_type}`
   }
@@ -169,6 +179,18 @@ export async function POST(req: Request) {
 
     const slug = buildJobSlug(job.title, job.company, job.country)
 
+    // Phase 16: run the deterministic Intelligence Engine on the payload.
+    const intelligence = extractIntelligence(
+      {
+        title: job.title,
+        description: job.description_md,
+        location: job.location,
+        tags: job.tags,
+      },
+      job.employment_type ?? null,
+    )
+    const sal = intelligence.salary
+
     const row = {
       slug,
       title: job.title,
@@ -179,8 +201,14 @@ export async function POST(req: Request) {
       category: job.category,
       location: job.location ?? null,
       country: job.country,
-      salary_range: job.salary_range ?? null,
-      employment_type: job.employment_type ?? 'full_time',
+      salary_range: job.salary_range ?? formatSalary(sal),
+      salary_min: sal?.min ?? null,
+      salary_max: sal?.max ?? null,
+      salary_currency: sal?.currency ?? null,
+      salary_period: sal?.period ?? null,
+      // No silent full_time default — trust the engine's explicit verdict.
+      employment_type: job.employment_type ?? intelligence.employment_type,
+      intelligence,
       tags: job.tags ?? [],
       is_remote: job.is_remote ?? true,
       is_open_to_africa: job.is_open_to_africa ?? true,

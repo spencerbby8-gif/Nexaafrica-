@@ -20,6 +20,9 @@ const EMPLOYMENT_OPTIONS: { value: string; label: string }[] = [
   { value: 'full_time', label: 'Full-time' },
   { value: 'part_time', label: 'Part-time' },
   { value: 'contract', label: 'Contract' },
+  { value: 'freelance', label: 'Freelance' },
+  { value: 'consultant', label: 'Consultant' },
+  { value: 'temporary', label: 'Temporary' },
   { value: 'internship', label: 'Internship' },
 ]
 

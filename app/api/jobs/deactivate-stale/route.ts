@@ -42,8 +42,11 @@ export async function POST(req: Request) {
 
   const supabase = createServiceClient()
 
-  // Two passes — clearer than OR/RPC and cheap because of the is_active index.
-  const [expiredRes, staleRes] = await Promise.all([
+  // Three passes: expired, old posted_at, old created_at fallback.
+  // Using posted_at as primary freshness signal aligns with SEO sitemap
+  // logic (which judges staleness on posted_at). created_at remains as
+  // safety net for rows where posted_at is still null (pre-migration).
+  const [expiredRes, stalePostedRes, staleCreatedRes] = await Promise.all([
     supabase
       .from('jobs')
       .update({ is_active: false })
@@ -55,24 +58,30 @@ export async function POST(req: Request) {
       .from('jobs')
       .update({ is_active: false })
       .eq('is_active', true)
+      .not('posted_at', 'is', null)
+      .lt('posted_at', cutoff)
+      .select('id'),
+    supabase
+      .from('jobs')
+      .update({ is_active: false })
+      .eq('is_active', true)
+      .is('posted_at', null)
       .lt('created_at', cutoff)
       .select('id'),
   ])
 
-  if (expiredRes.error || staleRes.error) {
-    return NextResponse.json(
-      {
-        error: expiredRes.error?.message ?? staleRes.error?.message,
-      },
-      { status: 500 },
-    )
+  const err = expiredRes.error ?? stalePostedRes.error ?? staleCreatedRes.error
+  if (err) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
   }
 
   return NextResponse.json({
     ok: true,
     deactivated: {
       expired: expiredRes.data?.length ?? 0,
-      stale: staleRes.data?.length ?? 0,
+      stalePosted: stalePostedRes.data?.length ?? 0,
+      staleCreatedFallback: staleCreatedRes.data?.length ?? 0,
+      stale: (stalePostedRes.data?.length ?? 0) + (staleCreatedRes.data?.length ?? 0),
     },
     thresholdDays: days,
     ranAt: nowIso,

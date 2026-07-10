@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import type { Job } from '@/lib/types'
 
 const JOB_COLUMNS =
-  'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, employment_type, tags, is_remote, is_open_to_africa, created_at, expires_at'
+  'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, salary_min, salary_max, salary_currency, salary_period, employment_type, intelligence, tags, is_remote, is_open_to_africa, eligibility, posted_at, created_at, expires_at'
 
 /**
  * Derived company directory.
@@ -46,6 +46,7 @@ export async function getCompanies(limit = 500): Promise<CompanyAggregate[]> {
     .select(
       'company, company_logo, category, country, is_open_to_africa, is_remote, created_at',
     )
+    .eq('is_active', true)
     .order('created_at', { ascending: false })
     .limit(2000)
   if (error) {
@@ -113,7 +114,8 @@ export async function getCompanyBySlug(
   const { data: rows, error } = await supabase
     .from('jobs')
     .select(JOB_COLUMNS)
-    .order('created_at', { ascending: false })
+    .eq('is_active', true)
+    .order('posted_at', { ascending: false })
     .limit(1000)
   if (error) {
     console.error('[v0] getCompanyBySlug error', error.message)

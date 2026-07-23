@@ -1,10 +1,19 @@
+# Supabase local config — minimal to fix branching workflow
+# Project ref: ydjnobnddcevbwytdvyw
+project_id = "ydjnobnddcevbwytdvyw"
+
 [api]
 enabled = true
+
 [db]
 major_version = 15
+
 [storage]
 enabled = true
-[[storage.buckets]]
-id = "cvs"
-name = "cvs"
+file_size_limit = "50MiB"
+
+# Correct bucket syntax — [storage.buckets.<name>] not [[storage.buckets]]
+[storage.buckets.cvs]
 public = false
+file_size_limit = "50MiB"
+allowed_mime_types = ["application/pdf"]

@@ -31,13 +31,12 @@ export async function GET() {
   const base = siteUrl()
   const now = new Date().toISOString()
 
-  // Freshness buckets — stale pages dilute crawl budget. The founder sees
-  // at a glance whether the inventory is healthy.
+  // Freshness buckets — now uses posted_at (real provider date) per refresh engine, not created_at
   const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
   const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
   const ninetyDaysAgo = Date.now() - 90 * 24 * 60 * 60 * 1000
-  const last7d = jobs.filter((j) => new Date(j.created_at).getTime() >= sevenDaysAgo).length
-  const last30d = jobs.filter((j) => new Date(j.created_at).getTime() >= thirtyDaysAgo).length
+  const last7d = jobs.filter((j) => new Date(j.posted_at).getTime() >= sevenDaysAgo).length
+  const last30d = jobs.filter((j) => new Date(j.posted_at).getTime() >= thirtyDaysAgo).length
 
   // Stale counts — these are excluded from the sitemap and noindexed at the
   // role level, but tracking them surfaces if the ingest pipeline has stalled.
@@ -45,7 +44,7 @@ export async function GET() {
     (j) => j.expires_at && new Date(j.expires_at).getTime() < Date.now(),
   ).length
   const olderThan90d = jobs.filter(
-    (j) => new Date(j.created_at).getTime() < ninetyDaysAgo,
+    (j) => new Date(j.posted_at).getTime() < ninetyDaysAgo,
   ).length
   const indexableRoles = jobs.length - expired - olderThan90d
 

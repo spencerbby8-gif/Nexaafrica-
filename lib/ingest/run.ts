@@ -287,7 +287,16 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
         result.rejected += 1
         continue
       }
-      if (data && data.length > 0) result.inserted += 1
+      if (data && data.length > 0) {
+        result.inserted += 1
+        try {
+          await supabase.from('ai_processing_queue').insert({
+            job_id: data[0].id,
+            status: 'pending',
+            priority: existing ? 0 : 10,
+          })
+        } catch {}
+      }
       else result.skipped += 1
     }
 
@@ -556,7 +565,16 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
         }
         continue
       }
-      if (data && data.length > 0) result.inserted += 1
+      if (data && data.length > 0) {
+        result.inserted += 1
+        try {
+          await supabase.from('ai_processing_queue').insert({
+            job_id: data[0].id,
+            status: 'pending',
+            priority: existing ? 0 : 10,
+          })
+        } catch {}
+      }
       else result.skipped += 1
     }
 

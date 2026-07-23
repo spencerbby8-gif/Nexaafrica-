@@ -3,6 +3,7 @@ import { TrustBadge } from '@/components/trust-badge'
 import { CompanyAvatar } from '@/components/company-avatar'
 import { employmentLabel, isFresh, postedLabel, relativeTime, salaryDisplay } from '@/lib/format'
 import type { Job } from '@/lib/types'
+import { calculateTrustScore } from '@/lib/trust/engine'
 
 function firstParagraph(md: string): string {
   const block = md
@@ -61,6 +62,21 @@ export function JobCard({
         </p>
 
         <div className="flex flex-wrap items-center gap-1.5">
+          {(() => {
+            try {
+              const trust = (job as any).trust_score != null ? { score: (job as any).trust_score } : calculateTrustScore(job as any)
+              const score = (trust as any).score ?? (trust as any).trust_score ?? 0
+              if (score >= 70) {
+                return <span className="inline-flex items-center gap-1 rounded-full border border-green-500/20 bg-green-500/10 px-2 py-0.5 text-[11px] text-green-300">Trust {score}</span>
+              }
+              if (score >= 40) {
+                return <span className="inline-flex items-center gap-1 rounded-full border border-yellow-500/20 bg-yellow-500/10 px-2 py-0.5 text-[11px] text-yellow-300">Trust {score}</span>
+              }
+              return <span className="inline-flex items-center gap-1 rounded-full border border-red-500/20 bg-red-500/10 px-2 py-0.5 text-[11px] text-red-300">Low {score}</span>
+            } catch {
+              return null
+            }
+          })()}
           {job.is_remote && <TrustBadge variant="remote" />}
           {salary.isExplicit ? (
             <TrustBadge variant="usd" label={salary.label} />

@@ -16,6 +16,7 @@ import {
   formatSalary,
   type JobIntelligence,
 } from '@/lib/intelligence'
+import { calculateTrustScore } from '@/lib/trust/engine'
 
 /**
  * Phase 16: run the deterministic Intelligence Engine over a normalized job
@@ -125,6 +126,41 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
       // Phase 16: deterministic intelligence extraction (persisted, evidence-backed).
       const intel = enrichIntelligence(job)
       const slug = buildJobSlug(job.title, job.company, job.country)
+      // Trust Intelligence Engine — calculate trust score for this job
+      let trustResult: ReturnType<typeof calculateTrustScore> | null = null
+      try {
+        // Build a job-like object for trust engine (use normalized fields + intelligence)
+        const jobForTrust: any = {
+          id: `tmp-${job.source}-${job.source_id}`,
+          slug,
+          title: job.title,
+          company: job.company,
+          company_logo: job.company_logo,
+          description_md: job.description_md,
+          apply_url: job.apply_url,
+          category: job.category,
+          location: job.location,
+          country: job.country,
+          salary_range: intel.salary_range,
+          salary_min: intel.salary_min,
+          salary_max: intel.salary_max,
+          salary_currency: intel.salary_currency,
+          salary_period: intel.salary_period,
+          employment_type: intel.employment_type,
+          intelligence: intel.intelligence,
+          tags: job.tags,
+          is_remote: job.is_remote,
+          is_open_to_africa: job.is_open_to_africa,
+          eligibility: job.eligibility,
+          posted_at: job.posted_at || new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          expires_at: job.expires_at,
+          source: job.source,
+          source_id: job.source_id,
+        }
+        trustResult = calculateTrustScore(jobForTrust, { companyJobCount: 0 })
+      } catch {}
+
       const row: Record<string, unknown> = {
         slug,
         title: job.title,
@@ -150,6 +186,12 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
         source_id: job.source_id,
         expires_at: job.expires_at,
         is_active: true,
+        trust_score: trustResult?.score ?? null,
+        trust_confidence: trustResult?.confidence ?? "unknown",
+        trust_signals: trustResult?.signals ?? [],
+        trust_version: trustResult?.version ?? 1,
+        is_flagged: trustResult?.isFlagged ?? false,
+        flagged_reason: trustResult?.flaggedReason ?? null,
       }
       // Only write posted_at when the provider gave a real, trustworthy date.
       // Omitting it means: on INSERT it stays NULL (display falls back to

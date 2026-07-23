@@ -8,6 +8,9 @@ import { SaveJobButton } from '@/components/save-job-button'
 import { ShareSheet } from '@/components/share-sheet'
 import { RoleViewTracker } from '@/components/role-view-tracker'
 import { EvidencePanel } from '@/components/evidence-panel'
+import { TrustCard } from '@/components/trust/trust-card'
+import { ReportButton } from '@/components/trust/report-button'
+import { calculateTrustScore } from '@/lib/trust/engine'
 import { employmentLabel, isFresh, postedLabel } from '@/lib/format'
 import type { Job } from '@/lib/types'
 
@@ -275,9 +278,39 @@ export function JobDetailLayout({
         </div>
       </header>
 
-      {/* Evidence check — the opportunity-intelligence layer. Placed before
-          the description so mobile users can evaluate accessibility before
-          reading the full posting. Server-rendered, unique per job. */}
+      {/* Trust Intelligence Engine — core trust layer, visible, evidence-based */}
+      <div className="pt-6">
+        {(() => {
+          // Calculate trust score on the fly if not persisted, else use persisted if available
+          // For SSR, this is pure and fast (<5ms)
+          try {
+            // @ts-ignore - allow optional fields
+            const trust = (job as any).trust_score != null && (job as any).trust_signals?.length
+              ? {
+                  score: (job as any).trust_score,
+                  confidence: (job as any).trust_confidence || "medium",
+                  version: (job as any).trust_version || 1,
+                  signals: (job as any).trust_signals,
+                  isFlagged: !!(job as any).is_flagged,
+                  flaggedReason: (job as any).flagged_reason,
+                  isWarning: ((job as any).trust_score || 0) < 40,
+                }
+              : calculateTrustScore(job)
+            return (
+              <>
+                <TrustCard trust={trust as any} />
+                <div className="mt-4 flex justify-end">
+                  <ReportButton jobId={job.id} jobSlug={job.slug} />
+                </div>
+              </>
+            )
+          } catch {
+            return <EvidencePanel job={job} />
+          }
+        })()}
+      </div>
+
+      {/* Evidence check — secondary, kept for backward compat, now below Trust Card */}
       <div className="pt-6">
         <EvidencePanel job={job} />
       </div>

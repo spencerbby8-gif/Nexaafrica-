@@ -37,9 +37,15 @@ interface CategoryRow {
 }
 
 async function fetchSitemapData() {
-  // Cookie-free client that resolves env tolerantly (SUPABASE_URL first) so the
-  // sitemap never 500s on the metadata-route env quirk described in public.ts.
-  const supabase = createPublicClient()
+  // SEO God Mode: sitemap must never 500. If Supabase env missing (local build,
+  // preview without env), return empty dynamic sets and let static URLs win.
+  let supabase: ReturnType<typeof createPublicClient>
+  try {
+    supabase = createPublicClient()
+  } catch (e) {
+    console.warn('[sitemap] Supabase env missing — returning static-only sitemap', (e as Error).message)
+    return { jobs: [] as JobRow[], companies: [] as { slug: string; latestJobAt: string }[], categories: [] as CategoryRow[] }
+  }
 
   // Each query is isolated: a single failure degrades gracefully to an empty
   // set rather than throwing and turning the whole sitemap into a 5xx

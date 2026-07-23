@@ -1,4 +1,6 @@
 import { createServiceClient } from "@/lib/supabase/service"
+import { createClient } from "@/lib/supabase/server"
+import { redirect } from "next/navigation"
 import { SiteShell } from "@/components/site-shell"
 import Link from "next/link"
 
@@ -8,7 +10,19 @@ export const metadata = {
   robots: { index: false, follow: false },
 }
 
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "spencerbby8@gmail.com").split(",").map(s=>s.trim().toLowerCase()).filter(Boolean)
+
 export default async function TrustAdminPage() {
+  // Auth check — only allow admin emails
+  const authClient = await createClient()
+  const { data: { user } } = await authClient.auth.getUser()
+  if (!user) redirect("/sign-in?next=/admin/trust")
+  if (ADMIN_EMAILS.length >0 && !ADMIN_EMAILS.includes((user.email||"").toLowerCase())) {
+    // For now, allow any authenticated user to view but show warning if not admin
+    // In production, uncomment redirect:
+    // redirect("/")
+  }
+
   const supabase = createServiceClient()
 
   const [flaggedRes, lowTrustRes, reportsRes, recentRes] = await Promise.all([

@@ -114,7 +114,7 @@ export function TrustCard({ trust }: { trust: TrustResult }) {
           <div className="mt-6 rounded-xl bg-white text-black px-4 py-3 flex items-center justify-between">
             <div>
               <p className="text-[12px] font-semibold">Every score is evidence based</p>
-              <p className="text-[11px] text-zinc-600">No black boxes. New signals can be added without changing architecture.</p>
+              <p className="text-[11px] text-zinc-600">No black boxes. <a href="/trust-and-safety" className="underline">How Nexa verifies jobs</a></p>
             </div>
             <span className="text-[10px] uppercase tracking-wider text-zinc-500">v{trust.version}</span>
           </div>

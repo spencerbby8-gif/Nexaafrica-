@@ -2,17 +2,9 @@ import Link from 'next/link'
 import { TrustBadge } from '@/components/trust-badge'
 import { CompanyAvatar } from '@/components/company-avatar'
 import { employmentLabel, isFresh, postedLabel, relativeTime, salaryDisplay } from '@/lib/format'
+import { getJobCardExcerpt } from '@/lib/cleanDescription'
 import type { Job } from '@/lib/types'
 import { calculateTrustScore } from '@/lib/trust/engine'
-
-function firstParagraph(md: string): string {
-  const block = md
-    .split(/\n{2,}/)
-    .map((b) => b.trim())
-    .find((b) => b && !b.startsWith('#') && !b.startsWith('-'))
-  if (!block) return ''
-  return block.length > 160 ? block.slice(0, 160).trimEnd() + '…' : block
-}
 
 export function JobCard({
   job,
@@ -21,11 +13,9 @@ export function JobCard({
   job: Job
   matchReasons?: string[]
 }) {
-  // Freshness + posted label use the real provider posting date, not the
-  // ingestion timestamp. posted_at is always populated (provider date, or
-  // created_at fallback via DB trigger).
   const fresh = isFresh(job.posted_at, 3)
   const salary = salaryDisplay(job.salary_range, { openToAfrica: job.is_open_to_africa })
+  const excerpt = getJobCardExcerpt(job.description_md)
   return (
     <Link
       href={`/role/${job.slug}`}
@@ -58,7 +48,7 @@ export function JobCard({
         )}
 
         <p className="line-clamp-2 text-sm leading-relaxed text-muted-foreground">
-          {firstParagraph(job.description_md)}
+          {excerpt}
         </p>
 
         <div className="flex flex-wrap items-center gap-1.5">

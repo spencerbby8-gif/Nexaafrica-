@@ -12,6 +12,7 @@ import { TrustCard } from '@/components/trust/trust-card'
 import { ReportButton } from '@/components/trust/report-button'
 import { calculateTrustScore } from '@/lib/trust/engine'
 import { employmentLabel, isFresh, postedLabel } from '@/lib/format'
+import { cleanDescription } from '@/lib/cleanDescription'
 import type { Job } from '@/lib/types'
 
 /**
@@ -316,7 +317,7 @@ export function JobDetailLayout({
       </div>
 
       <section className="pt-8" aria-label="Role description">
-        <Markdown source={job.description_md} />
+        <Markdown source={cleanDescription(job.description_md)} />
       </section>
 
       {job.tags.length > 0 && (

@@ -50,6 +50,21 @@ export function validateApplyUrl(raw: string): string | null {
   if (u.protocol !== 'https:' && u.protocol !== 'http:') {
     return 'apply_url must be http(s)'
   }
+
+  // Allow Greenhouse and other ATS that encode job ID in query param (e.g. ?gh_jid=7954688)
+  // This is critical: many companies (Stripe, Airbnb) use company domain /jobs/search?gh_jid=...
+  const jobIdQueryParams = ['gh_jid', 'ghjid', 'id', 'job_id', 'posting', 'p', 'jobId', 'job']
+  for (const key of jobIdQueryParams) {
+    const val = u.searchParams.get(key)
+    if (val && /^\d{3,}$/.test(val.trim())) {
+      return null
+    }
+  }
+  // Also accept if query string contains gh_jid pattern anywhere (defensive)
+  if (/(?:^|&|\?)gh_jid=\d{3,}/i.test(u.search) || /gh_jid=\d{3,}/i.test(raw)) {
+    return null
+  }
+
   const segments = u.pathname.split('/').filter(Boolean)
   if (segments.length === 0) {
     return 'apply_url points to a homepage'

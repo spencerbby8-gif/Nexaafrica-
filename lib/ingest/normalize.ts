@@ -285,31 +285,153 @@ export function resolveCountry(rawLocation: string | null | undefined): string {
 }
 
 /**
- * Strip HTML to plain markdown-ish text. We're lossy on purpose: ATS HTML
- * is verbose, full of styling, and we render plain markdown anyway.
+ * Strip HTML to plain markdown-ish text. Proper HTML parsing, not regex.
+ * Uses `he` for entity decoding first, then `node-html-parser` for structural cleaning.
+ * - Decodes &lt;div&gt; etc before stripping (fixes raw HTML bug)
+ * - Removes script, style, comments
+ * - Converts block tags to newlines to preserve paragraph spacing
+ * - Strips inline styles/tags
+ * - Collapses whitespace
  */
 export function htmlToMarkdown(html: string | null | undefined): string {
   if (!html) return ''
-  return html
-    .replace(/<\s*br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n\n')
-    .replace(/<\/li>/gi, '\n')
-    .replace(/<li[^>]*>/gi, '- ')
-    .replace(/<\/h[1-6]>/gi, '\n\n')
-    .replace(/<h[1-6][^>]*>/gi, '\n## ')
-    .replace(/<strong[^>]*>(.*?)<\/strong>/gi, '**$1**')
-    .replace(/<b[^>]*>(.*?)<\/b>/gi, '**$1**')
-    .replace(/<em[^>]*>(.*?)<\/em>/gi, '_$1_')
-    .replace(/<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/gi, '[$2]($1)')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
+  try {
+    // Dynamic requires to avoid bundling issues in edge runtime
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    // @ts-ignore
+    const he = require('he')
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    // @ts-ignore
+    const { parse } = require('node-html-parser')
+
+    // 1. Decode entities FIRST — so &lt;div&gt; becomes <div> and can be stripped as tag, not left as raw text
+    let decoded = he.decode(html)
+
+    // 2. Parse with proper parser
+    const root = parse(decoded, {
+      blockTextElements: {
+        script: false,
+        style: false,
+        pre: false,
+      },
+      comment: false,
+    })
+
+    // Remove unwanted elements
+    root.querySelectorAll('script, style, noscript, iframe, form, button').forEach((el: any) => el.remove())
+
+    // Convert block elements to newlines before extracting text
+    // Replace <br> with \n, </p> and </li> and headings with \n\n
+    const blockTags = ['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'tr', 'br', 'ul', 'ol']
+    blockTags.forEach(tag => {
+      root.querySelectorAll(tag).forEach((el: any) => {
+        if (tag === 'br') {
+          el.replaceWith('\n')
+        } else if (tag === 'li') {
+          el.insertAdjacentHTML('beforebegin', '- ')
+          el.insertAdjacentHTML('afterend', '\n')
+        } else {
+          // Add newlines around block
+          el.insertAdjacentHTML('beforebegin', '\n\n')
+          el.insertAdjacentHTML('afterend', '\n\n')
+        }
+      })
+    })
+
+    // Handle <a href> -> [text](url) before stripping
+    root.querySelectorAll('a').forEach((el: any) => {
+      const href = el.getAttribute('href')
+      const text = el.text?.trim()
+      if (href && text && href.startsWith('http')) {
+        el.replaceWith(`[${text}](${href})`)
+      }
+    })
+
+    // Handle bold/strong, em
+    root.querySelectorAll('strong, b').forEach((el: any) => {
+      const text = el.text?.trim()
+      if (text) el.replaceWith(`**${text}**`)
+    })
+    root.querySelectorAll('em, i').forEach((el: any) => {
+      const text = el.text?.trim()
+      if (text) el.replaceWith(`_${text}_`)
+    })
+
+    let text = root.text || root.innerText || ''
+
+    // 3. Final cleanup
+    return text
+      // Remove zero-width chars
+      .replace(/\u0000/g, '')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      // Normalize line breaks
+      .replace(/\r\n?/g, '\n')
+      // Collapse multiple spaces but keep paragraph breaks
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  } catch (e) {
+    // Fallback to old regex method if parser fails, but decode entities first (fixes original bug)
+    try {
+      // @ts-ignore
+      const he = require('he')
+      let decoded = he.decode(html)
+      return decoded
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<\s*br\s*\/?>/gi, '\n')
+        .replace(/<\/p>/gi, '\n\n')
+        .replace(/<\/li>/gi, '\n')
+        .replace(/<li[^>]*>/gi, '- ')
+        .replace(/<\/h[1-6]>/gi, '\n\n')
+        .replace(/<h[1-6][^>]*>/gi, '\n## ')
+        .replace(/<[^>]+>/g, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+    } catch {
+      // Ultimate fallback
+      return html
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .trim()
+    }
+  }
+}
+
+/**
+ * Generate a clean readable excerpt 180-250 chars from cleaned text.
+ * Preserves sentence boundaries, decodes entities, no HTML.
+ */
+export function generateExcerpt(cleanedText: string, minLen = 180, maxLen = 250): string {
+  if (!cleanedText) return ''
+  // Already cleaned, but ensure no HTML remains
+  let text = cleanedText.replace(/\s+/g, ' ').trim()
+
+  if (text.length <= maxLen) return text
+
+  // Try to cut at sentence boundary within min-max range
+  let excerpt = text.slice(0, maxLen)
+  const lastPeriod = excerpt.lastIndexOf('. ')
+  const lastExcl = excerpt.lastIndexOf('! ')
+  const lastQ = excerpt.lastIndexOf('? ')
+  const lastSentenceEnd = Math.max(lastPeriod, lastExcl, lastQ)
+
+  if (lastSentenceEnd > minLen) {
+    excerpt = excerpt.slice(0, lastSentenceEnd + 1)
+  } else {
+    // Cut at last space to avoid mid-word
+    const lastSpace = excerpt.lastIndexOf(' ')
+    if (lastSpace > minLen) {
+      excerpt = excerpt.slice(0, lastSpace)
+    }
+  }
+
+  // Ensure it ends with punctuation or ellipsis
+  if (!/[.!?]$/.test(excerpt.trim())) {
+    excerpt = excerpt.trim() + '…'
+  }
+
+  return excerpt.trim()
 }
 
 /**

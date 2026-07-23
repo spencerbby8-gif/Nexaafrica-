@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { runAllSources } from '@/lib/ingest/run'
+import { runAllSources, runAllTier1 } from '@/lib/ingest/run'
 import type { AtsKind } from '@/lib/ingest/companies'
 
 export const runtime = 'nodejs'
@@ -8,14 +8,9 @@ export const maxDuration = 300
 
 /**
  * Triggered by Vercel cron (daily) or manually with the INGEST_TOKEN.
- * Cron requests are authorized by Vercel's standard header. Manual
- * requests must include `Authorization: Bearer <INGEST_TOKEN>`.
- *
- * Optional filter via `?ats=greenhouse` to run a single provider when
- * debugging without hammering every feed.
+ * Tier 1: ATS + Remote Boards (RemoteOK, Himalayas, Remotive, WWR)
  */
 function isAuthorized(req: Request): boolean {
-  // Vercel cron sends this header automatically.
   if (req.headers.get('x-vercel-cron') === '1') return true
   const token = process.env.INGEST_TOKEN
   if (!token) return false
@@ -29,11 +24,14 @@ async function handle(req: Request): Promise<Response> {
 
   const url = new URL(req.url)
   const atsFilter = url.searchParams.get('ats') as AtsKind | null
+  const tier = url.searchParams.get('tier') || '1'
 
   const started = Date.now()
-  const results = await runAllSources(
-    atsFilter ? (s) => s.ats === atsFilter : undefined,
-  )
+  const results = tier === '1'
+    ? await runAllTier1()
+    : await runAllSources(
+        atsFilter ? (s) => s.ats === atsFilter : undefined,
+      )
   const elapsedMs = Date.now() - started
 
   const totals = results.reduce(
@@ -52,9 +50,10 @@ async function handle(req: Request): Promise<Response> {
     {
       ok: true,
       elapsedMs,
+      tier,
       sources: results.length,
       totals,
-      results,
+      results: results.slice(0, 100), // limit response size
     },
     { status: 200 },
   )

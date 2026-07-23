@@ -54,6 +54,17 @@ export interface Job {
   /** Ingestion timestamp — when Nexa first saw the row. Never a posting date. */
   created_at: string
   expires_at: string | null
+  // Trust Engine + ingestion metadata (optional, not always selected)
+  source?: string | null
+  source_id?: string | null
+  is_active?: boolean | null
+  trust_score?: number | null
+  trust_confidence?: string | null
+  trust_signals?: any
+  trust_version?: number | null
+  is_flagged?: boolean | null
+  flagged_reason?: string | null
+  duplicate_of?: string | null
 }
 
 export interface Category {

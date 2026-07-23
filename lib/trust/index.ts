@@ -1,0 +1,15 @@
+export * from "./types"
+export * from "./engine"
+export { calculateTrustScore as calculateTrust, getTrustLabel } from "./engine"
+
+// Re-export signals for extensibility
+export { employerLegitimacySignal } from "./signals/employerLegitimacy"
+export { atsSourceQualitySignal } from "./signals/atsSourceQuality"
+export { companyHistorySignal } from "./signals/companyHistory"
+export { salaryTransparencySignal } from "./signals/salaryTransparency"
+export { applicationMethodSignal } from "./signals/applicationMethod"
+export { locationConsistencySignal } from "./signals/locationConsistency"
+export { remotePolicyClaritySignal } from "./signals/remotePolicyClarity"
+export { postingFreshnessSignal } from "./signals/postingFreshness"
+export { duplicateDetectionSignal } from "./signals/duplicateDetection"
+export { scamIndicatorsSignal } from "./signals/scamIndicators"

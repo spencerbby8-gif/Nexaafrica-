@@ -126,29 +126,52 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
     rejected: 0,
   }
 
-  // Company job count cache for trust signal
-  const companyCountCache = new Map<string, number>()
-
-  async function getCompanyJobCount(company: string): Promise<number> {
-    const key = company.toLowerCase()
-    if (companyCountCache.has(key)) return companyCountCache.get(key)!
-    try {
-      const { count } = await supabase
-        .from('jobs')
-        .select('id', { count: 'exact', head: true })
-        .eq('is_active', true)
-        .ilike('company', company)
-      const c = count || 0
-      companyCountCache.set(key, c)
-      return c
-    } catch {
-      return 0
-    }
-  }
-
   try {
     const jobs = await fetchOneWithRetry(s)
     result.fetched = jobs.length
+
+    // Batch fetch existing jobs for this source to avoid N+1
+    const sourceIds = jobs.map(j => j.source_id).filter(Boolean) as string[]
+    let existingMap = new Map<string, { id: string; first_seen_at: string | null; refresh_count: number | null }>()
+    if (sourceIds.length > 0) {
+      try {
+        // Supabase IN filter has limit ~100, chunk it
+        const chunkSize = 100
+        for (let i = 0; i < sourceIds.length; i += chunkSize) {
+          const chunk = sourceIds.slice(i, i + chunkSize)
+          const { data } = await supabase
+            .from('jobs')
+            .select('source_id, id, first_seen_at, refresh_count')
+            .eq('source', s.ats)
+            .in('source_id', chunk)
+          for (const row of (data || []) as any[]) {
+            existingMap.set(row.source_id, { id: row.id, first_seen_at: row.first_seen_at, refresh_count: row.refresh_count })
+          }
+        }
+      } catch {}
+    }
+
+    // Batch company counts: collect unique companies, fetch counts in one grouped query per 20 companies to avoid too many ilike
+    const uniqueCompanies = Array.from(new Set(jobs.map(j => j.company).filter(Boolean))) as string[]
+    const companyCountMap = new Map<string, number>()
+    if (uniqueCompanies.length > 0) {
+      try {
+        // For performance, do a single query counting jobs per company using ilike any? Simpler: fetch all active jobs for these companies in one go and count in JS
+        // To keep query small, we limit to 2000 rows and count in memory (good enough for trust signal)
+        const { data: companyRows } = await supabase
+          .from('jobs')
+          .select('company')
+          .eq('is_active', true)
+          .in('company', uniqueCompanies)
+          .limit(5000)
+        for (const c of uniqueCompanies) {
+          const count = (companyRows || []).filter((r: any) => (r.company || '').toLowerCase() === c.toLowerCase()).length
+          companyCountMap.set(c.toLowerCase(), count)
+        }
+      } catch {
+        // fallback to 0
+      }
+    }
 
     for (const job of jobs) {
       const err = validateNormalizedJob(job)
@@ -162,20 +185,9 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
       const intel = enrichIntelligence(job)
       const slug = buildJobSlug(job.title, job.company, job.country)
 
-      // Check if job already exists to handle first_seen_at, refresh_count, last_seen_at correctly
-      let existing: { id: string; first_seen_at: string | null; refresh_count: number | null } | null = null
-      try {
-        const { data } = await supabase
-          .from('jobs')
-          .select('id, first_seen_at, refresh_count')
-          .eq('source', job.source)
-          .eq('source_id', job.source_id)
-          .maybeSingle()
-        if (data) existing = data as any
-      } catch {}
-
+      const existing = existingMap.get(job.source_id) || null
       const nowIso = new Date().toISOString()
-      const companyJobCount = await getCompanyJobCount(job.company)
+      const companyJobCount = companyCountMap.get(job.company.toLowerCase()) || 0
 
       let trustResult: ReturnType<typeof calculateTrustScore> | null = null
       try {

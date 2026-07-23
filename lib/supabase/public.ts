@@ -22,6 +22,13 @@ export function createPublicClient() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
     ''
 
+  // SEO God Mode: sitemap must never 500 because env missing at build time.
+  // If env is absent, caller should handle degraded mode. Throw explicit error
+  // so fetchSitemapData can return static-only sitemap.
+  if (!url || !key) {
+    throw new Error('Missing Supabase env for public client (SUPABASE_URL / ANON_KEY)')
+  }
+
   return createSupabaseClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
   })

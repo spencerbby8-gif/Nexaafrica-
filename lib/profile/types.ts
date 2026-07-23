@@ -17,6 +17,8 @@ export interface ProfileRecord {
   headline: string | null
   summary: string | null
   cv_storage_path: string | null
+  raw_cv_text?: string | null
+  share_token?: string | null
   status: ProfileStatus
   completed_at: string | null
   created_at: string

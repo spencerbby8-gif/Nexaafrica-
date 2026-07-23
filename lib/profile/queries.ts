@@ -96,6 +96,7 @@ export async function saveParsedProfile(
   userId: string,
   parsed: ParsedProfile,
   client?: SupabaseClient,
+  rawCvText?: string,
 ) {
   const supabase = client ?? (await createClient())
 
@@ -104,8 +105,13 @@ export async function saveParsedProfile(
   const summary = asString(parsed?.summary).slice(0, 1200)
   const skillsArr = Array.isArray(parsed?.skills) ? parsed.skills : []
   const experienceArr = Array.isArray(parsed?.experience) ? parsed.experience : []
+  const rawText = rawCvText ? rawCvText.slice(0, 10000) : null
 
   console.log("[v0][persist][skills] type=", Array.isArray(parsed?.skills) ? "array" : typeof parsed?.skills, "len=", skillsArr.length, "sample=", skillsArr.slice(0, 5))
+
+  // Fetch existing to preserve share_token if exists
+  const { data: existing } = await supabase.from("profiles").select("share_token").eq("id", userId).maybeSingle()
+  const shareToken = (existing as any)?.share_token || Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6)
 
   // Upsert (not update) so the profiles row is guaranteed to exist before
   // any child rows are inserted. Users created before the handle_new_user
@@ -119,6 +125,8 @@ export async function saveParsedProfile(
         id: userId,
         headline,
         summary,
+        raw_cv_text: rawText,
+        share_token: shareToken,
         status: "ready" as const,
         completed_at: new Date().toISOString(),
       },
@@ -209,6 +217,47 @@ export async function saveParsedProfile(
         )
       }
     }
+  }
+
+  // ----- God Tier V2: save version for comparison + ATS -----
+  try {
+    // Get next version number
+    const { data: lastVersion } = await supabase
+      .from("profile_versions")
+      .select("version_number")
+      .eq("profile_id", userId)
+      .order("version_number", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    const nextVersion = ((lastVersion as any)?.version_number || 0) + 1
+
+    // Mark previous selected as false
+    await supabase.from("profile_versions").update({ is_selected: false }).eq("profile_id", userId)
+
+    // Calculate ATS (dynamic import to avoid circular)
+    let atsData: any = {}
+    try {
+      const { calculateAtsScore } = await import("./ats")
+      atsData = calculateAtsScore({ headline, summary, skills: skillsArr, experience: experienceArr } as any, rawText || "")
+    } catch {}
+
+    await supabase.from("profile_versions").insert({
+      profile_id: userId,
+      version_number: nextVersion,
+      prompt_version: "2026-07-23.god-tier-v1",
+      model: "gemini-2.5-flash",
+      headline,
+      summary,
+      skills: skillsArr,
+      experience: experienceArr,
+      ats_score: atsData.score || null,
+      ats_breakdown: atsData.breakdown || {},
+      improvements: atsData.improvements || [],
+      is_selected: true,
+    })
+  } catch (e) {
+    console.warn("[v0][versions] failed to save version, non-fatal", e)
   }
 }
 

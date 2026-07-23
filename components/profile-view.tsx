@@ -19,11 +19,17 @@ import {
   Zap,
   Star,
   TrendingUp,
+  Download,
+  Link as LinkIcon,
 } from "lucide-react"
 import type { ProfileRecord, ProfileExperience } from "@/lib/profile/types"
+import { calculateAtsScore } from "@/lib/profile/ats"
+import { AtsScoreCard } from "@/components/ats-score-card"
+import { BeforeAfterComparison } from "@/components/before-after-comparison"
+import { RecruiterView } from "@/components/recruiter-view"
 
 type Props = {
-  profile: ProfileRecord
+  profile: ProfileRecord & { raw_cv_text?: string | null; share_token?: string | null }
   skills: string[]
   experience: ProfileExperience[]
   email: string | null
@@ -147,20 +153,35 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
   }
 
   const handleShare = async () => {
+    const shareUrl = profile.share_token ? `${typeof window !== "undefined" ? window.location.origin : ""}/p/${profile.share_token}` : typeof window !== "undefined" ? window.location.origin : ""
     const text = "My God Tier remote profile is live on Nexa — built for global hiring."
-    const url = typeof window !== "undefined" ? window.location.origin : ""
     if (typeof navigator !== "undefined" && "share" in navigator) {
       try {
-        await navigator.share({ title: "Nexa — God Tier Profile", text, url })
+        await navigator.share({ title: "Nexa — God Tier Profile", text, url: shareUrl })
         return
       } catch {}
     }
     try {
-      await navigator.clipboard.writeText(`${text} ${url}`.trim())
+      await navigator.clipboard.writeText(shareUrl)
       setShareCopied(true)
       setTimeout(() => setShareCopied(false), 2200)
     } catch {}
   }
+
+  const [activeTab, setActiveTab] = useState<"you" | "recruiter">("you")
+  const [showBeforeAfter, setShowBeforeAfter] = useState(false)
+
+  const ats = useMemo(() => {
+    return calculateAtsScore(
+      {
+        headline: profile.headline || "",
+        summary: profile.summary || "",
+        skills,
+        experience,
+      },
+      (profile as any).raw_cv_text || "",
+    )
+  }, [profile.headline, profile.summary, skills, experience, (profile as any).raw_cv_text])
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
@@ -177,7 +198,7 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
               <span className="flex items-center gap-2 text-yellow-400">
-                <Star className="h-3 w-3 fill-yellow-400" /> God Tier
+                <Star className="h-3 w-3 fill-yellow-400" /> God Tier V2
               </span>
               <span className="text-muted-foreground/40">·</span>
               <span className="inline-flex items-center gap-1.5">
@@ -192,11 +213,11 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
               <Button onClick={handleShare} variant="ghost" size="sm" className="text-muted-foreground">
                 {shareCopied ? (
                   <>
-                    <Check className="mr-1.5 h-3.5 w-3.5" /> Copied
+                    <Check className="mr-1.5 h-3.5 w-3.5" /> Copied Link
                   </>
                 ) : (
                   <>
-                    <Share2 className="mr-1.5 h-3.5 w-3.5" /> Share Legend
+                    <Share2 className="mr-1.5 h-3.5 w-3.5" /> Share
                   </>
                 )}
               </Button>
@@ -234,7 +255,33 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
                 </span>
               </div>
 
-              {/* Power bar */}
+              <div className="mt-6 flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowBeforeAfter(!showBeforeAfter)}
+                  className="rounded-full border-yellow-500/20 bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20"
+                >
+                  <Sparkles className="mr-1.5 h-3 w-3" /> {showBeforeAfter ? "Hide" : "See"} Before vs After
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => (window.location.href = "/profile/cv")}
+                  className="rounded-full"
+                >
+                  <Download className="mr-1.5 h-3 w-3" /> One-Click PDF
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleShare}
+                  className="rounded-full"
+                >
+                  <LinkIcon className="mr-1.5 h-3 w-3" /> Share Link
+                </Button>
+              </div>
+
               <div className="mt-6">
                 <div className="flex items-center justify-between text-[11px]">
                   <span className="flex items-center gap-1.5 uppercase tracking-wider text-muted-foreground">
@@ -264,30 +311,58 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
         </div>
       </div>
 
-      {/* MAGIC EXPLANATION */}
-      <section className="mt-8 rounded-2xl border border-yellow-500/10 bg-gradient-to-br from-yellow-500/[0.08] to-purple-500/[0.05] px-6 py-5">
-        <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-yellow-400/80 flex items-center gap-2">
-          <Sparkles className="h-3 w-3" /> What Nexa God Tier did
-        </p>
-        <div className="mt-4 grid gap-3 text-[13px] leading-relaxed sm:grid-cols-2">
-          <div className="flex gap-2.5">
-            <span className="text-yellow-400">✦</span>
-            <span className="text-foreground/80">Rewrote every line from duty → impact, from task → ownership</span>
-          </div>
-          <div className="flex gap-2.5">
-            <span className="text-yellow-400">✦</span>
-            <span className="text-foreground/80">Stripped local barriers, elevated titles for global recruiters</span>
-          </div>
-          <div className="flex gap-2.5">
-            <span className="text-yellow-400">✦</span>
-            <span className="text-foreground/80">Distilled your superpowers into ATS + human-readable gold</span>
-          </div>
-          <div className="flex gap-2.5">
-            <span className="text-yellow-400">✦</span>
-            <span className="text-foreground/80">Built narrative that makes recruiters feel: “We need this person”</span>
+      {/* VIEW TOGGLE: You vs Recruiter */}
+      <div className="mt-6 flex items-center justify-center">
+        <div className="flex rounded-full bg-zinc-900 p-1 border border-zinc-800">
+          <button
+            onClick={() => setActiveTab("you")}
+            className={`rounded-full px-5 py-2 text-[12px] font-medium transition ${activeTab === "you" ? "bg-white text-black" : "text-zinc-400 hover:text-white"}`}
+          >
+            Your View
+          </button>
+          <button
+            onClick={() => setActiveTab("recruiter")}
+            className={`rounded-full px-5 py-2 text-[12px] font-medium transition ${activeTab === "recruiter" ? "bg-white text-black" : "text-zinc-400 hover:text-white"}`}
+          >
+            Recruiter View
+          </button>
+        </div>
+      </div>
+
+      {activeTab === "recruiter" && (
+        <div className="mt-6">
+          <RecruiterView headline={profile.headline} summary={profile.summary} skills={skills} experienceCount={experience.length} ats={ats} />
+        </div>
+      )}
+
+      {showBeforeAfter && (
+        <div className="mt-6">
+          <BeforeAfterComparison rawText={(profile as any).raw_cv_text || null} headline={profile.headline} summary={profile.summary} improvements={ats.improvements} />
+        </div>
+      )}
+
+      {/* ATS SCORE - Always visible in Your View */}
+      {activeTab === "you" && (
+        <div className="mt-6 grid gap-6 lg:grid-cols-2">
+          <AtsScoreCard ats={ats} />
+          <div className="rounded-2xl border border-yellow-500/10 bg-gradient-to-br from-yellow-500/[0.08] to-purple-500/[0.05] px-6 py-5">
+            <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-yellow-400/80 flex items-center gap-2">
+              <Sparkles className="h-3 w-3" /> What God Tier V2 Changed — Explained
+            </p>
+            <div className="mt-4 space-y-3">
+              {ats.improvements.slice(0, 4).map((imp, i) => (
+                <div key={i} className="flex gap-2.5">
+                  <span className="text-yellow-400 mt-0.5">✦</span>
+                  <div>
+                    <p className="text-[13px] font-medium text-foreground/90 capitalize">{imp.field} • {imp.type.replace(/_/g, " ")}</p>
+                    <p className="text-[12px] leading-relaxed text-zinc-400">{imp.reason}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
-      </section>
+      )}
 
       {profile.summary && (
         <section className="mt-10">

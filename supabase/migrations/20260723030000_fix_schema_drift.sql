@@ -80,12 +80,24 @@ create table if not exists public.ingest_runs (
   created_at timestamptz not null default now()
 );
 
+-- If table already existed with different schema (remote has old version without created_at), add missing cols idempotently
+alter table public.ingest_runs add column if not exists id uuid default gen_random_uuid();
+alter table public.ingest_runs add column if not exists source text;
+alter table public.ingest_runs add column if not exists ok boolean default false;
+alter table public.ingest_runs add column if not exists fetched int default 0;
+alter table public.ingest_runs add column if not exists inserted int default 0;
+alter table public.ingest_runs add column if not exists skipped int default 0;
+alter table public.ingest_runs add column if not exists rejected int default 0;
+alter table public.ingest_runs add column if not exists error text;
+alter table public.ingest_runs add column if not exists created_at timestamptz default now();
+
 alter table public.ingest_runs enable row level security;
 
 -- Public cannot read ingest_runs (internal telemetry). Service role bypasses RLS.
 drop policy if exists "ingest_runs no public read" on public.ingest_runs;
 -- No select policy = anon/authenticated denied, service_role allowed
 
+-- Indexes now safe even if table existed without created_at before
 create index if not exists ingest_runs_created_at_idx on public.ingest_runs (created_at desc);
 create index if not exists ingest_runs_source_idx on public.ingest_runs (source);
 create index if not exists ingest_runs_ok_idx on public.ingest_runs (ok);

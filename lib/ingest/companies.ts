@@ -74,7 +74,7 @@ export const INGEST_SOURCES: IngestSource[] = [
   // { ats: 'lever', slug: 'remote', company: 'Remote' }, // 404
   // { ats: 'lever', slug: 'deel', company: 'Deel' }, // 404
 
-  // ── Ashby (7 healthy, 6 dead) ────────────────────────────────────────
+  // ── Ashby (9 healthy verified, 6 dead) — Tier 1 expansion: Zapier + Notion verified live 2026-07-23 ─
   // { ats: 'ashby', slug: 'vercel', company: 'Vercel' }, // 0 jobs - empty board
   { ats: 'ashby', slug: 'linear', company: 'Linear' }, // 24
   { ats: 'ashby', slug: 'replit', company: 'Replit' }, // 93
@@ -87,8 +87,13 @@ export const INGEST_SOURCES: IngestSource[] = [
   { ats: 'ashby', slug: 'ramp', company: 'Ramp' }, // 121
   // { ats: 'ashby', slug: 'mercury', company: 'Mercury' }, // 0
   { ats: 'ashby', slug: 'attio', company: 'Attio' }, // 37
+  { ats: 'ashby', slug: 'zapier', company: 'Zapier' }, // 15 - verified live, Africa-friendly, no-code
+  { ats: 'ashby', slug: 'notion', company: 'Notion' }, // 138 - verified live, product/design, Africa-friendly
   // { ats: 'ashby', slug: 'arc', company: 'Arc' }, // 404
   // { ats: 'ashby', slug: 'cleartax', company: 'ClearTax' }, // 404
+  // { ats: 'ashby', slug: 'figma', company: 'Figma' }, // 404 via Ashby, but Greenhouse figma exists
+  // { ats: 'ashby', slug: 'deel', company: 'Deel' }, // 0 via Ashby, needs verification
+  // { ats: 'ashby', slug: 'remote', company: 'Remote' }, // 404 via Ashby
 
   // ── Workable (0 healthy, 3 dead) — disabled, all 0 or 404
   // { ats: 'workable', slug: 'toptal', company: 'Toptal' }, // 0

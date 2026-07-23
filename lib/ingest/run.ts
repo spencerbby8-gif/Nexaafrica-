@@ -1,6 +1,7 @@
 import { createServiceClient } from '@/lib/supabase/service'
 import { buildJobSlug } from '@/lib/slug'
 import { INGEST_SOURCES, type IngestSource } from '@/lib/ingest/companies'
+import { REMOTE_BOARD_SOURCES, type RemoteBoardSource } from '@/lib/ingest/remoteBoards'
 import { fetchAshby } from '@/lib/ingest/sources/ashby'
 import { fetchComeet } from '@/lib/ingest/sources/comeet'
 import { fetchGreenhouse } from '@/lib/ingest/sources/greenhouse'
@@ -130,12 +131,13 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
     const jobs = await fetchOneWithRetry(s)
     result.fetched = jobs.length
 
-    // Batch fetch existing jobs for this source to avoid N+1
+    // Batch fetch existing jobs for this source to avoid N+1 + cross-source duplicate detection by apply_url
     const sourceIds = jobs.map(j => j.source_id).filter(Boolean) as string[]
     let existingMap = new Map<string, { id: string; first_seen_at: string | null; refresh_count: number | null }>()
+    let duplicateUrlMap = new Map<string, string>() // apply_url -> existing id from different source
+
     if (sourceIds.length > 0) {
       try {
-        // Supabase IN filter has limit ~100, chunk it
         const chunkSize = 100
         for (let i = 0; i < sourceIds.length; i += chunkSize) {
           const chunk = sourceIds.slice(i, i + chunkSize)
@@ -150,6 +152,23 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
         }
       } catch {}
     }
+
+    // Cross-source duplicate detection by apply_url (prevent same job from different ATS)
+    try {
+      const applyUrls = jobs.map(j => j.apply_url).filter(Boolean).slice(0, 100) // limit to 100 to avoid large IN query
+      if (applyUrls.length > 0) {
+        const { data: dupData } = await supabase
+          .from('jobs')
+          .select('id, apply_url')
+          .in('apply_url', applyUrls)
+          .neq('source', s.ats) // different source
+          .eq('is_active', true)
+          .limit(100)
+        for (const row of (dupData || []) as any[]) {
+          if (row.apply_url) duplicateUrlMap.set(row.apply_url, row.id)
+        }
+      }
+    } catch {}
 
     // Batch company counts: collect unique companies, fetch counts in one grouped query per 20 companies to avoid too many ilike
     const uniqueCompanies = Array.from(new Set(jobs.map(j => j.company).filter(Boolean))) as string[]
@@ -294,17 +313,287 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
  * Run every configured source in parallel-batched groups. We batch to be
  * polite to ATS endpoints and to avoid hitting Vercel's serverless
  * function limits during a single invocation.
+ * Auto-disables consistently failing connectors (5+ consecutive failures).
  */
 export async function runAllSources(
   filter?: (s: IngestSource) => boolean,
   concurrency = 4,
 ): Promise<SourceResult[]> {
-  const sources = filter ? INGEST_SOURCES.filter(filter) : INGEST_SOURCES
+  const supabase = createServiceClient()
+  // Fetch recent runs to calculate health and auto-disable failing connectors
+  let disabledSources = new Set<string>()
+  try {
+    const { data: recentRuns } = await supabase
+      .from('ingest_runs')
+      .select('source, ok, created_at')
+      .order('created_at', { ascending: false })
+      .limit(500)
+    
+    // Calculate consecutive failures per source
+    const failures = new Map<string, number>()
+    const grouped = new Map<string, any[]>()
+    for (const run of (recentRuns || []) as any[]) {
+      if (!grouped.has(run.source)) grouped.set(run.source, [])
+      grouped.get(run.source)!.push(run)
+    }
+    for (const [source, runs] of grouped as Map<string, any[]>) {
+      const sorted = [...runs].sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      let cf = 0
+      for (const r of sorted) {
+        if (!r.ok) cf++
+        else break
+      }
+      if (cf >= 5) {
+        disabledSources.add(source)
+        console.log(`[ingest] auto-disabling ${source} after ${cf} consecutive failures`)
+      }
+    }
+  } catch {}
+
+  let sources = filter ? INGEST_SOURCES.filter(filter) : INGEST_SOURCES
+  // Filter out auto-disabled
+  sources = sources.filter(s => !disabledSources.has(`${s.ats}:${s.slug}`))
+
   const results: SourceResult[] = []
   for (let i = 0; i < sources.length; i += concurrency) {
     const chunk = sources.slice(i, i + concurrency)
     const chunkResults = await Promise.all(chunk.map(runSource))
     results.push(...chunkResults)
   }
+
+  // Log disabled count
+  if (disabledSources.size > 0) {
+    console.log(`[ingest] ${disabledSources.size} sources auto-disabled due to 5+ failures: ${Array.from(disabledSources).join(', ')}`)
+  }
+
   return results
+}
+
+// ========== Tier 1 Remote Boards - Production Grade ==========
+
+async function fetchRemoteBoardWithRetry(
+  source: { id: string; fetch: () => Promise<NormalizedJob[]>; rateLimitMs: number },
+  retries = 2
+): Promise<NormalizedJob[]> {
+  let lastError: any = null
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const start = Date.now()
+      const jobs = await source.fetch()
+      const duration = Date.now() - start
+      console.log(`[remote-board] ${source.id} fetched ${jobs.length} in ${duration}ms`)
+      // Respect rate limit after fetch
+      await new Promise(r => setTimeout(r, source.rateLimitMs))
+      return jobs
+    } catch (e) {
+      lastError = e
+      if (attempt < retries) {
+        const delayMs = Math.pow(2, attempt) * 1000 + Math.random() * 500
+        console.log(`[remote-board] retry ${attempt + 1}/${retries} for ${source.id} after ${Math.round(delayMs)}ms: ${e instanceof Error ? e.message : String(e)}`)
+        await new Promise(r => setTimeout(r, delayMs))
+      }
+    }
+  }
+  throw lastError
+}
+
+async function runRemoteBoard(source: { id: string; name: string; fetch: () => Promise<NormalizedJob[]>; rateLimitMs: number; trustScore: number }): Promise<SourceResult> {
+  const supabase = createServiceClient()
+  const result: SourceResult = {
+    source: source.id,
+    ok: false,
+    fetched: 0,
+    inserted: 0,
+    skipped: 0,
+    rejected: 0,
+  }
+
+  try {
+    const jobs = await fetchRemoteBoardWithRetry(source as any)
+    result.fetched = jobs.length
+
+    // Batch existing lookup for dedup across all connectors (by source_id AND by apply_url hash for cross-source dedup)
+    const sourceIds = jobs.map(j => j.source_id).filter(Boolean) as string[]
+    let existingMap = new Map<string, { id: string; first_seen_at: string | null; refresh_count: number | null }>()
+    if (sourceIds.length > 0) {
+      try {
+        const chunkSize = 100
+        for (let i = 0; i < sourceIds.length; i += chunkSize) {
+          const chunk = sourceIds.slice(i, i + chunkSize)
+          const { data } = await supabase
+            .from('jobs')
+            .select('source_id, id, first_seen_at, refresh_count')
+            .eq('source', source.id.split(':')[0])
+            .in('source_id', chunk)
+          for (const row of (data || []) as any[]) {
+            existingMap.set(row.source_id, { id: row.id, first_seen_at: row.first_seen_at, refresh_count: row.refresh_count })
+          }
+        }
+      } catch {}
+    }
+
+    // Cross-source duplicate detection by apply_url
+    const applyUrls = jobs.map(j => j.apply_url).filter(Boolean)
+    let duplicateApplyUrlMap = new Map<string, string>() // apply_url -> existing job id
+    if (applyUrls.length > 0) {
+      try {
+        // Check if any existing job has same apply_url (different source)
+        const { data } = await supabase
+          .from('jobs')
+          .select('id, apply_url')
+          .in('apply_url', applyUrls.slice(0, 100)) // limit to avoid too large query
+          .eq('is_active', true)
+        for (const row of (data || []) as any[]) {
+          if (row.apply_url) duplicateApplyUrlMap.set(row.apply_url, row.id)
+        }
+      } catch {}
+    }
+
+    for (const job of jobs) {
+      const err = validateNormalizedJob(job)
+      if (err) {
+        result.rejected += 1
+        continue
+      }
+
+      // Cross-source duplicate check
+      if (duplicateApplyUrlMap.has(job.apply_url)) {
+        result.skipped += 1
+        continue
+      }
+
+      for (const warning of auditClassification(job)) {
+        console.log(`[remote-board-audit] ${warning}`)
+      }
+
+      const intel = enrichIntelligence(job)
+      const slug = buildJobSlug(job.title, job.company, job.country)
+      const existing = existingMap.get(job.source_id) || null
+      const nowIso = new Date().toISOString()
+
+      let trustResult: ReturnType<typeof calculateTrustScore> | null = null
+      try {
+        const jobForTrust: any = {
+          id: existing?.id || `tmp-${job.source}-${job.source_id}`,
+          slug,
+          title: job.title,
+          company: job.company,
+          company_logo: job.company_logo,
+          description_md: job.description_md,
+          apply_url: job.apply_url,
+          category: job.category,
+          location: job.location,
+          country: job.country,
+          salary_range: intel.salary_range,
+          salary_min: intel.salary_min,
+          salary_max: intel.salary_max,
+          salary_currency: intel.salary_currency,
+          salary_period: intel.salary_period,
+          employment_type: intel.employment_type,
+          intelligence: intel.intelligence,
+          tags: job.tags,
+          is_remote: job.is_remote,
+          is_open_to_africa: job.is_open_to_africa,
+          eligibility: job.eligibility,
+          posted_at: job.posted_at || new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          expires_at: job.expires_at,
+          source: job.source,
+          source_id: job.source_id,
+        }
+        trustResult = calculateTrustScore(jobForTrust, { companyJobCount: 0 })
+      } catch {}
+
+      const row: Record<string, unknown> = {
+        slug,
+        title: job.title,
+        company: job.company,
+        company_logo: job.company_logo,
+        description_md: job.description_md,
+        apply_url: job.apply_url,
+        category: job.category,
+        location: job.location,
+        country: job.country,
+        salary_range: intel.salary_range,
+        salary_min: intel.salary_min,
+        salary_max: intel.salary_max,
+        salary_currency: intel.salary_currency,
+        salary_period: intel.salary_period,
+        employment_type: intel.employment_type,
+        intelligence: intel.intelligence,
+        tags: job.tags,
+        is_remote: job.is_remote,
+        is_open_to_africa: job.is_open_to_africa,
+        eligibility: job.eligibility,
+        source: job.source,
+        source_id: job.source_id,
+        expires_at: job.expires_at,
+        is_active: true,
+        last_seen_at: nowIso,
+        last_refreshed_at: nowIso,
+        refresh_count: existing ? (existing.refresh_count || 0) + 1 : 1,
+        first_seen_at: existing?.first_seen_at || nowIso,
+        trust_score: trustResult?.score ?? source.trustScore,
+        trust_confidence: trustResult?.confidence ?? "medium",
+        trust_signals: trustResult?.signals ?? [],
+        trust_version: trustResult?.version ?? 1,
+        is_flagged: trustResult?.isFlagged ?? false,
+        flagged_reason: trustResult?.flaggedReason ?? null,
+      }
+      if (job.posted_at) row.posted_at = job.posted_at
+
+      const { data, error } = await supabase
+        .from('jobs')
+        .upsert(row, { onConflict: 'source,source_id' })
+        .select('id')
+
+      if (error) {
+        // Never insert broken apply URLs — already validated, but double-check
+        if (error.message.includes('apply_url')) {
+          result.rejected += 1
+        } else {
+          result.rejected += 1
+        }
+        continue
+      }
+      if (data && data.length > 0) result.inserted += 1
+      else result.skipped += 1
+    }
+
+    result.ok = true
+  } catch (e) {
+    result.error = e instanceof Error ? e.message : String(e)
+  }
+
+  await supabase.from('ingest_runs').insert({
+    source: result.source,
+    ok: result.ok,
+    fetched: result.fetched,
+    inserted: result.inserted,
+    skipped: result.skipped,
+    rejected: result.rejected,
+    error: result.error ?? null,
+  })
+
+  return result
+}
+
+export async function runRemoteBoards(concurrency = 2): Promise<SourceResult[]> {
+  const enabled = REMOTE_BOARD_SOURCES.filter(s => s.enabled)
+  const results: SourceResult[] = []
+  for (let i = 0; i < enabled.length; i += concurrency) {
+    const chunk = enabled.slice(i, i + concurrency)
+    const chunkResults = await Promise.all(chunk.map(runRemoteBoard))
+    results.push(...chunkResults)
+  }
+  return results
+}
+
+export async function runAllTier1(): Promise<SourceResult[]> {
+  console.log('[acquisition] Starting Tier 1: ATS + Remote Boards')
+  const [atsResults, remoteResults] = await Promise.all([
+    runAllSources(),
+    runRemoteBoards(),
+  ])
+  return [...atsResults, ...remoteResults]
 }

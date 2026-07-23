@@ -35,74 +35,76 @@ export interface IngestSource {
 }
 
 /**
- * Conservatively curated. Add liberally, but verify the feed returns 200
- * before adding. A failing source costs nothing — it's reported via
- * ingest_runs and silently skipped — but a wrong slug pollutes nothing
- * since validation rejects bad URLs.
+ * Curated registry — CLEANED 2026-07-23 after live audit.
+ * Removed 29 dead/empty sources that were returning 404 or 0 jobs and wasting cron time.
+ * 22 healthy sources remain, fetching ~3600 jobs per full run.
+ * Dead sources commented out with reason, not deleted, so history is visible.
  */
 export const INGEST_SOURCES: IngestSource[] = [
-  // ── Greenhouse ──────────────────────────────────────────────────────────
-  { ats: 'greenhouse', slug: 'airbnb', company: 'Airbnb' },
-  { ats: 'greenhouse', slug: 'stripe', company: 'Stripe' },
-  { ats: 'greenhouse', slug: 'figma', company: 'Figma' },
-  { ats: 'greenhouse', slug: 'instacart', company: 'Instacart' },
-  { ats: 'greenhouse', slug: 'gitlab', company: 'GitLab' },
-  { ats: 'greenhouse', slug: 'doordash', company: 'DoorDash' },
-  { ats: 'greenhouse', slug: 'discord', company: 'Discord' },
-  { ats: 'greenhouse', slug: 'reddit', company: 'Reddit' },
-  { ats: 'greenhouse', slug: 'pinterest', company: 'Pinterest' },
-  { ats: 'greenhouse', slug: 'cloudflare', company: 'Cloudflare' },
-  { ats: 'greenhouse', slug: 'mongodb', company: 'MongoDB' },
-  { ats: 'greenhouse', slug: 'elastic', company: 'Elastic' },
-  { ats: 'greenhouse', slug: 'mozilla', company: 'Mozilla' },
-  { ats: 'greenhouse', slug: 'andela', company: 'Andela' },
-  { ats: 'greenhouse', slug: 'flutterwave', company: 'Flutterwave' },
-  { ats: 'greenhouse', slug: 'paystackhq', company: 'Paystack' },
-  { ats: 'greenhouse', slug: 'chipper', company: 'Chipper Cash' },
+  // ── Greenhouse (12 healthy) ─────────────────────────────────────────
+  { ats: 'greenhouse', slug: 'airbnb', company: 'Airbnb' }, // 157
+  { ats: 'greenhouse', slug: 'stripe', company: 'Stripe' }, // 519
+  { ats: 'greenhouse', slug: 'figma', company: 'Figma' }, // 172
+  { ats: 'greenhouse', slug: 'instacart', company: 'Instacart' }, // 127
+  { ats: 'greenhouse', slug: 'gitlab', company: 'GitLab' }, // 178 - Africa-friendly
+  { ats: 'greenhouse', slug: 'discord', company: 'Discord' }, // 24
+  { ats: 'greenhouse', slug: 'reddit', company: 'Reddit' }, // 192
+  { ats: 'greenhouse', slug: 'pinterest', company: 'Pinterest' }, // 139
+  { ats: 'greenhouse', slug: 'cloudflare', company: 'Cloudflare' }, // 271
+  { ats: 'greenhouse', slug: 'mongodb', company: 'MongoDB' }, // 394
+  { ats: 'greenhouse', slug: 'elastic', company: 'Elastic' }, // 209
+  { ats: 'greenhouse', slug: 'mozilla', company: 'Mozilla' }, // 72
 
-  // ── Lever ───────────────────────────────────────────────────────────────
-  { ats: 'lever', slug: 'netflix', company: 'Netflix' },
-  { ats: 'lever', slug: 'github', company: 'GitHub' },
-  { ats: 'lever', slug: 'shopify', company: 'Shopify' },
-  { ats: 'lever', slug: 'spotify', company: 'Spotify' },
-  { ats: 'lever', slug: 'eventbrite', company: 'Eventbrite' },
-  { ats: 'lever', slug: 'kong', company: 'Kong' },
-  { ats: 'lever', slug: 'mux', company: 'Mux' },
-  { ats: 'lever', slug: 'turing', company: 'Turing' },
-  { ats: 'lever', slug: 'remote', company: 'Remote' },
-  { ats: 'lever', slug: 'deel', company: 'Deel' },
+  // Dead Greenhouse (404) — disabled 2026-07-23
+  // { ats: 'greenhouse', slug: 'doordash', company: 'DoorDash' }, // 404
+  // { ats: 'greenhouse', slug: 'andela', company: 'Andela' }, // 404 — board moved
+  // { ats: 'greenhouse', slug: 'flutterwave', company: 'Flutterwave' }, // 404
+  // { ats: 'greenhouse', slug: 'paystackhq', company: 'Paystack' }, // 404
+  // { ats: 'greenhouse', slug: 'chipper', company: 'Chipper Cash' }, // 404
 
-  // ── Ashby ───────────────────────────────────────────────────────────────
-  { ats: 'ashby', slug: 'vercel', company: 'Vercel' },
-  { ats: 'ashby', slug: 'linear', company: 'Linear' },
-  { ats: 'ashby', slug: 'replit', company: 'Replit' },
-  { ats: 'ashby', slug: 'browserbase', company: 'Browserbase' },
-  { ats: 'ashby', slug: 'posthog', company: 'PostHog' },
-  { ats: 'ashby', slug: 'supabase', company: 'Supabase' },
-  { ats: 'ashby', slug: 'huggingface', company: 'Hugging Face' },
-  { ats: 'ashby', slug: 'openai', company: 'OpenAI' },
-  { ats: 'ashby', slug: 'anthropic', company: 'Anthropic' },
-  { ats: 'ashby', slug: 'ramp', company: 'Ramp' },
-  { ats: 'ashby', slug: 'mercury', company: 'Mercury' },
-  { ats: 'ashby', slug: 'attio', company: 'Attio' },
-  { ats: 'ashby', slug: 'arc', company: 'Arc' },
-  { ats: 'ashby', slug: 'cleartax', company: 'ClearTax' },
+  // ── Lever (1 healthy, 8 dead) ───────────────────────────────────────
+  // { ats: 'lever', slug: 'netflix', company: 'Netflix' }, // 0 jobs - no remote filtered
+  // { ats: 'lever', slug: 'github', company: 'GitHub' }, // 404
+  // { ats: 'lever', slug: 'shopify', company: 'Shopify' }, // 404
+  { ats: 'lever', slug: 'spotify', company: 'Spotify' }, // 38
+  // { ats: 'lever', slug: 'eventbrite', company: 'Eventbrite' }, // 404
+  // { ats: 'lever', slug: 'kong', company: 'Kong' }, // 404
+  // { ats: 'lever', slug: 'mux', company: 'Mux' }, // 404
+  // { ats: 'lever', slug: 'turing', company: 'Turing' }, // 404
+  // { ats: 'lever', slug: 'remote', company: 'Remote' }, // 404
+  // { ats: 'lever', slug: 'deel', company: 'Deel' }, // 404
 
-  // ── Workable ────────────────────────────────────────────────────────────
-  { ats: 'workable', slug: 'toptal', company: 'Toptal' },
-  { ats: 'workable', slug: 'invisionapp', company: 'InVision' },
-  { ats: 'workable', slug: 'mybit', company: 'MyBit' },
+  // ── Ashby (7 healthy, 6 dead) ────────────────────────────────────────
+  // { ats: 'ashby', slug: 'vercel', company: 'Vercel' }, // 0 jobs - empty board
+  { ats: 'ashby', slug: 'linear', company: 'Linear' }, // 24
+  { ats: 'ashby', slug: 'replit', company: 'Replit' }, // 93
+  { ats: 'ashby', slug: 'browserbase', company: 'Browserbase' }, // 2
+  { ats: 'ashby', slug: 'posthog', company: 'PostHog' }, // 17
+  { ats: 'ashby', slug: 'supabase', company: 'Supabase' }, // 55
+  // { ats: 'ashby', slug: 'huggingface', company: 'Hugging Face' }, // 404
+  { ats: 'ashby', slug: 'openai', company: 'OpenAI' }, // 737 - high volume
+  // { ats: 'ashby', slug: 'anthropic', company: 'Anthropic' }, // 404
+  { ats: 'ashby', slug: 'ramp', company: 'Ramp' }, // 121
+  // { ats: 'ashby', slug: 'mercury', company: 'Mercury' }, // 0
+  { ats: 'ashby', slug: 'attio', company: 'Attio' }, // 37
+  // { ats: 'ashby', slug: 'arc', company: 'Arc' }, // 404
+  // { ats: 'ashby', slug: 'cleartax', company: 'ClearTax' }, // 404
 
-  // ── SmartRecruiters ─────────────────────────────────────────────────────
-  { ats: 'smartrecruiters', slug: 'Square', company: 'Square' },
-  { ats: 'smartrecruiters', slug: 'Bosch', company: 'Bosch' },
-  { ats: 'smartrecruiters', slug: 'Visa', company: 'Visa' },
+  // ── Workable (0 healthy, 3 dead) — disabled, all 0 or 404
+  // { ats: 'workable', slug: 'toptal', company: 'Toptal' }, // 0
+  // { ats: 'workable', slug: 'invisionapp', company: 'InVision' }, // 0
+  // { ats: 'workable', slug: 'mybit', company: 'MyBit' }, // 404
 
-  // ── Recruitee ───────────────────────────────────────────────────────────
-  { ats: 'recruitee', slug: 'datacamp', company: 'DataCamp' },
-  { ats: 'recruitee', slug: 'channable', company: 'Channable' },
+  // ── SmartRecruiters (0 healthy, 3 dead) — disabled, all 0
+  // { ats: 'smartrecruiters', slug: 'Square', company: 'Square' }, // 0
+  // { ats: 'smartrecruiters', slug: 'Bosch', company: 'Bosch' }, // 0
+  // { ats: 'smartrecruiters', slug: 'Visa', company: 'Visa' }, // 0
 
-  // ── Personio ────────────────────────────────────────────────────────────
-  { ats: 'personio', slug: 'personio', company: 'Personio' },
-  { ats: 'personio', slug: 'about-you', company: 'ABOUT YOU' },
+  // ── Recruitee (1 healthy, 1 dead) ───────────────────────────────────
+  // { ats: 'recruitee', slug: 'datacamp', company: 'DataCamp' }, // 404
+  { ats: 'recruitee', slug: 'channable', company: 'Channable' }, // 13 - currently live on site
+
+  // ── Personio (0 healthy, 2 dead) — disabled (404 + 429 rate limit)
+  // { ats: 'personio', slug: 'personio', company: 'Personio' }, // 404
+  // { ats: 'personio', slug: 'about-you', company: 'ABOUT YOU' }, // 429 Too Many Requests
 ]

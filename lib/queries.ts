@@ -151,8 +151,8 @@ export async function getDistinctCountriesForCategory(category: string): Promise
 
 /**
  * Lightweight platform pulse for the homepage.
- * Returns counts of jobs added recently. Each filter is independently
- * accurate so we can render either a single line or a multi-segment row.
+ * Uses posted_at (real provider date) for freshness, not created_at (ingestion time),
+ * per Job Refresh Engine requirement: freshness scoring using real posted dates.
  */
 export async function getFreshnessPulse(): Promise<{
   addedThisWeek: number
@@ -166,13 +166,13 @@ export async function getFreshnessPulse(): Promise<{
       .from('jobs')
       .select('id', { count: 'exact', head: true })
       .eq('is_active', true)
-      .gte('created_at', since),
+      .gte('posted_at', since),
     supabase
       .from('jobs')
       .select('id', { count: 'exact', head: true })
       .eq('is_active', true)
       .eq('is_open_to_africa', true)
-      .gte('created_at', since),
+      .gte('posted_at', since),
   ])
 
   return {

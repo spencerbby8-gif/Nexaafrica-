@@ -30,6 +30,7 @@ interface JobRow {
 }
 interface CompanyRow {
   company: string | null
+  posted_at: string | null
   created_at: string
 }
 interface CategoryRow {
@@ -59,9 +60,9 @@ async function fetchSitemapData() {
       .limit(500),
     supabase
       .from('jobs')
-      .select('company, created_at')
+      .select('company, posted_at, created_at')
       .eq('is_active', true)
-      .order('created_at', { ascending: false })
+      .order('posted_at', { ascending: false })
       .limit(2000),
     supabase.from('categories').select('slug').order('title', { ascending: true }),
   ])
@@ -86,11 +87,12 @@ async function fetchSitemapData() {
     if (!row.company) continue
     const slug = companyToSlug(row.company)
     if (!slug) continue
+    const effective = row.posted_at || row.created_at
     const existing = companyMap.get(slug)
     if (existing) {
-      if (row.created_at > existing.latestJobAt) existing.latestJobAt = row.created_at
+      if (effective > existing.latestJobAt) existing.latestJobAt = effective
     } else {
-      companyMap.set(slug, { latestJobAt: row.created_at })
+      companyMap.set(slug, { latestJobAt: effective })
     }
   }
   const companies = Array.from(companyMap.entries())

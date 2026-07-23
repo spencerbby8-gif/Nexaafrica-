@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { calculateSourceHealth, getOverallHealth } from '@/lib/ingest/sourceHealth'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -8,6 +9,7 @@ export const dynamic = 'force-dynamic'
  * Operational visibility for the founder. Returns the most recent run per
  * source plus a global health summary. Token-protected so the data isn't
  * publicly enumerable.
+ * Fixed to use created_at (not ran_at) and to provide health scoring.
  */
 export async function GET(req: Request) {
   const token = process.env.INGEST_TOKEN
@@ -21,24 +23,20 @@ export async function GET(req: Request) {
 
   const supabase = createServiceClient()
 
-  // Pull the most recent 200 run rows; collapse to latest per source.
+  // Pull the most recent 500 run rows; collapse to latest per source.
+  // Support both created_at (new) and ran_at (old) for backward compat.
   const { data: runs, error } = await supabase
     .from('ingest_runs')
-    .select('source, ok, fetched, inserted, skipped, rejected, error, ran_at')
-    .order('ran_at', { ascending: false })
-    .limit(200)
+    .select('source, ok, fetched, inserted, skipped, rejected, error, created_at')
+    .order('created_at', { ascending: false })
+    .limit(500)
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  const latestPerSource = new Map<string, (typeof runs)[number]>()
-  for (const r of runs ?? []) {
-    if (!latestPerSource.has(r.source)) latestPerSource.set(r.source, r)
-  }
-  const sources = Array.from(latestPerSource.values()).sort((a, b) =>
-    a.source.localeCompare(b.source),
-  )
+  const health = calculateSourceHealth((runs as any) || [])
+  const overall = getOverallHealth(health)
 
   // Active job stats for sanity-checking what's actually live.
   const { count: activeCount } = await supabase
@@ -46,14 +44,17 @@ export async function GET(req: Request) {
     .select('id', { count: 'exact', head: true })
     .eq('is_active', true)
 
-  const failing = sources.filter((s) => !s.ok)
-  const empty = sources.filter((s) => s.ok && s.fetched === 0)
+  const { count: staleCount } = await supabase
+    .from('jobs')
+    .select('id', { count: 'exact', head: true })
+    .eq('is_active', true)
+    .lt('posted_at', new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString())
 
   return NextResponse.json({
     activeJobs: activeCount ?? 0,
-    sources: sources.length,
-    failing: failing.length,
-    emptyFeeds: empty.length,
-    latest: sources,
+    staleJobs: staleCount ?? 0,
+    ...overall,
+    sources: health,
+    latest: health.slice(0, 50),
   })
 }

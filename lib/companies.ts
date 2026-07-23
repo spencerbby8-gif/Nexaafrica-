@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import type { Job } from '@/lib/types'
 
 const JOB_COLUMNS =
-  'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, employment_type, tags, is_remote, is_open_to_africa, created_at, expires_at'
+  'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, salary_min, salary_max, salary_currency, salary_period, employment_type, intelligence, tags, is_remote, is_open_to_africa, eligibility, posted_at, created_at, expires_at, trust_score, trust_confidence, is_flagged'
 
 /**
  * Derived company directory.
@@ -37,6 +37,7 @@ export function companyToSlug(name: string): string {
 
 /**
  * Fetch all companies with at least one active job, aggregated.
+ * Uses posted_at for freshness per Job Refresh Engine, not created_at.
  * Capped by `limit` for sitemap performance.
  */
 export async function getCompanies(limit = 500): Promise<CompanyAggregate[]> {
@@ -44,9 +45,9 @@ export async function getCompanies(limit = 500): Promise<CompanyAggregate[]> {
   const { data, error } = await supabase
     .from('jobs')
     .select(
-      'company, company_logo, category, country, is_open_to_africa, is_remote, created_at',
+      'company, company_logo, category, country, is_open_to_africa, is_remote, posted_at, created_at',
     )
-    .order('created_at', { ascending: false })
+    .order('posted_at', { ascending: false })
     .limit(2000)
   if (error) {
     console.error('[v0] getCompanies error', error.message)
@@ -66,8 +67,10 @@ export async function getCompanies(limit = 500): Promise<CompanyAggregate[]> {
       country: string | null
       is_open_to_africa: boolean | null
       is_remote: boolean | null
+      posted_at: string
       created_at: string
     }
+    const effectiveDate = r.posted_at || r.created_at
     if (existing) {
       existing.jobCount += 1
       if (r.is_open_to_africa) existing.africaFriendlyCount += 1
@@ -78,8 +81,8 @@ export async function getCompanies(limit = 500): Promise<CompanyAggregate[]> {
       if (r.country && !existing.countries.includes(r.country)) {
         existing.countries.push(r.country)
       }
-      if (r.created_at > existing.latestJobAt) {
-        existing.latestJobAt = r.created_at
+      if (effectiveDate > existing.latestJobAt) {
+        existing.latestJobAt = effectiveDate
       }
       if (!existing.logo && r.company_logo) {
         existing.logo = r.company_logo
@@ -94,7 +97,7 @@ export async function getCompanies(limit = 500): Promise<CompanyAggregate[]> {
         remoteCount: r.is_remote ? 1 : 0,
         categories: r.category ? [r.category] : [],
         countries: r.country ? [r.country] : [],
-        latestJobAt: r.created_at,
+        latestJobAt: effectiveDate,
       })
     }
   }
@@ -109,11 +112,11 @@ export async function getCompanyBySlug(
 ): Promise<{ company: CompanyAggregate; jobs: Job[] } | null> {
   const supabase = await createClient()
   // Look up the canonical company name by scanning recent rows.
-  // Slugs are derived deterministically, so we match in JS.
+  // Uses posted_at for freshness per refresh engine.
   const { data: rows, error } = await supabase
     .from('jobs')
     .select(JOB_COLUMNS)
-    .order('created_at', { ascending: false })
+    .order('posted_at', { ascending: false })
     .limit(1000)
   if (error) {
     console.error('[v0] getCompanyBySlug error', error.message)
@@ -135,7 +138,7 @@ export async function getCompanyBySlug(
     remoteCount: matches.filter((m) => m.is_remote).length,
     categories: Array.from(new Set(matches.map((m) => m.category))),
     countries: Array.from(new Set(matches.map((m) => m.country).filter(Boolean))),
-    latestJobAt: matches[0].created_at,
+    latestJobAt: matches[0].posted_at || matches[0].created_at,
   }
 
   return { company, jobs: matches }

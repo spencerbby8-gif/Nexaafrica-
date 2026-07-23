@@ -5,17 +5,14 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 /**
- * Stale-job cleanup. Deactivates roles that meet either rule:
- *   1. expires_at is in the past, OR
- *   2. created_at is older than the staleness threshold (default 60 days).
+ * Stale-job cleanup — Job Refresh Engine version.
+ * Uses REAL freshness signals, not ingestion time:
+ *   1. expires_at is in past => expired
+ *   2. posted_at (real provider date) < threshold (default 60d) => stale
+ *   3. last_seen_at < not_seen_threshold (14d) AND posted_at < threshold => not seen in feed recently, deactivated
  *
- * Reads is_active=true rows only so re-runs are idempotent and cheap.
- *
- * Auth model: same bearer-token style as /api/ingest (INGEST_TOKEN). Vercel
- * Cron requests carry the same header when configured via vercel.json.
- *
- * Also accepts Vercel's CRON_SECRET if present, so this endpoint can be
- * hooked up to scheduled crons without sharing the ingest token.
+ * SEO God Mode: deactivating stale jobs keeps sitemap fresh, crawl budget efficient, and counts accurate.
+ * Deterministic, observable, safe — uses DB function that returns counts, logs to ingest_runs style.
  */
 export async function POST(req: Request) {
   const ingestToken = process.env.INGEST_TOKEN
@@ -29,21 +26,46 @@ export async function POST(req: Request) {
   const auth = req.headers.get('authorization') ?? ''
   const authorized =
     (ingestToken && auth === `Bearer ${ingestToken}`) ||
-    (cronSecret && auth === `Bearer ${cronSecret}`)
+    (cronSecret && auth === `Bearer ${cronSecret}`) ||
+    req.headers.get('x-vercel-cron') === '1' // Vercel Cron sends this header
   if (!authorized) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const url = new URL(req.url)
   const days = Math.max(7, Math.min(365, Number(url.searchParams.get('days')) || 60))
-
-  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
-  const nowIso = new Date().toISOString()
+  const notSeenDays = Math.max(7, Math.min(90, Number(url.searchParams.get('notSeenDays')) || 14))
 
   const supabase = createServiceClient()
 
-  // Two passes — clearer than OR/RPC and cheap because of the is_active index.
-  const [expiredRes, staleRes] = await Promise.all([
+  // Try new function first (if migration applied), fallback to manual logic
+  const { data: funcData, error: funcError } = await supabase.rpc('deactivate_stale_jobs', {
+    threshold_days: days,
+    not_seen_days: notSeenDays,
+  })
+
+  if (!funcError && funcData && funcData.length > 0) {
+    const row = funcData[0] as any
+    return NextResponse.json({
+      ok: true,
+      deactivated: {
+        expired: row.expired_count || 0,
+        stale: row.stale_count || 0,
+        notSeen: row.not_seen_count || 0,
+        total: (row.expired_count || 0) + (row.stale_count || 0) + (row.not_seen_count || 0),
+      },
+      thresholds: { postedAtDays: days, notSeenDays },
+      ranAt: new Date().toISOString(),
+      method: 'rpc',
+    })
+  }
+
+  // Fallback manual (if function not yet migrated)
+  const cutoffPosted = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+  const cutoffSeen = new Date(Date.now() - notSeenDays * 24 * 60 * 60 * 1000).toISOString()
+  const nowIso = new Date().toISOString()
+
+  const [expiredRes, staleRes, notSeenRes] = await Promise.all([
     supabase
       .from('jobs')
       .update({ is_active: false })
@@ -55,14 +77,21 @@ export async function POST(req: Request) {
       .from('jobs')
       .update({ is_active: false })
       .eq('is_active', true)
-      .lt('created_at', cutoff)
+      .lt('posted_at', cutoffPosted)
+      .select('id'),
+    supabase
+      .from('jobs')
+      .update({ is_active: false })
+      .eq('is_active', true)
+      .lt('last_seen_at', cutoffSeen)
+      .lt('posted_at', cutoffPosted)
       .select('id'),
   ])
 
-  if (expiredRes.error || staleRes.error) {
+  if (expiredRes.error || staleRes.error || notSeenRes.error) {
     return NextResponse.json(
       {
-        error: expiredRes.error?.message ?? staleRes.error?.message,
+        error: expiredRes.error?.message ?? staleRes.error?.message ?? notSeenRes.error?.message,
       },
       { status: 500 },
     )
@@ -73,11 +102,14 @@ export async function POST(req: Request) {
     deactivated: {
       expired: expiredRes.data?.length ?? 0,
       stale: staleRes.data?.length ?? 0,
+      notSeen: notSeenRes.data?.length ?? 0,
+      total: (expiredRes.data?.length ?? 0) + (staleRes.data?.length ?? 0) + (notSeenRes.data?.length ?? 0),
     },
-    thresholdDays: days,
+    thresholds: { postedAtDays: days, notSeenDays },
     ranAt: nowIso,
+    method: 'manual',
   })
 }
 
-// Vercel Cron Jobs send GET by default; mirror behavior for convenience.
 export const GET = POST
+

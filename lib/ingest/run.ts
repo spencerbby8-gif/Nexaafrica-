@@ -70,6 +70,24 @@ export interface SourceResult {
   error?: string
 }
 
+async function fetchOneWithRetry(s: IngestSource, retries = 2): Promise<NormalizedJob[]> {
+  let lastError: any = null
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const result = await fetchOne(s)
+      return result
+    } catch (e) {
+      lastError = e
+      if (attempt < retries) {
+        const delayMs = Math.pow(2, attempt) * 1000 + Math.random() * 500
+        console.log(`[ingest] retry ${attempt + 1}/${retries} for ${s.ats}:${s.slug} after ${Math.round(delayMs)}ms: ${e instanceof Error ? e.message : String(e)}`)
+        await new Promise(r => setTimeout(r, delayMs))
+      }
+    }
+  }
+  throw lastError
+}
+
 async function fetchOne(s: IngestSource): Promise<NormalizedJob[]> {
   switch (s.ats) {
     case 'greenhouse':
@@ -108,8 +126,28 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
     rejected: 0,
   }
 
+  // Company job count cache for trust signal
+  const companyCountCache = new Map<string, number>()
+
+  async function getCompanyJobCount(company: string): Promise<number> {
+    const key = company.toLowerCase()
+    if (companyCountCache.has(key)) return companyCountCache.get(key)!
+    try {
+      const { count } = await supabase
+        .from('jobs')
+        .select('id', { count: 'exact', head: true })
+        .eq('is_active', true)
+        .ilike('company', company)
+      const c = count || 0
+      companyCountCache.set(key, c)
+      return c
+    } catch {
+      return 0
+    }
+  }
+
   try {
-    const jobs = await fetchOne(s)
+    const jobs = await fetchOneWithRetry(s)
     result.fetched = jobs.length
 
     for (const job of jobs) {
@@ -118,20 +156,31 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
         result.rejected += 1
         continue
       }
-      // Non-fatal: surface suspicious classifications for monitoring without
-      // dropping the row. Visible in serverless logs as [v0][ingest-audit].
       for (const warning of auditClassification(job)) {
         console.log(`[v0][ingest-audit] ${warning}`)
       }
-      // Phase 16: deterministic intelligence extraction (persisted, evidence-backed).
       const intel = enrichIntelligence(job)
       const slug = buildJobSlug(job.title, job.company, job.country)
-      // Trust Intelligence Engine — calculate trust score for this job
+
+      // Check if job already exists to handle first_seen_at, refresh_count, last_seen_at correctly
+      let existing: { id: string; first_seen_at: string | null; refresh_count: number | null } | null = null
+      try {
+        const { data } = await supabase
+          .from('jobs')
+          .select('id, first_seen_at, refresh_count')
+          .eq('source', job.source)
+          .eq('source_id', job.source_id)
+          .maybeSingle()
+        if (data) existing = data as any
+      } catch {}
+
+      const nowIso = new Date().toISOString()
+      const companyJobCount = await getCompanyJobCount(job.company)
+
       let trustResult: ReturnType<typeof calculateTrustScore> | null = null
       try {
-        // Build a job-like object for trust engine (use normalized fields + intelligence)
         const jobForTrust: any = {
-          id: `tmp-${job.source}-${job.source_id}`,
+          id: existing?.id || `tmp-${job.source}-${job.source_id}`,
           slug,
           title: job.title,
           company: job.company,
@@ -158,7 +207,7 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
           source: job.source,
           source_id: job.source_id,
         }
-        trustResult = calculateTrustScore(jobForTrust, { companyJobCount: 0 })
+        trustResult = calculateTrustScore(jobForTrust, { companyJobCount })
       } catch {}
 
       const row: Record<string, unknown> = {
@@ -186,6 +235,10 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
         source_id: job.source_id,
         expires_at: job.expires_at,
         is_active: true,
+        last_seen_at: nowIso,
+        last_refreshed_at: nowIso,
+        refresh_count: existing ? (existing.refresh_count || 0) + 1 : 1,
+        first_seen_at: existing?.first_seen_at || nowIso,
         trust_score: trustResult?.score ?? null,
         trust_confidence: trustResult?.confidence ?? "unknown",
         trust_signals: trustResult?.signals ?? [],
@@ -193,14 +246,8 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
         is_flagged: trustResult?.isFlagged ?? false,
         flagged_reason: trustResult?.flaggedReason ?? null,
       }
-      // Only write posted_at when the provider gave a real, trustworthy date.
-      // Omitting it means: on INSERT it stays NULL (display falls back to
-      // created_at); on conflict UPDATE the existing real date is preserved
-      // rather than being clobbered with a fake "fresh" timestamp.
       if (job.posted_at) row.posted_at = job.posted_at
-      // (source, source_id) is unique at the DB level — upsert on that key
-      // so refreshes overwrite stale data and revive previously-deactivated
-      // roles when they reappear in the feed.
+
       const { data, error } = await supabase
         .from('jobs')
         .upsert(row, { onConflict: 'source,source_id' })
@@ -218,7 +265,6 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
     result.error = e instanceof Error ? e.message : String(e)
   }
 
-  // Best-effort log; don't let logging failure mask the run result.
   await supabase.from('ingest_runs').insert({
     source: result.source,
     ok: result.ok,

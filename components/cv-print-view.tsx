@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect } from "react"
-import { Printer, Download } from "lucide-react"
+import { Printer, Download, Sparkles } from "lucide-react"
 import type { ProfileRecord, ProfileExperience } from "@/lib/profile/types"
 
 type Props = {
@@ -15,27 +15,15 @@ function formatRange(start: string | null, end: string | null) {
   const s = (start ?? "").trim()
   const e = (end ?? "").trim()
   if (!s && !e) return ""
-  if (s && e) return `${s} \u2014 ${e}`
+  if (s && e) return `${s} — ${e}`
   return s || e
 }
 
-/**
- * Recruiter-ready CV view.
- *
- * Renders an A4-shaped sheet using only system fonts so the print
- * output looks identical across devices and downloads cleanly via
- * the browser's native print-to-PDF. The on-screen frame is muted
- * so users understand they're looking at a print preview; the
- * actual print stylesheet (in the page) hides the frame entirely.
- */
 export function CvPrintView({ profile, skills, experience, email }: Props) {
-  // Auto-trigger the print dialog when the URL has ?download=1 so the
-  // "Download PDF" button can deep-link straight to the save sheet.
   useEffect(() => {
     if (typeof window === "undefined") return
     const params = new URLSearchParams(window.location.search)
     if (params.get("download") === "1") {
-      // Small delay so fonts/layout settle before the print dialog opens.
       const t = setTimeout(() => window.print(), 250)
       return () => clearTimeout(t)
     }
@@ -45,129 +33,134 @@ export function CvPrintView({ profile, skills, experience, email }: Props) {
   const headline = profile.headline || "Open to remote roles"
 
   return (
-    <div className="cv-shell min-h-dvh bg-muted/40 py-8">
+    <div className="cv-shell min-h-dvh bg-[#0a0a0a] py-8">
       <style>{printStyles}</style>
 
-      {/* Top action bar — hidden in the print output. */}
-      <div className="cv-actions mx-auto mb-5 flex max-w-[820px] items-center justify-between gap-3 px-4">
-        <p className="text-xs text-muted-foreground">
-          Recruiter-ready CV {"\u00b7"} Save as PDF from your browser&apos;s print dialog
+      <div className="cv-actions mx-auto mb-6 flex max-w-[820px] items-center justify-between gap-3 px-4">
+        <p className="text-xs text-zinc-400 flex items-center gap-2">
+          <Sparkles className="h-3 w-3 text-yellow-400" /> God Tier CV • Crafted by Nexa AI
         </p>
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => window.print()}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-xs font-medium text-foreground shadow-sm hover:bg-accent/10"
+            className="inline-flex h-9 items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-4 text-xs font-medium text-white hover:bg-zinc-800"
           >
-            <Printer className="h-3.5 w-3.5" aria-hidden /> Print
+            <Printer className="h-3.5 w-3.5" /> Print
           </button>
           <button
             type="button"
             onClick={() => window.print()}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md bg-foreground px-3 text-xs font-medium text-background shadow-sm hover:opacity-90"
+            className="inline-flex h-9 items-center gap-1.5 rounded-full bg-white px-4 text-xs font-medium text-black hover:bg-zinc-200"
           >
-            <Download className="h-3.5 w-3.5" aria-hidden /> Save as PDF
+            <Download className="h-3.5 w-3.5" /> Save as PDF
           </button>
         </div>
       </div>
 
-      {/* The CV sheet. Fixed A4-aspect width, generous padding, ATS-friendly. */}
-      <article className="cv-sheet mx-auto max-w-[820px] bg-white px-12 py-12 text-[#111] shadow-sm">
-        <header className="border-b border-[#e5e5e5] pb-5">
-          <h1 className="text-[26px] font-semibold leading-tight tracking-tight">
-            {name}
-          </h1>
-          <p className="mt-1 text-[14px] text-[#444]">{headline}</p>
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-[#555]">
-            {profile.country && <span>{profile.country}</span>}
-            {email && <span>{email}</span>}
-            <span>Open to remote</span>
+      <article className="cv-sheet mx-auto max-w-[820px] overflow-hidden rounded-[24px] border border-zinc-800 bg-white text-[#111] shadow-2xl">
+        {/* HEADER */}
+        <header className="relative bg-[#0a0a0a] px-10 py-10 text-white">
+          <div className="absolute top-0 right-0 h-[200px] w-[400px] bg-gradient-to-bl from-yellow-500/20 via-amber-500/10 to-transparent blur-[40px]" />
+          <div className="relative">
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-yellow-500/20 bg-yellow-500/10 px-3 py-1 text-[10px] uppercase tracking-[0.15em] text-yellow-400">
+                  <span className="h-1 w-1 rounded-full bg-yellow-400 animate-pulse" /> God Tier • Verified by Nexa
+                </div>
+                <h1 className="mt-4 text-[32px] font-semibold leading-[1.05] tracking-tight">{name}</h1>
+                <p className="mt-2 max-w-[500px] text-[15px] leading-snug text-zinc-300">{headline}</p>
+              </div>
+              <div className="hidden h-14 w-14 items-center justify-center rounded-2xl bg-white text-black font-bold sm:flex">
+                {name
+                  .split(" ")
+                  .slice(0, 2)
+                  .map((n) => n[0])
+                  .join("")
+                  .toUpperCase()}
+              </div>
+            </div>
+            <div className="mt-6 flex flex-wrap gap-3 text-[12px] text-zinc-400">
+              {profile.country && (
+                <span className="rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1">{profile.country}</span>
+              )}
+              {email && <span className="rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1">{email}</span>}
+              <span className="rounded-full border border-yellow-500/20 bg-yellow-500/10 px-3 py-1 text-yellow-400">Open to Remote • Global</span>
+            </div>
           </div>
         </header>
 
-        {profile.summary && (
-          <section className="mt-6">
-            <h2 className="text-[12px] font-semibold uppercase tracking-[0.12em] text-[#666]">
-              Summary
-            </h2>
-            <p className="mt-2 text-[13.5px] leading-[1.55] text-[#222]">
-              {profile.summary}
-            </p>
-          </section>
-        )}
+        <div className="px-10 py-8">
+          {profile.summary && (
+            <section>
+              <h2 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.15em] text-zinc-500">
+                <span className="h-px w-6 bg-zinc-200" /> Profile • Elevated Story
+              </h2>
+              <p className="mt-4 max-w-[65ch] text-[15px] leading-[1.7] text-zinc-800">{profile.summary}</p>
+            </section>
+          )}
 
-        {experience.length > 0 && (
-          <section className="mt-6">
-            <h2 className="text-[12px] font-semibold uppercase tracking-[0.12em] text-[#666]">
-              Experience
-            </h2>
-            <ol className="mt-3 space-y-4">
-              {experience.map((exp, i) => (
-                <li key={exp.id ?? i}>
-                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-                    <p className="text-[14px] font-semibold text-[#111]">
-                      {exp.title}
-                      {exp.company ? (
-                        <span className="font-normal text-[#444]">
-                          {"\u2003"}at {exp.company}
-                        </span>
-                      ) : null}
-                    </p>
-                    <p className="text-[11.5px] text-[#666]">
-                      {formatRange(exp.start_date, exp.end_date)}
-                    </p>
-                  </div>
-                  {exp.description && (
-                    <p className="mt-1.5 whitespace-pre-line text-[12.5px] leading-[1.55] text-[#222]">
-                      {exp.description}
-                    </p>
-                  )}
-                </li>
-              ))}
-            </ol>
-          </section>
-        )}
+          {experience.length > 0 && (
+            <section className="mt-10">
+              <h2 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.15em] text-zinc-500">
+                <span className="h-px w-6 bg-zinc-200" /> Experience • Legend
+              </h2>
+              <ol className="mt-6 space-y-8">
+                {experience.map((exp, i) => (
+                  <li key={exp.id ?? i} className="relative border-l border-zinc-200 pl-6">
+                    <span className="absolute -left-[5px] top-1 h-2.5 w-2.5 rounded-full border-2 border-white bg-zinc-900" />
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <p className="text-[15px] font-semibold text-zinc-900">
+                        {exp.title}{" "}
+                        <span className="font-normal text-zinc-500">at {exp.company}</span>
+                      </p>
+                      <span className="text-[11px] rounded-full bg-zinc-100 px-2.5 py-1 text-zinc-600">
+                        {formatRange(exp.start_date, exp.end_date)}
+                      </span>
+                    </div>
+                    {exp.description && (
+                      <p className="mt-3 whitespace-pre-line text-[13.5px] leading-[1.65] text-zinc-700">{exp.description}</p>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )}
 
-        {skills.length > 0 && (
-          <section className="mt-6">
-            <h2 className="text-[12px] font-semibold uppercase tracking-[0.12em] text-[#666]">
-              Skills
-            </h2>
-            <p className="mt-2 text-[13px] leading-[1.6] text-[#222]">
-              {skills.join(" \u00b7 ")}
-            </p>
-          </section>
-        )}
+          {skills.length > 0 && (
+            <section className="mt-10">
+              <h2 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.15em] text-zinc-500">
+                <span className="h-px w-6 bg-zinc-200" /> Superpowers
+              </h2>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {skills.map((s) => (
+                  <span key={s} className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-[12px] font-medium text-zinc-800">
+                    {s}
+                  </span>
+                ))}
+              </div>
+            </section>
+          )}
 
-        <footer className="mt-10 border-t border-[#e5e5e5] pt-3 text-[10.5px] text-[#888]">
-          Generated on Nexa {"\u00b7"} nexa.africa
-        </footer>
+          <footer className="mt-12 flex items-center justify-between border-t border-zinc-100 pt-4 text-[10px] text-zinc-400">
+            <span>Crafted on Nexa • God Tier AI • nexa.africa</span>
+            <span className="flex items-center gap-1">
+              <Sparkles className="h-3 w-3 text-yellow-500" /> Elevated, not fabricated
+            </span>
+          </footer>
+        </div>
       </article>
     </div>
   )
 }
 
-/**
- * Print stylesheet inlined so the CV always renders correctly,
- * even if Tailwind's print variants are configured differently.
- *
- * - Hides the action bar and any non-CV chrome
- * - Sets A4 page size with generous margins
- * - Forces white background and black text in print color mode
- */
 const printStyles = `
 @media print {
-  @page { size: A4; margin: 18mm; }
+  @page { size: A4; margin: 12mm; }
   html, body { background: white !important; }
   .cv-shell { background: white !important; padding: 0 !important; }
   .cv-actions { display: none !important; }
-  .cv-sheet {
-    box-shadow: none !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    max-width: 100% !important;
-  }
-  /* Avoid orphaned headings at page breaks. */
+  .cv-sheet { box-shadow: none !important; border: none !important; border-radius: 0 !important; margin: 0 !important; max-width: 100% !important; }
   h1, h2 { break-after: avoid; }
   li, section { break-inside: avoid; }
 }

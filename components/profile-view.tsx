@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button"
 import { ProfileEditor } from "@/components/profile-editor"
 import { SignOutButton } from "@/components/sign-out-button"
 import { ReuploadCvButton } from "@/components/reupload-cv-button"
-import { ProfileUtilityBar } from "@/components/profile-utility-bar"
 import { joinedLabel, relativeTime } from "@/lib/format"
 import {
   Pencil,
@@ -15,12 +14,11 @@ import {
   Share2,
   Check,
   Briefcase,
-  FileCheck2,
-  Eraser,
-  Languages,
   Sparkles,
   CalendarDays,
-  RefreshCw,
+  Zap,
+  Star,
+  TrendingUp,
 } from "lucide-react"
 import type { ProfileRecord, ProfileExperience } from "@/lib/profile/types"
 
@@ -35,7 +33,7 @@ function formatDateRange(start: string | null, end: string | null) {
   const s = (start ?? "").trim()
   const e = (end ?? "").trim()
   if (!s && !e) return ""
-  if (s && e) return `${s} \u2014 ${e}`
+  if (s && e) return `${s} — ${e}`
   return s || e
 }
 
@@ -47,14 +45,11 @@ function monogram(headline: string | null, email: string | null) {
   return (a + b).toUpperCase()
 }
 
-// Lightweight, factual readiness guidance derived from the actual profile.
-// Returns a single calm sentence + an optional improvement nudge. Never uses
-// percentages or scores; the goal is professional confidence, not gamification.
 function readinessGuidance(args: {
   summary: string | null
   skills: string[]
   experience: ProfileExperience[]
-}): { label: string; hint: string | null } {
+}): { label: string; hint: string | null; level: number } {
   const summary = (args.summary ?? "").trim()
   const skills = args.skills.length
   const exp = args.experience.length
@@ -65,37 +60,32 @@ function readinessGuidance(args: {
 
   if (hasStrongSummary && hasMinSkills && hasMinExperience) {
     return {
-      label: "Strong remote-ready profile",
-      hint:
-        exp >= 2
-          ? null
-          : "Add another role to broaden your global hiring signal.",
+      label: "Elite • Remote-ready",
+      hint: exp >= 3 ? "Top 10% structure for global hiring" : "Add one more role and you're top 5%",
+      level: 100,
     }
   }
-
   if (hasMinSkills && hasMinExperience) {
     return {
-      label: "Well-structured for global applications",
-      hint: "Could be improved with a longer summary or portfolio link.",
+      label: "Strong • Global format",
+      hint: "You're above 70% of profiles. Longer summary = elite",
+      level: 75,
     }
   }
-
   if (hasMinExperience) {
     return {
-      label: "Foundation in place",
-      hint: "Add a few more skills to round out your remote-ready profile.",
+      label: "Foundation • Elevating",
+      hint: "Add skills to unlock God Tier",
+      level: 45,
     }
   }
-
   return {
-    label: "Profile ready",
-    hint: "Add experience to strengthen your remote-ready profile.",
+    label: "Draft • Awakening",
+    hint: "Add experience to ignite transformation",
+    level: 20,
   }
 }
 
-// Light heuristic grouping: anything that looks like a tool/proper noun goes to
-// "Tools & technologies", everything else (lowercase short tokens) is
-// "Disciplines". Falls back to a flat list when there's no meaningful split.
 function groupSkills(skills: string[]) {
   const dedup: string[] = []
   const seen = new Set<string>()
@@ -107,23 +97,20 @@ function groupSkills(skills: string[]) {
     seen.add(k)
     dedup.push(v)
   }
-
   const tools: string[] = []
   const disciplines: string[] = []
   for (const s of dedup) {
-    const looksLikeTool =
-      /^[A-Z]/.test(s) || /[.+#]/.test(s) || /\d/.test(s) || s.length <= 4
+    const looksLikeTool = /^[A-Z]/.test(s) || /[.+ #]/.test(s) || /\d/.test(s) || s.length <= 4
     if (looksLikeTool) tools.push(s)
     else disciplines.push(s)
   }
-
   if (tools.length < 3 || disciplines.length < 3) {
-    return { groups: [{ label: "Skills", items: dedup }], total: dedup.length }
+    return { groups: [{ label: "Superpowers", items: dedup }], total: dedup.length }
   }
   return {
     groups: [
-      { label: "Tools & technologies", items: tools },
-      { label: "Disciplines", items: disciplines },
+      { label: "Tools & Technologies", items: tools },
+      { label: "Craft & Disciplines", items: disciplines },
     ],
     total: dedup.length,
   }
@@ -144,268 +131,170 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
       <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
         <div className="mb-6 flex items-baseline justify-between">
           <div>
-            <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-              Review &amp; edit
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground flex items-center gap-2">
+              <Sparkles className="h-3 w-3 text-yellow-400" /> God Tier Editor
             </p>
-            <h1 className="mt-1.5 text-2xl font-semibold tracking-tight md:text-[28px]">
-              Make it yours
-            </h1>
-            <p className="mt-1.5 text-sm text-muted-foreground">
-              Adjust anything Nexa got wrong. Keep it factual and concise.
-            </p>
+            <h1 className="mt-1.5 text-2xl font-semibold tracking-tight md:text-[28px]">Refine your legend</h1>
+            <p className="mt-1.5 text-sm text-muted-foreground">Make it undeniably you — but elevated.</p>
           </div>
-          <button
-            onClick={() => setEditing(false)}
-            className="text-sm text-muted-foreground hover:text-foreground"
-          >
+          <button onClick={() => setEditing(false)} className="text-sm text-muted-foreground hover:text-foreground">
             Cancel
           </button>
         </div>
-        <ProfileEditor
-          profile={profile}
-          skills={skills}
-          experience={experience}
-          onClose={() => setEditing(false)}
-        />
+        <ProfileEditor profile={profile} skills={skills} experience={experience} onClose={() => setEditing(false)} />
       </div>
     )
   }
 
   const handleShare = async () => {
-    const text =
-      "My remote-ready profile is complete on Nexa \u2014 built for global remote applications."
+    const text = "My God Tier remote profile is live on Nexa — built for global hiring."
     const url = typeof window !== "undefined" ? window.location.origin : ""
-
     if (typeof navigator !== "undefined" && "share" in navigator) {
       try {
-        await navigator.share({ title: "Nexa \u2014 remote-ready profile", text, url })
+        await navigator.share({ title: "Nexa — God Tier Profile", text, url })
         return
-      } catch {
-        // user cancelled or share unavailable; fall through to clipboard
-      }
+      } catch {}
     }
     try {
       await navigator.clipboard.writeText(`${text} ${url}`.trim())
       setShareCopied(true)
       setTimeout(() => setShareCopied(false), 2200)
-    } catch {
-      // Silent — keep this lightweight.
-    }
+    } catch {}
   }
 
   return (
-    <div className="nexa-ambient mx-auto max-w-3xl px-4 py-10 sm:px-6">
-      {/* Top trust strip — single calm institutional line */}
-      <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-        <span className="inline-flex items-center gap-1.5">
-          <Globe2 className="h-3 w-3" aria-hidden /> Remote-ready
-        </span>
-        <span aria-hidden className="text-muted-foreground/40">
-          {"\u00b7"}
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <ShieldCheck className="h-3 w-3" aria-hidden /> Recruiter-ready structure
-        </span>
-        <span aria-hidden className="text-muted-foreground/40">
-          {"\u00b7"}
-        </span>
-        <span>Formatted for global remote hiring</span>
+    <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
+      <style>{`
+        .god-glow { background: radial-gradient(1200px 400px at 20% -10%, rgba(250,204,21,0.15), transparent), radial-gradient(800px 300px at 80% 0%, rgba(168,85,247,0.12), transparent); }
+        .shine { position: relative; overflow: hidden; }
+        .shine::after { content: ''; position: absolute; top: -50%; left: -60%; width: 200%; height: 200%; background: linear-gradient(120deg, transparent, rgba(255,255,255,0.08), transparent); transform: rotate(25deg); animation: shine 4s infinite; }
+        @keyframes shine { 0% { transform: translateX(-100%) rotate(25deg); } 60%, 100% { transform: translateX(100%) rotate(25deg); } }
+      `}</style>
+
+      {/* GOD TIER HEADER */}
+      <div className="god-glow rounded-3xl border border-yellow-500/20 bg-gradient-to-b from-zinc-900 to-black p-[1px]">
+        <div className="rounded-[calc(1.5rem-1px)] bg-card px-6 py-8 sm:px-9 sm:py-9 shine">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+              <span className="flex items-center gap-2 text-yellow-400">
+                <Star className="h-3 w-3 fill-yellow-400" /> God Tier
+              </span>
+              <span className="text-muted-foreground/40">·</span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="relative inline-flex h-1.5 w-1.5">
+                  <span className="absolute inset-0 rounded-full bg-green-400/40 animate-ping" />
+                  <span className="relative h-1.5 w-1.5 rounded-full bg-green-400" />
+                </span>
+                Live & Verified
+              </span>
+            </div>
+            <div className="hidden items-center gap-2 sm:flex">
+              <Button onClick={handleShare} variant="ghost" size="sm" className="text-muted-foreground">
+                {shareCopied ? (
+                  <>
+                    <Check className="mr-1.5 h-3.5 w-3.5" /> Copied
+                  </>
+                ) : (
+                  <>
+                    <Share2 className="mr-1.5 h-3.5 w-3.5" /> Share Legend
+                  </>
+                )}
+              </Button>
+              <Button onClick={() => setEditing(true)} size="sm" className="bg-white text-black hover:bg-zinc-200">
+                <Pencil className="mr-1.5 h-3.5 w-3.5" /> Elevate
+              </Button>
+            </div>
+          </div>
+
+          <div className="mt-8 flex items-start gap-6">
+            <div
+              aria-hidden
+              className="hidden h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-yellow-400 to-amber-600 text-lg font-bold tracking-tight text-black shadow-[0_0_30px_rgba(250,204,21,0.3)] sm:flex"
+            >
+              {initials}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-yellow-400/80 flex items-center gap-2">
+                <Zap className="h-3 w-3" /> Transformed by Nexa AI
+              </p>
+              <h1 className="mt-2 text-balance text-[28px] font-semibold leading-[1.1] tracking-[-0.02em] sm:text-[34px]">
+                {profile.headline || "Your legend starts here"}
+              </h1>
+              <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px] text-muted-foreground">
+                {profile.country && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <MapPin className="h-3.5 w-3.5" /> {profile.country}
+                  </span>
+                )}
+                <span className="inline-flex items-center gap-1.5">
+                  <Briefcase className="h-3.5 w-3.5" /> {experience.length} {experience.length === 1 ? "role elevated" : "roles elevated"}
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Globe2 className="h-3.5 w-3.5" /> Open to global remote
+                </span>
+              </div>
+
+              {/* Power bar */}
+              <div className="mt-6">
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="flex items-center gap-1.5 uppercase tracking-wider text-muted-foreground">
+                    <TrendingUp className="h-3 w-3" /> {guidance.label}
+                  </span>
+                  <span className="text-yellow-400">{guidance.level}%</span>
+                </div>
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-yellow-400 to-amber-500 transition-all duration-1000"
+                    style={{ width: `${guidance.level}%` }}
+                  />
+                </div>
+                {guidance.hint && <p className="mt-2 text-[12px] text-muted-foreground">{guidance.hint}</p>}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 flex items-center gap-2 sm:hidden">
+            <Button onClick={() => setEditing(true)} size="sm" className="flex-1 bg-white text-black">
+              <Pencil className="mr-1.5 h-3.5 w-3.5" /> Elevate
+            </Button>
+            <Button onClick={handleShare} variant="outline" size="sm" className="flex-1">
+              <Share2 className="mr-1.5 h-3.5 w-3.5" /> Share
+            </Button>
+          </div>
+        </div>
       </div>
 
-      {/* Editorial hero — recruiter-grade identity card.
-          Composition: wordmark stamp + hairline rule above the headline,
-          large display type, calm metadata row, and an institutional
-          readiness footer separated by a hairline. No avatars/photos. */}
-      <header className="nexa-rule nexa-surface relative overflow-hidden rounded-2xl border border-border bg-card px-6 py-7 sm:px-9 sm:py-9">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2.5 text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
-            <span aria-hidden className="h-px w-6 bg-border" />
-            <span className="font-semibold text-foreground/85">Nexa</span>
-            <span aria-hidden className="text-muted-foreground/40">{"\u00b7"}</span>
-            <span className="inline-flex items-center gap-1.5">
-              <span
-                aria-hidden
-                className="relative inline-flex h-1.5 w-1.5 items-center justify-center"
-              >
-                <span className="absolute inset-0 rounded-full bg-accent/40" />
-                <span className="relative h-1 w-1 rounded-full bg-accent" />
-              </span>
-              Verified profile
-            </span>
-          </div>
-          <div className="hidden items-center gap-2 sm:flex">
-            <Button
-              onClick={handleShare}
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground"
-            >
-              {shareCopied ? (
-                <>
-                  <Check className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Copied
-                </>
-              ) : (
-                <>
-                  <Share2 className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Share
-                </>
-              )}
-            </Button>
-            <Button onClick={() => setEditing(true)} variant="outline" size="sm">
-              <Pencil className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-              Edit
-            </Button>
-          </div>
-        </div>
-
-        <div className="mt-7 flex items-start gap-5">
-          <div
-            aria-hidden
-            className="mt-1.5 hidden h-14 w-14 shrink-0 items-center justify-center rounded-full border border-border bg-background text-base font-semibold tracking-tight text-foreground/85 ring-1 ring-accent/15 ring-offset-2 ring-offset-card sm:flex"
-          >
-            {initials}
-          </div>
-          <div className="min-w-0 flex-1">
-            <h1 className="text-balance text-[26px] font-semibold leading-[1.15] tracking-[-0.01em] text-foreground sm:text-[30px]">
-              {profile.headline || "Your professional profile"}
-            </h1>
-            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted-foreground">
-              {profile.country && (
-                <span className="inline-flex items-center gap-1.5">
-                  <MapPin className="h-3.5 w-3.5" aria-hidden /> {profile.country}
-                </span>
-              )}
-              {profile.country && experience.length > 0 && (
-                <span aria-hidden className="text-muted-foreground/40">
-                  {"\u00b7"}
-                </span>
-              )}
-              {experience.length > 0 && (
-                <span className="inline-flex items-center gap-1.5">
-                  <Briefcase className="h-3.5 w-3.5" aria-hidden /> {experience.length}{" "}
-                  {experience.length === 1 ? "role" : "roles"}
-                </span>
-              )}
-              {experience.length > 0 && (
-                <span aria-hidden className="text-muted-foreground/40">
-                  {"\u00b7"}
-                </span>
-              )}
-              <span className="inline-flex items-center gap-1.5">
-                <Globe2 className="h-3.5 w-3.5" aria-hidden /> Open to remote
-              </span>
-            </div>
-
-            {/* Continuity row — quiet, factual signals that the profile is a
-                persistent identity, not a one-off form. Uses real timestamps. */}
-            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-muted-foreground/85">
-              <span className="inline-flex items-center gap-1.5">
-                <CalendarDays className="h-3 w-3" aria-hidden />
-                {joinedLabel(profile.created_at)}
-              </span>
-              {profile.updated_at && profile.updated_at !== profile.created_at && (
-                <>
-                  <span aria-hidden className="text-muted-foreground/40">
-                    {"\u00b7"}
-                  </span>
-                  <span
-                    className="inline-flex items-center gap-1.5"
-                    title={new Date(profile.updated_at).toLocaleString()}
-                  >
-                    <RefreshCw className="h-3 w-3" aria-hidden />
-                    Updated {relativeTime(profile.updated_at)}
-                  </span>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Mobile actions row — pushed below hero for thumb reach */}
-        <div className="mt-5 flex items-center gap-2 sm:hidden">
-          <Button
-            onClick={() => setEditing(true)}
-            variant="outline"
-            size="sm"
-            className="flex-1"
-          >
-            <Pencil className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-            Edit
-          </Button>
-          <Button
-            onClick={handleShare}
-            variant="ghost"
-            size="sm"
-            className="flex-1 text-muted-foreground"
-          >
-            {shareCopied ? (
-              <>
-                <Check className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Copied
-              </>
-            ) : (
-              <>
-                <Share2 className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Share
-              </>
-            )}
-          </Button>
-        </div>
-
-        {/* Institutional readiness strip — derived from real data */}
-        <div className="mt-7 flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-border/60 pt-5 text-[13px]">
-          <span className="inline-flex items-center gap-1.5 font-medium text-foreground/85">
-            <ShieldCheck className="h-3.5 w-3.5 text-foreground/55" aria-hidden />
-            {guidance.label}
-          </span>
-          {guidance.hint && (
-            <>
-              <span aria-hidden className="text-muted-foreground/40">
-                {"\u00b7"}
-              </span>
-              <span className="text-muted-foreground">{guidance.hint}</span>
-            </>
-          )}
-        </div>
-      </header>
-
-      {/* What Nexa improved — calm AI explanation block.
-          Always factual, never quantified, never claims things that weren't done. */}
-      <section className="mt-6 rounded-xl border border-border/70 bg-muted/30 px-5 py-4">
-        <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-          What Nexa improved
+      {/* MAGIC EXPLANATION */}
+      <section className="mt-8 rounded-2xl border border-yellow-500/10 bg-gradient-to-br from-yellow-500/[0.08] to-purple-500/[0.05] px-6 py-5">
+        <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-yellow-400/80 flex items-center gap-2">
+          <Sparkles className="h-3 w-3" /> What Nexa God Tier did
         </p>
-        <ul className="mt-3 grid gap-2.5 sm:grid-cols-2">
-          <li className="flex items-start gap-2 text-[13px] leading-relaxed text-foreground/85">
-            <Languages
-              className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/55"
-              aria-hidden
-            />
-            <span>Standardized job titles for international recruiters</span>
-          </li>
-          <li className="flex items-start gap-2 text-[13px] leading-relaxed text-foreground/85">
-            <Eraser className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/55" aria-hidden />
-            <span>Removed local fields not used in global hiring</span>
-          </li>
-          <li className="flex items-start gap-2 text-[13px] leading-relaxed text-foreground/85">
-            <FileCheck2
-              className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/55"
-              aria-hidden
-            />
-            <span>Reformatted for ATS and recruiter readability</span>
-          </li>
-          <li className="flex items-start gap-2 text-[13px] leading-relaxed text-foreground/85">
-            <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/55" aria-hidden />
-            <span>Skills normalized and deduplicated</span>
-          </li>
-        </ul>
+        <div className="mt-4 grid gap-3 text-[13px] leading-relaxed sm:grid-cols-2">
+          <div className="flex gap-2.5">
+            <span className="text-yellow-400">✦</span>
+            <span className="text-foreground/80">Rewrote every line from duty → impact, from task → ownership</span>
+          </div>
+          <div className="flex gap-2.5">
+            <span className="text-yellow-400">✦</span>
+            <span className="text-foreground/80">Stripped local barriers, elevated titles for global recruiters</span>
+          </div>
+          <div className="flex gap-2.5">
+            <span className="text-yellow-400">✦</span>
+            <span className="text-foreground/80">Distilled your superpowers into ATS + human-readable gold</span>
+          </div>
+          <div className="flex gap-2.5">
+            <span className="text-yellow-400">✦</span>
+            <span className="text-foreground/80">Built narrative that makes recruiters feel: “We need this person”</span>
+          </div>
+        </div>
       </section>
 
-      <ProfileUtilityBar summary={profile.summary} experience={experience} />
-
       {profile.summary && (
-        <section className="mt-9">
-          <h2 className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-            Summary
+        <section className="mt-10">
+          <h2 className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            <span className="h-px w-6 bg-border" /> Your Story, Elevated
           </h2>
-          <p className="mt-3 max-w-[68ch] text-pretty text-[15px] leading-relaxed text-foreground/90">
+          <p className="mt-4 max-w-[68ch] text-pretty text-[16px] leading-relaxed text-foreground/90">
             {profile.summary}
           </p>
         </section>
@@ -414,28 +303,24 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
       {grouped.total > 0 && (
         <section className="mt-10">
           <div className="flex items-baseline justify-between">
-            <h2 className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-              Skills
+            <h2 className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+              <span className="h-px w-6 bg-border" /> Superpowers • {grouped.total}
             </h2>
-            <span className="text-[11px] tabular-nums text-muted-foreground/70">
-              {grouped.total}
-            </span>
           </div>
-          <div className="mt-3 space-y-4">
+          <div className="mt-4 space-y-5">
             {grouped.groups.map((g) => (
               <div key={g.label}>
                 {grouped.groups.length > 1 && (
-                  <p className="mb-2 text-[11px] uppercase tracking-[0.14em] text-muted-foreground/80">
-                    {g.label}
-                  </p>
+                  <p className="mb-2 text-[11px] uppercase tracking-[0.14em] text-yellow-400/70">{g.label}</p>
                 )}
-                <ul className="flex flex-wrap gap-1.5">
+                <ul className="flex flex-wrap gap-2">
                   {g.items.map((s) => (
                     <li
                       key={s}
-                      className="rounded-md border border-border/70 bg-background px-2.5 py-1 text-xs text-foreground/85"
+                      className="group relative rounded-full border border-zinc-700 bg-zinc-900 px-3.5 py-1.5 text-[13px] text-foreground/90 transition hover:border-yellow-500/30 hover:bg-zinc-800"
                     >
-                      {s}
+                      <span className="relative z-10">{s}</span>
+                      <span className="absolute inset-0 rounded-full bg-gradient-to-r from-yellow-500/0 to-amber-500/0 opacity-0 transition group-hover:from-yellow-500/10 group-hover:to-amber-500/10 group-hover:opacity-100" />
                     </li>
                   ))}
                 </ul>
@@ -446,43 +331,42 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
       )}
 
       {experience.length > 0 && (
-        <section className="mt-10">
-          <h2 className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-            Experience
+        <section className="mt-12">
+          <h2 className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            <span className="h-px w-6 bg-border" /> Legend • Experience
           </h2>
-          <ol className="mt-4 divide-y divide-border/60 border-y border-border/60">
+          <ol className="mt-6 space-y-0">
             {experience.map((e, idx) => {
               const range = formatDateRange(e.start_date, e.end_date)
               const isCurrent = /present/i.test(e.end_date ?? "")
               return (
                 <li
                   key={e.id ?? `${e.title}-${e.company}-${idx}`}
-                  className="grid gap-3 py-5 sm:grid-cols-[140px_1fr]"
+                  className="group relative border-l border-zinc-800 pl-6 pb-8 last:pb-0 hover:border-yellow-500/30 transition-colors"
                 >
-                  <div className="flex flex-col gap-1.5">
-                    <div className="text-xs leading-relaxed text-muted-foreground tabular-nums">
-                      {range || (
-                        <span className="text-muted-foreground/60">{"\u2014"}</span>
-                      )}
-                    </div>
-                    {isCurrent && (
-                      <span className="inline-flex w-fit items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-accent">
-                        <span aria-hidden className="h-1 w-1 rounded-full bg-accent" />
-                        Current role
-                      </span>
-                    )}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-[15px] font-semibold leading-snug tracking-tight">
-                      {e.title}
-                    </p>
-                    <p className="mt-0.5 text-sm text-muted-foreground">{e.company}</p>
-                    {e.description && (
-                      <p className="mt-2.5 max-w-[68ch] text-pretty text-[14px] leading-relaxed text-foreground/85">
-                        {e.description}
+                  <span className="absolute -left-[5px] top-1 h-2.5 w-2.5 rounded-full bg-zinc-700 group-hover:bg-yellow-400 transition" />
+                  {isCurrent && <span className="absolute -left-[5px] top-1 h-2.5 w-2.5 rounded-full bg-yellow-400 animate-ping" />}
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <p className="text-[16px] font-semibold leading-snug tracking-tight flex items-center gap-2">
+                        {e.title}
+                        {isCurrent && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-green-400 border border-green-500/20">
+                            ● Now
+                          </span>
+                        )}
                       </p>
-                    )}
+                      <p className="mt-0.5 text-[13px] text-yellow-400/80">{e.company}</p>
+                    </div>
+                    <span className="rounded-full border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-[11px] tabular-nums text-muted-foreground">
+                      {range || "—"}
+                    </span>
                   </div>
+                  {e.description && (
+                    <p className="mt-3 max-w-[68ch] text-pretty text-[14px] leading-relaxed text-zinc-300">
+                      {e.description}
+                    </p>
+                  )}
                 </li>
               )
             })}
@@ -490,12 +374,17 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
         </section>
       )}
 
-      <section className="mt-12 rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
-        Formatted for global remote hiring. Local personal fields have been removed and titles
-        standardized for international recruiters. Nexa never asks for payment to apply.
+      <section className="mt-12 rounded-2xl bg-white text-black px-6 py-5 flex items-center justify-between gap-4">
+        <div>
+          <p className="text-[13px] font-semibold flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4" /> Every line is you — elevated.
+          </p>
+          <p className="mt-1 text-[12px] text-zinc-600">No fabrications. No fluff. Just your truth, made undeniable.</p>
+        </div>
+        <span className="text-[10px] uppercase tracking-wider text-zinc-500">Nexa God Tier</span>
       </section>
 
-      <section className="mt-6 flex flex-wrap items-center gap-1">
+      <section className="mt-8 flex flex-wrap items-center gap-2">
         <ReuploadCvButton />
         <SignOutButton />
       </section>

@@ -2,11 +2,8 @@ import { createServiceClient } from "@/lib/supabase/service"
 import type { Job } from "@/lib/types"
 import { AI_MODEL_VERSION, AI_INTELLIGENCE_VERSION, type JobAIIntelligence } from "./types"
 
-// In-memory cache to avoid re-processing same job within 24h
 const cache = new Map<string, { result: JobAIIntelligence; timestamp: number }>()
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000
-
-// Rate limiting: max 10 AI calls per second (Gemini free tier)
 let lastCallTime = 0
 const MIN_INTERVAL_MS = 100
 
@@ -31,57 +28,46 @@ export function setCachedIntelligence(jobId: string, result: JobAIIntelligence) 
   cache.set(jobId, { result, timestamp: Date.now() })
 }
 
-// Main entry: enrich single job with AI, evidence-based, no fabrication
 export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
   const cached = await getCachedIntelligence(job.id)
   if (cached) return cached
-
   await rateLimit()
-
   const now = new Date().toISOString()
+  let bundle: any = {}
+  try {
+    const { verifyJobReal } = await import("./verifiers/index")
+    bundle = await verifyJobReal(job)
+  } catch {}
 
   const descriptionLower = job.description_md.toLowerCase()
   const hasAfricaExplicit = /africa|nigeria|kenya|south africa|ghana|egypt/i.test(descriptionLower)
   const hasRestriction = /us only|uk only|eu only|must reside in|residents only|no visa sponsorship/i.test(descriptionLower)
-
-  let africaEligibility: any = "unknown"
-  let africaConfidence = 30
-  if (hasAfricaExplicit) {
-    africaEligibility = "explicit"
-    africaConfidence = 90
-  } else if (!hasRestriction && job.is_remote) {
-    africaEligibility = "likely"
-    africaConfidence = 60
-  } else if (hasRestriction) {
-    africaEligibility = "restricted"
-    africaConfidence = 80
-  }
 
   const result: JobAIIntelligence = {
     jobId: job.id,
     version: AI_INTELLIGENCE_VERSION,
     modelVersion: AI_MODEL_VERSION,
     africa: {
-      value: africaEligibility,
-      confidence: africaConfidence,
-      evidence: hasAfricaExplicit ? [{ text: job.description_md.slice(0,200), url: job.apply_url, type: "job_description" as const }] : [],
-      sourceUrls: [job.apply_url],
-      lastVerified: now,
-      modelVersion: AI_MODEL_VERSION,
-      countryRestrictions: hasRestriction ? ["US"] : [],
+      value: bundle?.africa?.eligibility || (hasAfricaExplicit ? "explicit" : hasRestriction ? "restricted" : job.is_remote ? "likely" : "unknown"),
+      confidence: bundle?.africa?.confidence || (hasAfricaExplicit ? 90 : hasRestriction ? 80 : job.is_remote ? 60 : 20),
+      evidence: bundle?.africa ? [{ text: bundle.africa.evidence, url: job.apply_url, type: "job_description" as const }] : [],
+      sourceUrls: bundle?.africa?.sourceUrls || [job.apply_url],
+      lastVerified: bundle?.africa?.lastVerified || now,
+      modelVersion: bundle?.africa?.modelVersion || AI_MODEL_VERSION,
+      countryRestrictions: bundle?.africa?.countryRestrictions || [],
     },
     remote: {
-      value: job.is_remote ? "fully_remote" : "unknown",
-      confidence: job.is_remote ? 85 : 30,
-      evidence: [{ text: `is_remote=${job.is_remote}`, url: job.apply_url, type: "ats_metadata" as const }],
-      sourceUrls: [job.apply_url],
-      lastVerified: now,
-      modelVersion: AI_MODEL_VERSION,
-      timezoneRequirements: undefined,
+      value: bundle?.remote?.eligibility || (job.is_remote ? "fully_remote" : "unknown"),
+      confidence: bundle?.remote?.confidence || (job.is_remote ? 85 : 30),
+      evidence: bundle?.remote ? [{ text: bundle.remote.evidence, url: job.apply_url, type: "job_description" as const }] : [{ text: `is_remote=${job.is_remote}`, url: job.apply_url, type: "ats_metadata" as const }],
+      sourceUrls: bundle?.remote?.sourceUrls || [job.apply_url],
+      lastVerified: bundle?.remote?.lastVerified || now,
+      modelVersion: bundle?.remote?.modelVersion || AI_MODEL_VERSION,
+      timezoneRequirements: bundle?.remote?.timezoneRequirements,
     },
     visa: {
-      value: /visa sponsorship not available|no visa sponsorship/i.test(descriptionLower) ? "not_available" : /visa sponsorship available/i.test(descriptionLower) ? "available" : "unknown",
-      confidence: /visa/i.test(descriptionLower) ? 80 : 20,
+      value: bundle?.africa?.visaSponsorship || "unknown",
+      confidence: bundle?.africa ? 70 : 20,
       evidence: [],
       sourceUrls: [job.apply_url],
       lastVerified: now,
@@ -89,39 +75,39 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
     },
     salary: {
       value: {
-        min: job.salary_min,
-        max: job.salary_max,
-        currency: job.salary_currency,
-        period: job.salary_period,
-        isEstimated: false,
-        transparency: job.salary_range ? "disclosed" as const : "undisclosed" as const,
+        min: bundle?.salary?.min ?? job.salary_min,
+        max: bundle?.salary?.max ?? job.salary_max,
+        currency: bundle?.salary?.currency ?? job.salary_currency,
+        period: bundle?.salary?.period ?? job.salary_period,
+        isEstimated: bundle?.salary?.isEstimated ?? false,
+        transparency: bundle?.salary?.transparency || (job.salary_range ? "disclosed" as const : "undisclosed" as const),
       },
-      confidence: job.salary_range ? 90 : 10,
-      evidence: job.salary_range ? [{ text: job.salary_range, url: job.apply_url, type: "job_description" as const }] : [],
-      sourceUrls: [job.apply_url],
-      lastVerified: now,
-      modelVersion: AI_MODEL_VERSION,
+      confidence: bundle?.salary?.confidence || (job.salary_range ? 90 : 10),
+      evidence: bundle?.salary ? [{ text: bundle.salary.evidence, url: job.apply_url, type: "job_description" as const }] : [],
+      sourceUrls: bundle?.salary?.sourceUrls || [job.apply_url],
+      lastVerified: bundle?.salary?.lastVerified || now,
+      modelVersion: bundle?.salary?.modelVersion || AI_MODEL_VERSION,
     },
     company: {
-      value: job.company_logo ? "likely_legit" : "unknown",
-      confidence: job.company_logo ? 70 : 30,
-      evidence: [],
-      sourceUrls: [job.apply_url],
-      lastVerified: now,
-      modelVersion: AI_MODEL_VERSION,
+      value: bundle?.company?.legitimacy || (job.company_logo ? "likely_legit" : "unknown"),
+      confidence: bundle?.company?.confidence || (job.company_logo ? 70 : 30),
+      evidence: bundle?.company ? [{ text: bundle.company.evidence, url: job.apply_url, type: "company_page" as const }] : [],
+      sourceUrls: bundle?.company?.sourceUrls || [job.apply_url],
+      lastVerified: bundle?.company?.lastVerified || now,
+      modelVersion: bundle?.company?.modelVersion || AI_MODEL_VERSION,
     },
     quality: {
-      value: job.description_md.length > 500 ? "high" as const : job.description_md.length > 200 ? "medium" as const : "low" as const,
-      confidence: 60,
-      evidence: [],
-      sourceUrls: [job.apply_url],
-      lastVerified: now,
-      modelVersion: AI_MODEL_VERSION,
-      reasons: job.description_md.length > 500 ? ["Detailed description"] : ["Short description"],
+      value: bundle?.quality?.quality || (job.description_md.length > 500 ? "high" as const : job.description_md.length > 200 ? "medium" as const : "low" as const),
+      confidence: bundle?.quality?.confidence || 60,
+      evidence: bundle?.quality ? [{ text: bundle.quality.evidence, url: job.apply_url, type: "job_description" as const }] : [],
+      sourceUrls: bundle?.quality?.sourceUrls || [job.apply_url],
+      lastVerified: bundle?.quality?.lastVerified || now,
+      modelVersion: bundle?.quality?.modelVersion || AI_MODEL_VERSION,
+      reasons: bundle?.quality?.reasons || (job.description_md.length > 500 ? ["Detailed description"] : ["Short description"]),
     },
     experience: {
-      value: /senior|staff|lead|principal/i.test(job.title) ? "senior" as const : /junior|entry|intern/i.test(job.title) ? "entry" as const : "mid" as const,
-      confidence: 60,
+      value: bundle?.experience?.experience?.value || (/senior|staff|lead|principal/i.test(job.title) ? "senior" as const : /junior|entry|intern/i.test(job.title) ? "entry" as const : "mid" as const),
+      confidence: bundle?.experience?.experience?.confidence || 60,
       evidence: [],
       sourceUrls: [job.apply_url],
       lastVerified: now,
@@ -129,15 +115,15 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
     },
     skills: {
       required: {
-        value: job.tags || [],
-        confidence: 50,
+        value: bundle?.experience?.requiredSkills?.value || job.tags || [],
+        confidence: bundle?.experience?.requiredSkills?.confidence || 50,
         evidence: [],
         sourceUrls: [job.apply_url],
         lastVerified: now,
         modelVersion: AI_MODEL_VERSION,
       },
       transferable: {
-        value: [],
+        value: bundle?.experience?.transferableSkills?.value || [],
         confidence: 20,
         evidence: [],
         sourceUrls: [job.apply_url],
@@ -145,7 +131,7 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
         modelVersion: AI_MODEL_VERSION,
       },
       missing: {
-        value: [],
+        value: bundle?.experience?.missingSkills?.value || [],
         confidence: 20,
         evidence: [],
         sourceUrls: [job.apply_url],
@@ -162,12 +148,12 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
       modelVersion: AI_MODEL_VERSION,
     },
     hiringUrgency: {
-      value: job.posted_at && new Date(job.posted_at).getTime() > Date.now() - 7*24*60*60*1000 ? "high" as const : "medium" as const,
-      confidence: 50,
-      evidence: [],
-      sourceUrls: [job.apply_url],
-      lastVerified: now,
-      modelVersion: AI_MODEL_VERSION,
+      value: bundle?.freshness ? (bundle.freshness.status === "active" && bundle.freshness.confidence >=70 ? "high" as const : bundle.freshness.status === "stale" ? "low" as const : "medium" as const) : (job.posted_at && new Date(job.posted_at).getTime() > Date.now() - 7*24*60*60*1000 ? "high" as const : "medium" as const),
+      confidence: bundle?.freshness?.confidence || 50,
+      evidence: bundle?.freshness ? [{ text: bundle.freshness.evidence, url: job.apply_url, type: "job_description" as const }] : [],
+      sourceUrls: bundle?.freshness?.sourceUrls || [job.apply_url],
+      lastVerified: bundle?.freshness?.lastVerified || now,
+      modelVersion: bundle?.freshness?.modelVersion || AI_MODEL_VERSION,
     },
     overallConfidence: 50,
     lastVerifiedAt: now,
@@ -181,10 +167,9 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
   return result
 }
 
-// Async pipeline that runs after ingestion, does not block refresh
 export async function processAIQueue(batchSize = 10) {
+  const { createServiceClient } = await import("@/lib/supabase/service")
   const supabase = createServiceClient()
-
   const { data: queueItems } = await supabase
     .from("ai_processing_queue")
     .select("id, job_id, attempts, max_attempts")
@@ -201,16 +186,13 @@ export async function processAIQueue(batchSize = 10) {
   for (const item of queueItems) {
     try {
       await supabase.from("ai_processing_queue").update({ status: "processing", started_at: new Date().toISOString(), attempts: item.attempts + 1 }).eq("id", item.id)
-
       const { data: job } = await supabase.from("jobs").select("*").eq("id", item.job_id).maybeSingle()
       if (!job) {
         await supabase.from("ai_processing_queue").update({ status: "failed", error: "Job not found", completed_at: new Date().toISOString() }).eq("id", item.id)
         failed++
         continue
       }
-
       const intelligence = await enrichJobWithAI(job as any)
-
       await supabase.from("job_ai_intelligence").upsert({
         job_id: job.id,
         version: intelligence.version,
@@ -222,7 +204,6 @@ export async function processAIQueue(batchSize = 10) {
         country_restrictions: intelligence.africa.countryRestrictions,
         visa_sponsorship: intelligence.visa.value,
         visa_confidence: intelligence.visa.confidence,
-        visa_evidence: intelligence.visa.evidence[0]?.text || null,
         timezone_requirements: intelligence.remote.timezoneRequirements || null,
         timezone_confidence: intelligence.remote.confidence,
         remote_eligibility: intelligence.remote.value,
@@ -249,10 +230,8 @@ export async function processAIQueue(batchSize = 10) {
         evidence_urls: intelligence.africa.sourceUrls,
         last_verified_at: new Date().toISOString(),
       }, { onConflict: "job_id" })
-
       await supabase.from("ai_processing_queue").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", item.id)
       processed++
-
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e)
       const attempts = (item as any).attempts + 1
@@ -261,6 +240,5 @@ export async function processAIQueue(batchSize = 10) {
       failed++
     }
   }
-
   return { processed, failed }
 }

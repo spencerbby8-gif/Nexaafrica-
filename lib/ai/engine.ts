@@ -167,11 +167,12 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
   return result
 }
 
-export async function processAIQueue(batchSize = 10) {
+export async function processAIQueue(batchSize = 100) {
   const { createServiceClient } = await import("@/lib/supabase/service")
   const supabase = createServiceClient()
 
   // Resilience: reset stuck processing items older than 10min back to pending (handles interrupted cron / timeout)
+  // Also reset items stuck >5min in processing to handle Vercel timeouts
   try {
     await supabase
       .from("ai_processing_queue")
@@ -179,7 +180,16 @@ export async function processAIQueue(batchSize = 10) {
       .eq("status", "processing")
       .lt("started_at", new Date(Date.now() - 10 * 60 * 1000).toISOString())
   } catch {}
+  try {
+    await supabase
+      .from("ai_processing_queue")
+      .update({ status: "pending", error: "Reset after interruption - was stuck in processing >5min" })
+      .eq("status", "processing")
+      .lt("started_at", new Date(Date.now() - 5 * 60 * 1000).toISOString())
+  } catch {}
 
+  // Use SKIP LOCKED pattern via RPC if available, fallback to simple pending selection with optimistic locking
+  // For Supabase JS, we use .eq status pending and immediate update to processing to avoid duplicate cron execution
   const { data: queueItems } = await supabase
     .from("ai_processing_queue")
     .select("id, job_id, attempts, max_attempts")

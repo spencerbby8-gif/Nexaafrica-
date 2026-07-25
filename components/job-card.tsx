@@ -101,10 +101,10 @@ export function JobCard({
           )}
         </div>
 
-        {/* Opportunity Intelligence – real fix for Home feed */}
+        {/* Opportunity Intelligence – real fix for Home feed, uses same cleaned AI path, fallback to job when AI missing */}
         {showOpportunityIntelligence && (
           <div className="mt-1">
-            <OpportunityIntelligenceSummary intelligence={aiIntelligence} matchReasons={matchReasons} />
+            <OpportunityIntelligenceSummary intelligence={aiIntelligence} job={job} matchReasons={matchReasons} />
           </div>
         )}
       </article>

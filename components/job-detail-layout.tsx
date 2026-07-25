@@ -321,9 +321,9 @@ export function JobDetailLayout({
         <EvidencePanel job={job} />
       </div>
 
-      {/* Opportunity Intelligence – full panel for detail page, evidence-backed */}
+      {/* Opportunity Intelligence – full panel for detail page, evidence-backed, uses same cleaned AI path + job fallback */}
       <div className="pt-6">
-        <OpportunityIntelligencePanel intelligence={aiIntelligence || (job as any).aiIntelligence || null} />
+        <OpportunityIntelligencePanel intelligence={aiIntelligence || (job as any).aiIntelligence || null} job={job} />
       </div>
 
       <section className="pt-8" aria-label="Role description">

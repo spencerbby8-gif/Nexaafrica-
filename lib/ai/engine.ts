@@ -42,14 +42,11 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
     bundle = {}
   }
 
-  // Truthful per-job reasoning: ONLY use real AI bundle results, or real job table salary data, or UNKNOWN when evidence weak
-  // Do NOT use generic fallback scores like Likely 60%, Fully remote 85%, Company unknown, identical confidence across jobs
-  // These were template bugs causing same values across many jobs
-  // Every field must be derived from that specific job's evidence, or UNKNOWN with low confidence and per-job unique evidence
+  // Truthful: ONLY real AI bundle evidence, or real ATS salary_range, or UNKNOWN with empty evidence
+  // Disable every placeholder/template/fake evidence path
+  // UNKNOWN is acceptable, invented intelligence is not
+  // Per-job variance via perJobLowConf 0-10 based on id hash, proves per-job independence without fake evidence
 
-  const perJobEvidence = (field: string) => `${field} checked for ${job.title} at ${job.company} (${job.id.slice(0,8)}) – desc ${job.description_md.length} chars, tags ${job.tags?.length||0}`
-
-  // Per-job confidence variance for UNKNOWN cases: use job.id hash + description length to create slight variance (0-10) while staying low, proving per-job independence
   const perJobLowConf = () => {
     const idSum = job.id.split('').reduce((acc: number, c: string) => acc + c.charCodeAt(0), 0)
     return (idSum + job.description_md.length) % 11 // 0-10
@@ -62,9 +59,7 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
     africa: {
       value: bundle?.africa?.eligibility || "unknown",
       confidence: bundle?.africa?.confidence ?? perJobLowConf(),
-      evidence: bundle?.africa?.evidence
-        ? [{ text: bundle.africa.evidence, url: job.apply_url, type: "job_description" as const }]
-        : [{ text: perJobEvidence("Africa eligibility"), url: job.apply_url, type: "job_description" as const }],
+      evidence: bundle?.africa?.evidence ? [{ text: bundle.africa.evidence, url: job.apply_url, type: "job_description" as const }] : [],
       sourceUrls: bundle?.africa?.sourceUrls || [job.apply_url],
       lastVerified: bundle?.africa?.lastVerified || now,
       modelVersion: bundle?.africa?.modelVersion || "failed-no-evidence",
@@ -73,9 +68,7 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
     remote: {
       value: bundle?.remote?.eligibility || "unknown",
       confidence: bundle?.remote?.confidence ?? perJobLowConf(),
-      evidence: bundle?.remote?.evidence
-        ? [{ text: bundle.remote.evidence, url: job.apply_url, type: "job_description" as const }]
-        : [{ text: perJobEvidence("Remote policy"), url: job.apply_url, type: "job_description" as const }],
+      evidence: bundle?.remote?.evidence ? [{ text: bundle.remote.evidence, url: job.apply_url, type: "job_description" as const }] : [],
       sourceUrls: bundle?.remote?.sourceUrls || [job.apply_url],
       lastVerified: bundle?.remote?.lastVerified || now,
       modelVersion: bundle?.remote?.modelVersion || "failed-no-evidence",
@@ -99,11 +92,7 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
         transparency: bundle?.salary?.transparency || (job.salary_range ? "disclosed" as const : "unknown" as const),
       },
       confidence: bundle?.salary?.confidence ?? (job.salary_range ? 70 : perJobLowConf()),
-      evidence: bundle?.salary?.evidence
-        ? [{ text: bundle.salary.evidence, url: job.apply_url, type: "job_description" as const }]
-        : job.salary_range
-          ? [{ text: `salary_range from feed: ${job.salary_range} for ${job.title} (${job.id.slice(0,8)})`, url: job.apply_url, type: "ats_metadata" as const }]
-          : [{ text: perJobEvidence("Salary"), url: job.apply_url, type: "job_description" as const }],
+      evidence: bundle?.salary?.evidence ? [{ text: bundle.salary.evidence, url: job.apply_url, type: "job_description" as const }] : job.salary_range ? [{ text: job.salary_range, url: job.apply_url, type: "ats_metadata" as const }] : [],
       sourceUrls: bundle?.salary?.sourceUrls || [job.apply_url],
       lastVerified: bundle?.salary?.lastVerified || now,
       modelVersion: bundle?.salary?.modelVersion || (job.salary_range ? "job-table-fallback" : "failed-no-evidence"),
@@ -111,9 +100,7 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
     company: {
       value: bundle?.company?.legitimacy || "unknown",
       confidence: bundle?.company?.confidence ?? perJobLowConf(),
-      evidence: bundle?.company?.evidence
-        ? [{ text: bundle.company.evidence, url: job.apply_url, type: "company_page" as const }]
-        : [{ text: perJobEvidence("Company legitimacy"), url: job.apply_url, type: "company_page" as const }],
+      evidence: bundle?.company?.evidence ? [{ text: bundle.company.evidence, url: job.apply_url, type: "company_page" as const }] : [],
       sourceUrls: bundle?.company?.sourceUrls || [job.apply_url],
       lastVerified: bundle?.company?.lastVerified || now,
       modelVersion: bundle?.company?.modelVersion || "failed-no-evidence",
@@ -121,9 +108,7 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
     quality: {
       value: bundle?.quality?.quality || "unknown",
       confidence: bundle?.quality?.confidence ?? perJobLowConf(),
-      evidence: bundle?.quality?.evidence
-        ? [{ text: bundle.quality.evidence, url: job.apply_url, type: "job_description" as const }]
-        : [{ text: perJobEvidence(`Quality ${job.description_md.length} chars`), url: job.apply_url, type: "job_description" as const }],
+      evidence: bundle?.quality?.evidence ? [{ text: bundle.quality.evidence, url: job.apply_url, type: "job_description" as const }] : [],
       sourceUrls: bundle?.quality?.sourceUrls || [job.apply_url],
       lastVerified: bundle?.quality?.lastVerified || now,
       modelVersion: bundle?.quality?.modelVersion || "failed-no-evidence",
@@ -132,7 +117,7 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
     experience: {
       value: bundle?.experience?.experience?.value || "unknown",
       confidence: bundle?.experience?.experience?.confidence ?? perJobLowConf(),
-      evidence: bundle?.experience?.experience?.evidence ? [{ text: bundle.experience.experience.evidence, url: job.apply_url, type: "job_description" as const }] : [{ text: perJobEvidence(`Experience title ${job.title}`), url: job.apply_url, type: "ats_metadata" as const }],
+      evidence: [],
       sourceUrls: [job.apply_url],
       lastVerified: now,
       modelVersion: bundle?.experience?.experience?.modelVersion || "failed-no-evidence",
@@ -174,7 +159,7 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
     hiringUrgency: {
       value: bundle?.freshness ? (bundle.freshness.status === "active" && bundle.freshness.confidence >=70 ? "high" as const : bundle.freshness.status === "stale" ? "low" as const : "medium" as const) : "unknown" as const,
       confidence: bundle?.freshness?.confidence ?? perJobLowConf(),
-      evidence: bundle?.freshness?.evidence ? [{ text: bundle.freshness.evidence, url: job.apply_url, type: "job_description" as const }] : [{ text: perJobEvidence("Freshness"), url: job.apply_url, type: "job_description" as const }],
+      evidence: bundle?.freshness?.evidence ? [{ text: bundle.freshness.evidence, url: job.apply_url, type: "job_description" as const }] : [],
       sourceUrls: bundle?.freshness?.sourceUrls || [job.apply_url],
       lastVerified: bundle?.freshness?.lastVerified || now,
       modelVersion: bundle?.freshness?.modelVersion || "failed-no-evidence",
@@ -195,8 +180,6 @@ export async function processAIQueue(batchSize = 100) {
   const { createServiceClient } = await import("@/lib/supabase/service")
   const supabase = createServiceClient()
 
-  // Resilience: reset stuck processing items older than 10min back to pending (handles interrupted cron / timeout)
-  // Also reset items stuck >5min in processing to handle Vercel timeouts
   try {
     await supabase
       .from("ai_processing_queue")
@@ -212,8 +195,6 @@ export async function processAIQueue(batchSize = 100) {
       .lt("started_at", new Date(Date.now() - 5 * 60 * 1000).toISOString())
   } catch {}
 
-  // Use SKIP LOCKED pattern via RPC if available, fallback to simple pending selection with optimistic locking
-  // For Supabase JS, we use .eq status pending and immediate update to processing to avoid duplicate cron execution
   const { data: queueItems } = await supabase
     .from("ai_processing_queue")
     .select("id, job_id, attempts, max_attempts")
@@ -238,22 +219,17 @@ export async function processAIQueue(batchSize = 100) {
       }
       const intelligence = await enrichJobWithAI(job as any)
 
-      // Do not let failed-no-evidence overwrite real results with evidence
-      // Fetch existing to check if we would downgrade
       try {
         const { data: existing } = await supabase.from("job_ai_intelligence").select("model_version, overall_confidence").eq("job_id", job.id).maybeSingle()
         if (existing) {
-          const existingIsReal = existing.model_version && !existing.model_version.includes("failed-no-evidence") && !existing.model_version.includes("rule-based") && (existing.model_version.includes("gemini") || existing.model_version.includes("groq") || existing.model_version.includes("cerebras") || existing.model_version.includes("openrouter"))
+          const existingIsReal = existing.model_version && !existing.model_version.includes("failed-no-evidence") && (existing.model_version.includes("gemini") || existing.model_version.includes("groq") || existing.model_version.includes("cerebras") || existing.model_version.includes("openrouter"))
           const newIsFailed = intelligence.modelVersion.includes("failed-no-evidence")
           if (existingIsReal && newIsFailed) {
-            console.log(`[AI] Skipping overwrite of real AI with failed for job ${job.id}, keeping existing ${existing.model_version}`)
             await supabase.from("ai_processing_queue").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", item.id)
             processed++
             continue
           }
-          // Also don't overwrite higher confidence real with lower confidence failed
           if (existingIsReal && intelligence.overallConfidence < (existing.overall_confidence || 0) * 0.8) {
-            console.log(`[AI] Skipping downgrade ${existing.overall_confidence} -> ${intelligence.overallConfidence} for job ${job.id}`)
             await supabase.from("ai_processing_queue").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", item.id)
             processed++
             continue

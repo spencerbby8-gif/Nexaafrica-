@@ -61,7 +61,7 @@ Return JSON only:
   try {
     const gwResult = await aiGateway({
       prompt,
-      systemInstruction: "You are a company legitimacy verifier. Be evidence-based, never guess. Return UNKNOWN when evidence missing. Provide verbatim evidence quote.",
+      systemInstruction: "You are a company legitimacy verifier. Be evidence-based, never guess. Return UNKNOWN when evidence missing. Provide verbatim evidence quote from job description, not generic.",
       agentId: "verifier:company-legitimacy",
       jobId: job.id,
       temperature: 0.2,
@@ -72,10 +72,12 @@ Return JSON only:
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0])
+      const ev = (parsed.evidence || "").toString().trim()
+      const isGeneric = /^(logo \+ trusted ats|ats apply|company logo present|no logo nor trusted ats|scam pattern detected)$/i.test(ev)
       return {
         legitimacy: parsed.legitimacy || "unknown",
         confidence: parsed.confidence || 20,
-        evidence: (parsed.evidence || "").slice(0, 200),
+        evidence: isGeneric ? "" : ev.slice(0, 200),
         reason: parsed.reason || "",
         sourceUrls,
         lastVerified: now,
@@ -83,43 +85,17 @@ Return JSON only:
       }
     }
   } catch (e) {
-    console.warn(`[Company Verifier] AI failed, fallback: ${e instanceof Error ? e.message : String(e)}`)
+    console.warn(`[Company Verifier] AI failed, fallback unknown: ${e instanceof Error ? e.message : String(e)}`)
   }
 
-  // Fallback rule-based
-  const hasLogo = !!job.company_logo
-  const hasTrustedAts = job.apply_url.includes("greenhouse.io") || job.apply_url.includes("lever.co") || job.apply_url.includes("ashbyhq.com")
-  let legitimacy: "verified" | "likely_legit" | "unknown" | "suspicious" = "unknown"
-  let confidence = 20
-  let evidence = "No logo nor trusted ATS"
-  if (hasLogo && hasTrustedAts) {
-    legitimacy = "verified"
-    confidence = 85
-    evidence = `Logo + trusted ATS`
-  } else if (hasTrustedAts) {
-    legitimacy = "likely_legit"
-    confidence = 70
-    evidence = `ATS apply ${companyDomain || job.apply_url}`
-  } else if (hasLogo) {
-    legitimacy = "likely_legit"
-    confidence = 60
-    evidence = "Company logo present"
-  }
-
-  const lower = combined.toLowerCase()
-  if (/pay.*to.*apply|buy.*kit|telegram.*apply|whatsapp.*apply/i.test(lower)) {
-    legitimacy = "suspicious"
-    confidence = 90
-    evidence = "Scam pattern detected"
-  }
-
+  // Fallback: unknown, not placeholder template, when real AI genuinely fails
   return {
-    legitimacy,
-    confidence,
-    evidence,
+    legitimacy: "unknown" as const,
+    confidence: 10,
+    evidence: "",
     sourceUrls,
     lastVerified: now,
-    modelVersion: "rule-based-fallback",
+    modelVersion: "failed-no-evidence",
   }
 }
 

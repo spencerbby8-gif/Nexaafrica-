@@ -35,12 +35,17 @@ export interface GatewayResult {
   disagreements?: any[]
 }
 
-// Simple in-memory cache for identical prompts (24h TTL)
+// Simple in-memory cache for identical prompts (24h TTL) - now includes jobId to prevent cross-job template overwrite
 const cache = new Map<string, { result: GatewayResult; timestamp: number }>()
 const CACHE_TTL = 24 * 60 * 60 * 1000
 
 function cacheKey(req: AIRequest): string {
-  return `${req.agentId}:${req.prompt.slice(0,200)}:${req.systemInstruction?.slice(0,100) || ''}`
+  // Include jobId to ensure per-job independent processing, and hash of full prompt to avoid collisions
+  // Previously only first 200 chars caused same values across many jobs (template bug)
+  const jobPart = req.jobId ? `${req.jobId}:` : ''
+  const promptHash = `${req.prompt.length}:${req.prompt.slice(0,500)}`
+  const sysHash = req.systemInstruction ? `${req.systemInstruction.length}:${req.systemInstruction.slice(0,200)}` : ''
+  return `${req.agentId}:${jobPart}${promptHash}:${sysHash}`
 }
 
 async function callProvider(providerId: ProviderId, req: AIRequest): Promise<AIResponse> {

@@ -19,24 +19,38 @@ export async function verifyRemotePolicyAI(job: Job) {
   const prompt = `Verify remote policy for job: ${job.title} at ${job.company}. Location: ${job.location}. Description: ${combined.slice(0,3000)}. Determine fully_remote/hybrid/onsite/unknown, timezone overlap, travel, async flexibility. Return JSON with eligibility, confidence, evidence quote, timezoneRequirements, travelRequirements, asyncFlexibility.`
 
   try {
-    const gw = await aiGateway({ prompt, systemInstruction: "You are remote policy verifier. Evidence-based, never guess.", agentId: "verifier:remote-policy", jobId: job.id, temperature: 0.2, maxTokens: 500 })
+    const gw = await aiGateway({ prompt, systemInstruction: "You are remote policy verifier. Evidence-based, never guess. Return verbatim quote from description as evidence.", agentId: "verifier:remote-policy", jobId: job.id, temperature: 0.2, maxTokens: 500 })
     const m = gw.response.text.match(/\{[\s\S]*\}/)
     if (m) {
       const p = JSON.parse(m[0])
-      return { eligibility: p.eligibility || "unknown", confidence: p.confidence || 20, evidence: (p.evidence || "").slice(0,200), timezoneRequirements: p.timezoneRequirements, travelRequirements: p.travelRequirements, asyncFlexibility: p.asyncFlexibility || false, sourceUrls: [job.apply_url], lastVerified: now, modelVersion: `${gw.response.provider}:${gw.response.model}` }
+      const ev = (p.evidence || "").toString().trim()
+      const isGeneric = /^(fully remote language|marked as remote in ats|hybrid language|onsite only|no remote policy stated)$/i.test(ev)
+      return {
+        eligibility: p.eligibility || "unknown",
+        confidence: p.confidence || 20,
+        evidence: isGeneric ? "" : ev.slice(0,200),
+        timezoneRequirements: p.timezoneRequirements,
+        travelRequirements: p.travelRequirements,
+        asyncFlexibility: p.asyncFlexibility || false,
+        sourceUrls: [job.apply_url],
+        lastVerified: now,
+        modelVersion: `${gw.response.provider}:${gw.response.model}`
+      }
     }
-  } catch {}
-
-  const lower = combined.toLowerCase()
-  const hasFullyRemote = /fully remote|work from anywhere|remote.*worldwide/i.test(lower)
-  const hasHybrid = /hybrid|2 days in office/i.test(lower)
-  const hasOnsite = /on[-\s]?site only|must be in office/i.test(lower)
-
-  if (hasFullyRemote || job.is_remote) {
-    return { eligibility: "fully_remote" as const, confidence: hasFullyRemote ? 85 : 60, evidence: hasFullyRemote ? "Fully remote language" : "Marked as remote in ATS", sourceUrls: [job.apply_url], lastVerified: now, modelVersion: "rule-based-fallback" }
+  } catch (e) {
+    console.warn(`[verifier:remote] gateway failed ${job.id}`, e instanceof Error ? e.message.slice(0,100) : String(e).slice(0,100))
   }
-  if (hasHybrid) return { eligibility: "hybrid" as const, confidence: 75, evidence: "Hybrid language", sourceUrls: [job.apply_url], lastVerified: now, modelVersion: "rule-based-fallback" }
-  if (hasOnsite) return { eligibility: "onsite" as const, confidence: 80, evidence: "Onsite only", sourceUrls: [job.apply_url], lastVerified: now, modelVersion: "rule-based-fallback" }
-  return { eligibility: "unknown" as const, confidence: 20, evidence: "No remote policy stated", sourceUrls: [job.apply_url], lastVerified: now, modelVersion: "rule-based-fallback" }
+
+  return {
+    eligibility: "unknown" as const,
+    confidence: 10,
+    evidence: "",
+    timezoneRequirements: undefined,
+    travelRequirements: undefined,
+    asyncFlexibility: false,
+    sourceUrls: [job.apply_url],
+    lastVerified: now,
+    modelVersion: "failed-no-evidence"
+  }
 }
 export const verifyRemotePolicyReal = verifyRemotePolicyAI

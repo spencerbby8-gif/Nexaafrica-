@@ -33,7 +33,7 @@ Return JSON:
   try {
     const gwResult = await aiGateway({
       prompt,
-      systemInstruction: "You are a freshness verifier. Use posted_at, last_seen_at, expires_at to determine if job is active, expired, stale, ghost, or unknown. Be evidence-based, never guess.",
+      systemInstruction: "You are a freshness verifier. Use posted_at, last_seen_at, expires_at to determine if job is active, expired, stale, ghost, or unknown. Be evidence-based, never guess. Provide verbatim dates as evidence.",
       agentId: "verifier:freshness",
       jobId: job.id,
       temperature: 0.1,
@@ -46,7 +46,7 @@ Return JSON:
       return {
         status: parsed.status || "unknown",
         confidence: parsed.confidence || 20,
-        evidence: (parsed.evidence || "").slice(0,200),
+        evidence: (parsed.evidence || "").toString().slice(0,200),
         postedAgeDays: parsed.postedAgeDays ?? null,
         lastSeenAgeDays: parsed.lastSeenAgeDays ?? null,
         sourceUrls: [job.apply_url],
@@ -55,56 +55,19 @@ Return JSON:
       }
     }
   } catch (e) {
-    console.warn(`[Freshness Verifier] AI failed: ${e instanceof Error ? e.message : String(e)}`)
+    console.warn(`[Freshness Verifier] AI failed, unknown: ${e instanceof Error ? e.message : String(e)}`)
   }
 
-  // Fallback rule-based
-  const postedAt = job.posted_at ? new Date(job.posted_at).getTime() : null
-  const lastSeenRaw = (job as any).last_seen_at || job.created_at
-  const lastSeen = lastSeenRaw ? new Date(lastSeenRaw).getTime() : nowMs
-  const expiresAt = job.expires_at ? new Date(job.expires_at).getTime() : null
-
-  let status: "active" | "expired" | "stale" | "ghost" | "unknown" = "unknown"
-  let confidence = 30
-  let evidence = "No dates"
-
-  if (expiresAt && expiresAt < nowMs) {
-    status = "expired"
-    confidence = 90
-    evidence = `Expires at ${job.expires_at} in past`
-  } else if (postedAt) {
-    const ageDays = (nowMs - postedAt) / (1000*60*60*24)
-    if (ageDays > 90) {
-      status = "stale"
-      confidence = 80
-      evidence = `Posted ${Math.floor(ageDays)} days ago (>90d)`
-    } else if (ageDays > 60) {
-      status = "stale"
-      confidence = 60
-      evidence = `Posted ${Math.floor(ageDays)} days ago`
-    } else {
-      status = "active"
-      confidence = 85
-      evidence = `Posted ${Math.floor(ageDays)} days ago, fresh`
-    }
-  }
-
-  const lastSeenAgeDays = Math.floor((nowMs - lastSeen) / (1000*60*60*24))
-  if (lastSeenAgeDays > 14 && status === "active") {
-    status = "ghost"
-    confidence = 70
-    evidence += `; Not seen in feed for ${lastSeenAgeDays} days, may be ghost`
-  }
-
+  // Fallback: unknown when real AI fails, not template
   return {
-    status,
-    confidence,
-    evidence,
-    postedAgeDays: postedAt ? Math.floor((nowMs - postedAt)/(1000*60*60*24)) : null,
-    lastSeenAgeDays,
+    status: "unknown" as const,
+    confidence: 10,
+    evidence: "",
+    postedAgeDays: null,
+    lastSeenAgeDays: null,
     sourceUrls: [job.apply_url],
     lastVerified: now,
-    modelVersion: "rule-based-fallback",
+    modelVersion: "failed-no-evidence",
   }
 }
 

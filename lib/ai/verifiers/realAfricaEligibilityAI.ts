@@ -2,64 +2,114 @@ import type { Job } from "@/lib/types"
 import { cleanDescription } from "@/lib/cleanDescription"
 import { aiGateway } from "../gateway"
 
+function extractAfricaContext(text: string): { match: string; context: string } | null {
+  const africaRegex = /\b(africa|nigeria|kenya|south africa|ghana|egypt|morocco|rwanda|uganda|ethiopia|tanzania|emea|worldwide|anywhere|global.*remote|us only|uk only|eu only|must reside|residents only|no visa sponsorship)\b/i
+  const m = text.match(africaRegex)
+  if (m && m[0]) {
+    const idx = m.index || 0
+    const start = Math.max(0, idx - 120)
+    const end = Math.min(text.length, idx + m[0].length + 120)
+    return { match: m[0], context: text.slice(start, end).replace(/\s+/g, ' ').trim() }
+  }
+  return null
+}
+
 export async function verifyAfricaEligibilityAI(job: Job) {
   const now = new Date().toISOString()
-  let jobPageText = ""
-  let sourceUrls: string[] = [job.apply_url]
+  let jobPageTextFull = ""
+  let jobPageHtmlLength = 0
   try {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 8000)
-    const res = await fetch(job.apply_url, { headers: { "User-Agent": "Nexa Verifier" }, signal: controller.signal })
+    const timeout = setTimeout(() => controller.abort(), 10000)
+    const res = await fetch(job.apply_url, { headers: { "User-Agent": "Nexa Verifier Africa" }, signal: controller.signal })
     clearTimeout(timeout)
     if (res.ok) {
       const html = await res.text()
-      jobPageText = cleanDescription(html).slice(0, 5000)
-      sourceUrls.push(job.apply_url)
+      jobPageHtmlLength = html.length
+      jobPageTextFull = cleanDescription(html)
     }
   } catch {}
-  const combined = `${job.description_md}\n\n${jobPageText}`.toLowerCase()
-  const hasAfricaExplicit = /africa|nigeria|kenya|south africa|ghana/i.test(combined)
-  const hasRestriction = /us only|uk only|eu only|must reside in|residents only|no visa sponsorship/i.test(combined)
-  const hasWorldwide = /worldwide|anywhere|global.*remote/i.test(combined)
 
-  const prompt = `Verify Africa eligibility for job: ${job.title} at ${job.company}. Location: ${job.location}. Description: ${combined.slice(0,3000)}. Return JSON with eligibility explicit/likely/restricted/unknown, confidence 0-100, evidence quote max 200 chars, countryRestrictions, visaSponsorship, languageRequirements. Never guess, return unknown when evidence missing.`
+  const combinedFull = `${job.description_md}\n\n${jobPageTextFull}`
+  const africaContext = extractAfricaContext(combinedFull)
+
+  // If no Africa context in actual job page, return UNKNOWN with empty evidence (honest), not generic template
+  if (!africaContext) {
+    // Try AI gateway with full text
+    const prompt = `Verify Africa eligibility for job: ${job.title} at ${job.company}. Location: ${job.location}. Full description and page text (6000 chars): ${combinedFull.slice(0,6000)}. Return JSON with eligibility explicit/likely/restricted/unknown, confidence 0-100, evidence quote verbatim max 200 chars from text where Africa/restriction mentioned, countryRestrictions, visaSponsorship. Never guess, return unknown when evidence missing. Evidence must be verbatim quote.`
+    try {
+      const gw = await aiGateway({ prompt, systemInstruction: "You are Africa eligibility verifier. Evidence-based, never guess. Return UNKNOWN when missing. Evidence must be verbatim quote.", agentId: "verifier:africa-eligibility", jobId: job.id, temperature: 0.1, maxTokens: 400 })
+      const m = gw.response.text.match(/\{[\s\S]*\}/)
+      if (m) {
+        const p = JSON.parse(m[0])
+        const ev = (p.evidence || "").toString().trim()
+        if (ev) {
+          return {
+            eligibility: p.eligibility || "unknown",
+            confidence: p.confidence || 20,
+            evidence: ev.slice(0,200),
+            countryRestrictions: p.countryRestrictions || [],
+            visaSponsorship: p.visaSponsorship || "unknown",
+            languageRequirements: p.languageRequirements || [],
+            sourceUrls: [job.apply_url],
+            lastVerified: now,
+            modelVersion: `${gw.response.provider}:${gw.response.model}`
+          }
+        }
+      }
+    } catch {}
+    return {
+      eligibility: "unknown" as const,
+      confidence: 0,
+      evidence: "",
+      countryRestrictions: [],
+      visaSponsorship: "unknown" as const,
+      languageRequirements: [],
+      sourceUrls: [job.apply_url],
+      lastVerified: now,
+      modelVersion: "failed-no-evidence-no-africa-mention"
+    }
+  }
+
+  // If context found, use it as real evidence, and try AI to classify
+  const prompt = `Verify Africa eligibility for job: ${job.title} at ${job.company}. Location: ${job.location}. Found context: "${africaContext.context}". Full description: ${combinedFull.slice(0,5000)}. Return JSON with eligibility explicit/likely/restricted/unknown, confidence, evidence quote verbatim (must be exact substring from context), countryRestrictions, visaSponsorship.`
 
   try {
-    const gw = await aiGateway({ prompt, systemInstruction: "You are Africa eligibility verifier. Evidence-based, never guess. Return UNKNOWN when missing. Always return a verbatim quote from the description as evidence, max 200 chars, or empty if none.", agentId: "verifier:africa-eligibility", jobId: job.id, temperature: 0.2, maxTokens: 500 })
+    const gw = await aiGateway({ prompt, systemInstruction: "You are Africa eligibility verifier. Evidence-based. Evidence must be verbatim quote from provided context.", agentId: "verifier:africa-eligibility", jobId: job.id, temperature: 0.1, maxTokens: 400 })
     const m = gw.response.text.match(/\{[\s\S]*\}/)
     if (m) {
       const p = JSON.parse(m[0])
-      const evidenceRaw = (p.evidence || "").toString().trim()
-      // Ensure evidence is per-job verbatim, not generic placeholder - if evidence is generic like "No evidence" treat as empty
-      const isGeneric = /^(no evidence|worldwide language|africa explicitly mentioned|geographic restriction)$/i.test(evidenceRaw)
       return {
         eligibility: p.eligibility || "unknown",
-        confidence: p.confidence || 20,
-        evidence: isGeneric ? "" : evidenceRaw.slice(0,200),
+        confidence: p.confidence || 60,
+        evidence: (p.evidence || africaContext.context).slice(0,200),
         countryRestrictions: p.countryRestrictions || [],
         visaSponsorship: p.visaSponsorship || "unknown",
         languageRequirements: p.languageRequirements || [],
-        sourceUrls,
+        sourceUrls: [job.apply_url],
         lastVerified: now,
         modelVersion: `${gw.response.provider}:${gw.response.model}`
       }
     }
-  } catch (e) {
-    console.warn(`[verifier:africa] gateway failed for job ${job.id}:`, e instanceof Error ? e.message.slice(0,100) : String(e).slice(0,100))
-  }
+  } catch {}
 
-  // Fallback: return UNKNOWN with no placeholder evidence when real AI genuinely fails
-  // Do not persist template values like "Worldwide language" – that causes identical values across jobs
+  // Fallback with real context as evidence (not generic template)
+  const lower = africaContext.match.toLowerCase()
+  let eligibility: "explicit"|"likely"|"restricted"|"unknown" = "unknown"
+  if (/africa|nigeria|kenya|south africa|ghana|egypt/i.test(lower)) eligibility = "explicit"
+  else if (/us only|uk only|eu only|must reside|residents only|no visa sponsorship/i.test(lower)) eligibility = "restricted"
+  else if (/worldwide|anywhere|global.*remote/i.test(lower)) eligibility = "likely"
+
   return {
-    eligibility: "unknown" as const,
-    confidence: 10,
-    evidence: "",
+    eligibility,
+    confidence: eligibility !== "unknown" ? 70 : 0,
+    evidence: africaContext.context.slice(0,200),
     countryRestrictions: [],
     visaSponsorship: "unknown" as const,
     languageRequirements: [],
-    sourceUrls,
+    sourceUrls: [job.apply_url],
     lastVerified: now,
-    modelVersion: "failed-no-evidence"
+    modelVersion: `regex-extracted-${jobPageHtmlLength}bytes`
   }
 }
 export const verifyAfricaEligibilityReal = verifyAfricaEligibilityAI

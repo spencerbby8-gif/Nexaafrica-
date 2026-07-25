@@ -100,21 +100,23 @@ Return JSON with min, max, currency, period, isEstimated, transparency disclosed
       const p = JSON.parse(m[0])
       const ev = (p.evidence || "").toString().trim()
       const isGeneric = /^(no compensation listed)$/i.test(ev)
-      // If AI claims undisclosed but we have salaryContext, treat as failure – should have disclosed
-      if (p.transparency === "undisclosed" && salaryContext) {
-        // Override with real extracted salary, not AI's false undisclosed
-        return {
-          min: job.salary_min,
-          max: job.salary_max,
-          currency: job.salary_currency,
-          period: job.salary_period,
-          isEstimated: false,
-          transparency: "disclosed" as const,
-          confidence: 85,
-          evidence: salaryContext.context.slice(0, 200),
-          sourceUrls: [job.apply_url],
-          lastVerified: now,
-          modelVersion: `regex-override-${gw.response.provider}:${gw.response.model}`
+      // If AI claims undisclosed but we have real salaryContext from page, override with disclosed (real evidence)
+      if (p.transparency === "undisclosed" && combinedFull.match(/\$[\d,]+/)) {
+        const ctx = extractSalaryContext(combinedFull)
+        if (ctx) {
+          return {
+            min: job.salary_min,
+            max: job.salary_max,
+            currency: job.salary_currency,
+            period: job.salary_period,
+            isEstimated: false,
+            transparency: "disclosed" as const,
+            confidence: 85,
+            evidence: ctx.context.slice(0, 200),
+            sourceUrls: [job.apply_url],
+            lastVerified: now,
+            modelVersion: `regex-override-${gw.response.provider}:${gw.response.model}`
+          }
         }
       }
       return {

@@ -8,7 +8,7 @@ import { IntentRail } from '@/components/intent-rail'
 import { FAQ } from '@/components/faq'
 import { breadcrumbJsonLd, itemListJsonLd, jsonLdString } from '@/lib/seo'
 import { COUNTRIES, getCountry } from '@/lib/countries'
-import { getCategories, getJobs, countJobs } from '@/lib/queries'
+import { getCategories, getJobsWithAI, countJobs } from '@/lib/queries'
 
 export const revalidate = 600
 
@@ -55,7 +55,7 @@ export default async function CountryHubPage({
       : { country: c.name, limit: 60 }
 
   const [jobs, total, categories] = await Promise.all([
-    getJobs(filter),
+    getJobsWithAI(filter),
     countJobs(filter),
     getCategories(),
   ])

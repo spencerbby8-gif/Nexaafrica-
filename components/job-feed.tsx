@@ -1,13 +1,16 @@
 import { JobCard } from '@/components/job-card'
 import { EmptyState } from '@/components/empty-state'
 import type { Job } from '@/lib/types'
+import type { JobWithAI } from '@/lib/ai/queries'
 
 export function JobFeed({
   jobs,
   empty,
+  showOpportunityIntelligence = false,
 }: {
-  jobs: Job[]
+  jobs: (Job | JobWithAI<Job>)[]
   empty?: React.ReactNode
+  showOpportunityIntelligence?: boolean
 }) {
   if (jobs.length === 0) {
     return (
@@ -27,11 +30,18 @@ export function JobFeed({
 
   return (
     <ul className="grid grid-cols-1 gap-3 md:grid-cols-2">
-      {jobs.map((job) => (
-        <li key={job.id}>
-          <JobCard job={job} />
-        </li>
-      ))}
+      {jobs.map((job) => {
+        const withAI = job as JobWithAI<Job>
+        return (
+          <li key={job.id}>
+            <JobCard
+              job={job}
+              aiIntelligence={withAI.aiIntelligence || null}
+              showOpportunityIntelligence={showOpportunityIntelligence}
+            />
+          </li>
+        )
+      })}
     </ul>
   )
 }

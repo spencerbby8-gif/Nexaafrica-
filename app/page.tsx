@@ -9,7 +9,7 @@ import {
   countJobs,
   getCategories,
   getFreshnessPulse,
-  getJobs,
+  getJobsWithAI,
 } from '@/lib/queries'
 
 // Personalized section reads the user's session — keep this page dynamic
@@ -18,7 +18,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function HomePage() {
   const [recent, categories, total, pulse] = await Promise.all([
-    getJobs({ limit: 6 }),
+    getJobsWithAI({ limit: 6 }),
     getCategories(),
     countJobs(),
     getFreshnessPulse(),
@@ -82,7 +82,7 @@ export default async function HomePage() {
           </Link>
         </div>
         <div className="py-6">
-          <JobFeed jobs={recent} />
+          <JobFeed jobs={recent} showOpportunityIntelligence={true} />
         </div>
       </section>
 

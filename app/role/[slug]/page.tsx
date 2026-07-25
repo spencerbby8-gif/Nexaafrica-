@@ -2,11 +2,12 @@ import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { SiteShell } from '@/components/site-shell'
 import { JobDetailLayout } from '@/components/job-detail-layout'
-import { getJobBySlug, getRelatedJobs } from '@/lib/queries'
+import { getJobBySlug, getJobBySlugWithAI, getRelatedJobsWithAI, getRelatedJobs } from '@/lib/queries'
 import { isJobSaved } from '@/lib/saved-jobs'
 import { createClient } from '@/lib/supabase/server'
 import { ogImage } from '@/lib/og'
 import { siteUrl } from '@/lib/site'
+import { cleanDescription } from '@/lib/cleanDescription'
 
 // Per-user apply state needs request cookies, so this route renders dynamically.
 // Job data is short-lived enough that this is fine for SEO; metadata stays cacheable.
@@ -90,11 +91,13 @@ function parseSalaryToSchema(
 }
 
 function firstParagraph(md: string): string {
-  const block = md
+  // Clean first: remove HTML entities and raw HTML like <div class="content-intro">
+  const cleaned = cleanDescription(md)
+  const block = cleaned
     .split(/\n{2,}/)
     .map((b) => b.trim())
     .find((b) => b && !b.startsWith('#') && !b.startsWith('-'))
-  return block ?? ''
+  return (block ?? '').replace(/\s+/g, ' ').trim()
 }
 
 export async function generateMetadata({
@@ -170,10 +173,12 @@ export async function generateMetadata({
 
 export default async function RolePage({ params }: { params: Promise<Params> }) {
   const { slug } = await params
-  const job = await getJobBySlug(slug)
-  if (!job) notFound()
+  const jobWithAI = await getJobBySlugWithAI(slug)
+  if (!jobWithAI) notFound()
+  const job = jobWithAI
+  const aiIntelligence = (jobWithAI as any).aiIntelligence || null
 
-  const related = await getRelatedJobs(job, 4)
+  const related = await getRelatedJobsWithAI(job, 4)
   const description = firstParagraph(job.description_md)
 
   const baseSalary = parseSalaryToSchema(job.salary_range)
@@ -253,6 +258,7 @@ export default async function RolePage({ params }: { params: Promise<Params> }) 
         applyState={applyState}
         isAuthed={Boolean(user)}
         initialSaved={initialSaved}
+        aiIntelligence={aiIntelligence}
       />
     </SiteShell>
   )

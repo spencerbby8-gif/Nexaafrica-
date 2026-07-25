@@ -12,7 +12,7 @@ import {
   getCategories,
   getCategory,
   getDistinctCountriesForCategory,
-  getJobs,
+  getJobsWithAI,
 } from '@/lib/queries'
 import type { EmploymentType } from '@/lib/types'
 import { breadcrumbJsonLd, itemListJsonLd, jsonLdString } from '@/lib/seo'
@@ -79,7 +79,7 @@ export default async function CategoryCountryPage({
   }
 
   const [jobs, total, allCategories, distinctCountries] = await Promise.all([
-    getJobs(filters),
+    getJobsWithAI(filters),
     countJobs({ category, country: countryFilter(country) }),
     getCategories(),
     getDistinctCountriesForCategory(category),

@@ -5,13 +5,19 @@ import { employmentLabel, isFresh, postedLabel, relativeTime, salaryDisplay } fr
 import { getJobCardExcerpt } from '@/lib/cleanDescription'
 import type { Job } from '@/lib/types'
 import { calculateTrustScore } from '@/lib/trust/engine'
+import { OpportunityIntelligenceSummary } from '@/components/opportunity-intelligence'
+import type { JobAIIntelligenceRow } from '@/lib/ai/queries'
 
 export function JobCard({
   job,
   matchReasons,
+  aiIntelligence,
+  showOpportunityIntelligence = false,
 }: {
   job: Job
   matchReasons?: string[]
+  aiIntelligence?: JobAIIntelligenceRow | null
+  showOpportunityIntelligence?: boolean
 }) {
   const fresh = isFresh(job.posted_at, 3)
   const salary = salaryDisplay(job.salary_range, { openToAfrica: job.is_open_to_africa })
@@ -40,7 +46,7 @@ export function JobCard({
           </span>
         </div>
 
-        {matchReasons && matchReasons.length > 0 && (
+        {matchReasons && matchReasons.length > 0 && !showOpportunityIntelligence && (
           <p className="-mt-1 inline-flex items-center gap-1.5 text-[11px] font-medium text-accent">
             <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-accent" />
             {matchReasons[0]}
@@ -51,18 +57,19 @@ export function JobCard({
           {excerpt}
         </p>
 
+        {/* Trust & basic badges – always visible for scannability, augmented by AI */}
         <div className="flex flex-wrap items-center gap-1.5">
           {(() => {
             try {
               const trust = (job as any).trust_score != null ? { score: (job as any).trust_score } : calculateTrustScore(job as any)
               const score = (trust as any).score ?? (trust as any).trust_score ?? 0
               if (score >= 70) {
-                return <span className="inline-flex items-center gap-1 rounded-full border border-green-500/20 bg-green-500/10 px-2 py-0.5 text-[11px] text-green-300">Trust {score}</span>
+                return <span className="inline-flex items-center gap-1 rounded-full border border-green-500/20 bg-green-500/10 px-2 py-0.5 text-[11px] text-green-300\">Trust {score}</span>
               }
               if (score >= 40) {
-                return <span className="inline-flex items-center gap-1 rounded-full border border-yellow-500/20 bg-yellow-500/10 px-2 py-0.5 text-[11px] text-yellow-300">Trust {score}</span>
+                return <span className="inline-flex items-center gap-1 rounded-full border border-yellow-500/20 bg-yellow-500/10 px-2 py-0.5 text-[11px] text-yellow-300\">Trust {score}</span>
               }
-              return <span className="inline-flex items-center gap-1 rounded-full border border-red-500/20 bg-red-500/10 px-2 py-0.5 text-[11px] text-red-300">Low {score}</span>
+              return <span className="inline-flex items-center gap-1 rounded-full border border-red-500/20 bg-red-500/10 px-2 py-0.5 text-[11px] text-red-300\">Low {score}</span>
             } catch {
               return null
             }
@@ -93,6 +100,13 @@ export function JobCard({
             </span>
           )}
         </div>
+
+        {/* Opportunity Intelligence – real fix for Home feed */}
+        {showOpportunityIntelligence && (
+          <div className="mt-1">
+            <OpportunityIntelligenceSummary intelligence={aiIntelligence} matchReasons={matchReasons} />
+          </div>
+        )}
       </article>
     </Link>
   )

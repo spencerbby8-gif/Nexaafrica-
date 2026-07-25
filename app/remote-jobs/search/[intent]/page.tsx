@@ -11,7 +11,7 @@ import {
   jsonLdString,
 } from '@/lib/seo'
 import { getIntent, listIntentSlugs } from '@/lib/intents'
-import { getJobs } from '@/lib/queries'
+import { getJobsWithAI } from '@/lib/queries'
 import type { Job } from '@/lib/types'
 import { ogImage } from '@/lib/og'
 
@@ -79,7 +79,7 @@ export default async function IntentPage({ params }: { params: Promise<Params> }
   // Pull a wider candidate pool so keyword-narrowed intents still have
   // a healthy result set to render.
   const baseLimit = intent.titleKeywords ? 120 : intent.filters.limit ?? 24
-  const candidates = await getJobs({ ...intent.filters, limit: baseLimit })
+  const candidates = await getJobsWithAI({ ...intent.filters, limit: baseLimit })
   const matched = applyTitleKeywords(candidates, intent.titleKeywords)
   const jobs = matched.slice(0, intent.filters.limit ?? 24)
 

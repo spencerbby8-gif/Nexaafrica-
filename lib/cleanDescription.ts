@@ -57,11 +57,20 @@ function stripHtmlProper(html: string): string {
 export function cleanDescription(raw: string | null | undefined): string {
   if (!raw) return ''
   // First decode entities — so &lt;div&gt; becomes <div> and can be stripped as tag
+  // Double decode handles &amp;lt; double encoding
   let decoded = decodeEntities(raw)
+  decoded = decodeEntities(decoded)
   // Strip HTML properly
   let cleaned = stripHtmlProper(decoded)
-  // Second decode in case nested encoding &amp;lt;
+  // Second round decode + strip after HTML removal in case nested encoding remained
   cleaned = decodeEntities(cleaned)
+  cleaned = stripHtmlProper(cleaned)
+  cleaned = decodeEntities(cleaned)
+
+  // Also strip any remaining HTML-like fragments that parser might have missed
+  // e.g. leftover <div class="content-intro"> from failed parse or plain text attributes
+  cleaned = cleaned.replace(/<[^>]*>/g, ' ')
+
   // Cleanup whitespace
   return cleaned
     .replace(/\u0000/g, '')
@@ -72,10 +81,56 @@ export function cleanDescription(raw: string | null | undefined): string {
     .trim()
 }
 
+/**
+ * Strip markdown syntax to plain readable text for excerpts.
+ * Keeps the semantic content but removes formatting markers so
+ * job cards never show **bold** or [link](url) or # heading markers.
+ */
+function stripMarkdown(md: string): string {
+  if (!md) return ''
+  let text = md
+
+  // Remove code blocks ```...```
+  text = text.replace(/```[\s\S]*?```/g, ' ')
+  // Inline code `code` -> code
+  text = text.replace(/`([^`]+)`/g, '$1')
+  // Images ![alt](url) -> alt
+  text = text.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
+  // Links [label](url) -> label
+  text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+  // Bold **text** or __text__ -> text
+  text = text.replace(/\*\*([^*]+)\*\*/g, '$1')
+  text = text.replace(/__([^_]+)__/g, '$1')
+  // Italic *text* or _text_ -> text (careful not to break apostrophes)
+  text = text.replace(/\*([^*]{1,200}?)\*/g, '$1')
+  text = text.replace(/(?:^|\s)_([^_]{1,200}?)_(?:\s|$)/g, ' $1 ')
+  // Strikethrough ~~text~~ -> text
+  text = text.replace(/~~([^~]+)~~/g, '$1')
+  // Headings # ## ### -> remove markers but keep text, line by line
+  text = text.replace(/^\s{0,3}#{1,6}\s+/gm, '')
+  // Blockquotes > -> remove
+  text = text.replace(/^\s{0,3}>\s?/gm, '')
+  // Unordered list markers -, *, + at start of line -> remove
+  text = text.replace(/^\s*[-*+]\s+/gm, '')
+  // Ordered list 1. 2. etc -> remove number
+  text = text.replace(/^\s*\d+\.\s+/gm, '')
+  // Horizontal rules ---, ***, ___ alone on line -> remove
+  text = text.replace(/^\s*[-*_]{3,}\s*$/gm, '')
+  // Remaining stray markdown chars that leak as tokens
+  // e.g. leftover "##" or "**" from broken formatting
+  text = text.replace(/^\s*[*_#]{1,3}\s*/gm, '')
+  // Collapse whitespace
+  text = text.replace(/\s+/g, ' ').trim()
+  return text
+}
+
 export function generateExcerpt(raw: string | null | undefined, minLen = 180, maxLen = 250): string {
   const cleaned = cleanDescription(raw)
   if (!cleaned) return ''
-  let text = cleaned.replace(/\s+/g, ' ').trim()
+  // For preview, strip markdown to plain sentence
+  const plain = stripMarkdown(cleaned)
+  let text = plain.replace(/\s+/g, ' ').trim()
+  if (!text) return ''
   if (text.length <= maxLen) return text
 
   let excerpt = text.slice(0, maxLen)
@@ -100,7 +155,17 @@ export function generateExcerpt(raw: string | null | undefined, minLen = 180, ma
   return excerpt.trim()
 }
 
-// For job cards specifically — ensure 180-250 chars, clean, no HTML
+// For job cards specifically — ensure 180-250 chars, clean, no HTML, no markdown
 export function getJobCardExcerpt(descriptionMd: string | null | undefined): string {
   return generateExcerpt(descriptionMd, 180, 250)
+}
+
+/**
+ * For detail page markdown rendering, we still want cleaned description
+ * but keep markdown structure (headings, bullets, bold, links). This
+ * version only strips HTML, not markdown.
+ */
+export function getCleanMarkdownForRender(raw: string | null | undefined): string {
+  const cleaned = cleanDescription(raw)
+  return cleaned
 }

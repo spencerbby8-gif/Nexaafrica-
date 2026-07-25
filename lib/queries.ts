@@ -1,6 +1,7 @@
 import 'server-only'
 import { createClient } from '@/lib/supabase/server'
 import type { Category, Job, JobFilters } from '@/lib/types'
+import { getAIIntelligenceForJobs, type JobAIIntelligenceRow, type JobWithAI } from '@/lib/ai/queries'
 
 const JOB_COLUMNS =
   'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, salary_min, salary_max, salary_currency, salary_period, employment_type, intelligence, tags, is_remote, is_open_to_africa, eligibility, posted_at, created_at, expires_at, trust_score, trust_confidence, trust_signals, trust_version, is_flagged, flagged_reason, source, source_id'
@@ -64,6 +65,17 @@ export async function getJobBySlug(slug: string): Promise<Job | null> {
   return (data as Job) ?? null
 }
 
+export async function getJobBySlugWithAI(slug: string): Promise<JobWithAI<Job> | null> {
+  const job = await getJobBySlug(slug)
+  if (!job) return null
+  try {
+    const aiMap = await getAIIntelligenceForJobs([job.id])
+    return { ...job, aiIntelligence: aiMap.get(job.id) || null }
+  } catch {
+    return { ...job, aiIntelligence: null }
+  }
+}
+
 export async function getRelatedJobs(job: Job, limit = 4): Promise<Job[]> {
   const supabase = await createClient()
   const { data, error } = await supabase
@@ -79,6 +91,29 @@ export async function getRelatedJobs(job: Job, limit = 4): Promise<Job[]> {
     return []
   }
   return (data ?? []) as Job[]
+}
+
+export async function getRelatedJobsWithAI(job: Job, limit = 4): Promise<JobWithAI<Job>[]> {
+  const jobs = await getRelatedJobs(job, limit)
+  if (jobs.length === 0) return []
+  try {
+    const aiMap = await getAIIntelligenceForJobs(jobs.map((j) => j.id))
+    return jobs.map((j) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null }))
+  } catch {
+    return jobs.map((j) => ({ ...j, aiIntelligence: null }))
+  }
+}
+
+export async function getJobsWithAI(filters: JobFilters = {}): Promise<JobWithAI<Job>[]> {
+  const jobs = await getJobs(filters)
+  if (jobs.length === 0) return []
+  try {
+    const aiMap = await getAIIntelligenceForJobs(jobs.map((j) => j.id))
+    return jobs.map((j) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null }))
+  } catch {
+    // Fallback: return jobs without AI, UI will show pending
+    return jobs.map((j) => ({ ...j, aiIntelligence: null }))
+  }
 }
 
 export async function getCategories(): Promise<Category[]> {

@@ -12,8 +12,11 @@ import { TrustCard } from '@/components/trust/trust-card'
 import { ReportButton } from '@/components/trust/report-button'
 import { calculateTrustScore } from '@/lib/trust/engine'
 import { employmentLabel, isFresh, postedLabel } from '@/lib/format'
-import { cleanDescription } from '@/lib/cleanDescription'
+import { cleanDescription, getCleanMarkdownForRender } from '@/lib/cleanDescription'
 import type { Job } from '@/lib/types'
+import { OpportunityIntelligencePanel } from '@/components/opportunity-intelligence'
+import type { JobAIIntelligenceRow } from '@/lib/ai/queries'
+import type { JobWithAI } from '@/lib/ai/queries'
 
 /**
  * Lightweight markdown renderer tuned for job descriptions.
@@ -145,12 +148,14 @@ export function JobDetailLayout({
   applyState = 'anon',
   isAuthed = false,
   initialSaved = false,
+  aiIntelligence,
 }: {
   job: Job
-  related: Job[]
+  related: (Job | JobWithAI<Job>)[]
   applyState?: 'anon' | 'authed-incomplete' | 'authed-complete'
   isAuthed?: boolean
   initialSaved?: boolean
+  aiIntelligence?: JobAIIntelligenceRow | null
 }) {
   const employment = employmentLabel(job.employment_type)
   // Freshness + posted label derive from the real provider posting date.
@@ -316,8 +321,13 @@ export function JobDetailLayout({
         <EvidencePanel job={job} />
       </div>
 
+      {/* Opportunity Intelligence – full panel for detail page, evidence-backed */}
+      <div className="pt-6">
+        <OpportunityIntelligencePanel intelligence={aiIntelligence || (job as any).aiIntelligence || null} />
+      </div>
+
       <section className="pt-8" aria-label="Role description">
-        <Markdown source={cleanDescription(job.description_md)} />
+        <Markdown source={getCleanMarkdownForRender(job.description_md)} />
       </section>
 
       {job.tags.length > 0 && (
@@ -386,9 +396,17 @@ export function JobDetailLayout({
             </Link>
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            {related.map((r) => (
-              <JobCard key={r.id} job={r} />
-            ))}
+            {related.map((r) => {
+              const withAI = r as JobWithAI<Job>
+              return (
+                <JobCard
+                  key={r.id}
+                  job={r}
+                  aiIntelligence={withAI.aiIntelligence || null}
+                  showOpportunityIntelligence={false}
+                />
+              )
+            })}
           </div>
         </section>
       )}

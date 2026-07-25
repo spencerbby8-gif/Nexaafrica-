@@ -7,7 +7,7 @@ import { JobSearchControls } from '@/components/job-search-controls'
 import { EmptyState } from '@/components/empty-state'
 import { TrustStrip } from '@/components/trust-strip'
 import { IntentRail } from '@/components/intent-rail'
-import { getCategories, getJobs } from '@/lib/queries'
+import { getCategories, getJobsWithAI } from '@/lib/queries'
 import type { EmploymentType } from '@/lib/types'
 
 export const revalidate = 120
@@ -35,7 +35,7 @@ export default async function JobsPage({
 }) {
   const sp = await searchParams
   const [jobs, categories] = await Promise.all([
-    getJobs({
+    getJobsWithAI({
       q: sp.q?.trim() || undefined,
       category: sp.category || undefined,
       employmentType: (sp.employment_type as EmploymentType) || undefined,
@@ -51,12 +51,12 @@ export default async function JobsPage({
     sp.q || sp.category || sp.employment_type || sp.remote || sp.africa || sp.usd,
   )
 
-  // Real, data-derived freshness signals. No fake metrics.
+  // Real, data-derived freshness signals using posted_at (real provider date) not created_at
   const now = Date.now()
   const DAY = 24 * 60 * 60 * 1000
-  const addedToday = jobs.filter((j) => now - new Date(j.created_at).getTime() < DAY).length
+  const addedToday = jobs.filter((j) => now - new Date(j.posted_at).getTime() < DAY).length
   const addedThisWeek = jobs.filter(
-    (j) => now - new Date(j.created_at).getTime() < 7 * DAY,
+    (j) => now - new Date(j.posted_at).getTime() < 7 * DAY,
   ).length
 
   return (

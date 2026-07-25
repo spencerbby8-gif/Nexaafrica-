@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { JobCard } from '@/components/job-card'
 import { getUserMatchSignals, getMatchedJobs } from '@/lib/profile/match'
+import { getAIIntelligenceForJobs } from '@/lib/ai/queries'
 
 /**
  * Personalized "Matching for you" homepage section.
@@ -8,6 +9,14 @@ import { getUserMatchSignals, getMatchedJobs } from '@/lib/profile/match'
  * Renders nothing (returns null) for signed-out users, users without a
  * usable profile, or when the deterministic matcher finds no jobs above
  * the score threshold. Trust > filler.
+ *
+ * Now loads job_ai_intelligence correctly: join by job_id, render AI fields,
+ * remove raw markdown from preview, use cleaned description everywhere,
+ * show intelligence summary instead of only trust/remote/salary/likely open.
+ * If AI missing, shows "Intelligence pending".
+ *
+ * SEO God Mode: server-rendered, crawlable, no client JS for this section,
+ * fast, evidence-backed, no fabrication.
  */
 export async function PersonalizedFeed() {
   const signals = await getUserMatchSignals()
@@ -15,6 +24,15 @@ export async function PersonalizedFeed() {
 
   const matched = await getMatchedJobs(signals, 6)
   if (matched.length === 0) return null
+
+  // Load AI intelligence for these jobs – join by job_id, production safe,
+  // fallback to pending if not ready, raw job untouched.
+  let aiMap = new Map()
+  try {
+    aiMap = await getAIIntelligenceForJobs(matched.map((m) => m.job.id))
+  } catch {
+    // Fallback: no intelligence, cards will show pending state
+  }
 
   // Headline reflects what we actually used to match — never invent a
   // signal source we don't have.
@@ -55,7 +73,12 @@ export async function PersonalizedFeed() {
       <ul className="grid gap-3 py-6 sm:grid-cols-2 lg:grid-cols-3">
         {matched.map(({ job, reasons }) => (
           <li key={job.id}>
-            <JobCard job={job} matchReasons={reasons} />
+            <JobCard
+              job={job}
+              matchReasons={reasons}
+              aiIntelligence={aiMap.get(job.id) || null}
+              showOpportunityIntelligence={true}
+            />
           </li>
         ))}
       </ul>

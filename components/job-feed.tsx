@@ -6,7 +6,7 @@ import type { JobWithAI } from '@/lib/ai/queries'
 export function JobFeed({
   jobs,
   empty,
-  showOpportunityIntelligence = false,
+  showOpportunityIntelligence = true,
 }: {
   jobs: (Job | JobWithAI<Job>)[]
   empty?: React.ReactNode

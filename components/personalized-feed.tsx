@@ -71,11 +71,12 @@ export async function PersonalizedFeed() {
         </Link>
       </div>
       <ul className="grid gap-3 py-6 sm:grid-cols-2 lg:grid-cols-3">
-        {matched.map(({ job, reasons }) => (
+        {matched.map(({ job, reasons, score }) => (
           <li key={job.id}>
             <JobCard
               job={job}
               matchReasons={reasons}
+              matchScore={score}
               aiIntelligence={aiMap.get(job.id) || null}
               showOpportunityIntelligence={true}
             />

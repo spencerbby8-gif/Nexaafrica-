@@ -11,11 +11,13 @@ import type { JobAIIntelligenceRow } from '@/lib/ai/queries'
 export function JobCard({
   job,
   matchReasons,
+  matchScore,
   aiIntelligence,
   showOpportunityIntelligence = false,
 }: {
   job: Job
   matchReasons?: string[]
+  matchScore?: number
   aiIntelligence?: JobAIIntelligenceRow | null
   showOpportunityIntelligence?: boolean
 }) {
@@ -53,11 +55,22 @@ export function JobCard({
           </p>
         )}
 
+        {matchScore != null && showOpportunityIntelligence && (
+          <div className="-mt-1 flex items-center gap-2">
+            <span className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/15 px-2 py-0.5 text-[11px] font-medium text-accent">
+              Match Score {matchScore}
+            </span>
+            {matchReasons && matchReasons.length > 0 && (
+              <span className="text-[11px] text-muted-foreground truncate">{matchReasons[0]}</span>
+            )}
+          </div>
+        )}
+
         <p className="line-clamp-2 text-sm leading-relaxed text-muted-foreground">
           {excerpt}
         </p>
 
-        {/* Trust & basic badges – always visible for scannability, augmented by AI */}
+        {/* Trust & basic badges – kept for scannability but now secondary to AI intelligence */}
         <div className="flex flex-wrap items-center gap-1.5">
           {(() => {
             try {

@@ -7,7 +7,7 @@ import { isJobSaved } from '@/lib/saved-jobs'
 import { createClient } from '@/lib/supabase/server'
 import { ogImage } from '@/lib/og'
 import { siteUrl } from '@/lib/site'
-import { cleanDescription } from '@/lib/cleanDescription'
+import { cleanDescription, generateExcerpt } from '@/lib/cleanDescription'
 
 // Per-user apply state needs request cookies, so this route renders dynamically.
 // Job data is short-lived enough that this is fine for SEO; metadata stays cacheable.
@@ -91,13 +91,15 @@ function parseSalaryToSchema(
 }
 
 function firstParagraph(md: string): string {
-  // Clean first: remove HTML entities and raw HTML like <div class="content-intro">
+  // Use shared cleaned excerpt pipeline: remove HTML entities, raw HTML, raw markdown
+  const excerpt = generateExcerpt(md, 120, 200)
+  if (excerpt) return excerpt
   const cleaned = cleanDescription(md)
   const block = cleaned
     .split(/\n{2,}/)
     .map((b) => b.trim())
     .find((b) => b && !b.startsWith('#') && !b.startsWith('-'))
-  return (block ?? '').replace(/\s+/g, ' ').trim()
+  return (block ?? '').replace(/\s+/g, ' ').trim().slice(0, 200)
 }
 
 export async function generateMetadata({

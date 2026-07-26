@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * One-off production backfill (issue #4): populate jobs.intelligence and
  * trust_signals for rows still carrying the empty default ('{}' / '[]').

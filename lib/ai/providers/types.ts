@@ -16,7 +16,7 @@ export const PROVIDERS: ProviderConfig[] = [
   // Key likely doesn't have access — needs account verification with Cerebras.
   { id: "cerebras", name: "Cerebras Llama", envKey: "CEREBRAS_API_KEY", model: "llama3.1-70b", enabled: false, priority: 4, rateLimitPerSec: 5, timeoutMs: 10000, costPer1kTokens: 2 },
   // OpenRouter model fixed: "gemini-2.0-flash-001"→"gemini-2.5-flash". Still being tested.
-  { id: "openrouter", name: "OpenRouter", envKey: "OPENROUTER_API_KEY", model: "google/gemini-2.5-flash", enabled: true, priority: 5, rateLimitPerSec: 3, timeoutMs: 15000, costPer1kTokens: 3 },
+  { id: "openrouter", name: "OpenRouter", envKey: "OPENROUTER_API_KEY", model: "google/gemini-2.5-flash", enabled: false, priority: 5, rateLimitPerSec: 3, timeoutMs: 15000, costPer1kTokens: 3 },
   // HuggingFace disabled: "fetch failed" in Vercel serverless.
   { id: "huggingface", name: "HuggingFace", envKey: "HUGGINGFACE_API_KEY", model: "HuggingFaceH4/zephyr-7b-beta", enabled: false, priority: 6, rateLimitPerSec: 2, timeoutMs: 20000, costPer1kTokens: 1 },
 ]

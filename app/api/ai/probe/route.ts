@@ -12,94 +12,109 @@ function isAuthorized(req: Request): boolean {
   return req.headers.get('authorization') === `Bearer ${token}`
 }
 
-async function compareGeminiPaths() {
-  const apiKey = process.env.GEMINI_API_KEY
-  const MODEL = "gemini-2.5-flash"
-  const PING = "Respond with exactly: ok"
-  const results: any[] = []
-  const rows: any[] = []
+async function queryModelsApi() {
+  const results: any = {}
+  const CK = process.env.CEREBRAS_API_KEY
+  const OK = process.env.OPENROUTER_API_KEY
 
-  function add(row: any) { rows.push(row) }
-
-  // PATH A: Gateway-style callProvider
-  const ta = Date.now()
-  add({ p:"gw", e:"attempt", t:0 })
-  try {
-    const { GoogleGenAI: G } = await import("@google/genai")
-    const ai = new G({ apiKey })
-    const r = await ai.models.generateContent({
-      model: MODEL, contents: [{ role: "user", parts: [{ text: PING }] }],
-      config: { temperature: 0.3, maxOutputTokens: 1024 },
-    })
-    const lat = Date.now() - ta
-    add({ p:"gw", e:"success", ms:lat, rlen:(r.text||"").length, tokIn:r.usageMetadata?.promptTokenCount, tokOut:r.usageMetadata?.candidatesTokenCount })
-    results.push({ path:"gateway", result:"success", latencyMs:lat, textLen:(r.text||"").length, tokensIn:r.usageMetadata?.promptTokenCount, tokensOut:r.usageMetadata?.candidatesTokenCount })
-  } catch (e: any) {
-    const lat = Date.now() - ta
-    const msg = e?.message || String(e)
-    add({ p:"gw", e:"failure", ms:lat, errName:e?.name, errMsg:msg.slice(0,500), errBody:msg.slice(0,1000) })
-    results.push({ path:"gateway", result:"failure", latencyMs:lat, errorName:e?.name, errorMessage:msg.slice(0,300) })
-  }
-
-  // PATH B: CV-parser-style parseCvWithGemini
-  const tb = Date.now()
-  add({ p:"cv", e:"attempt", t:0 })
-  try {
-    const { GoogleGenAI: G, Type: T } = await import("@google/genai")
-    const ai = new G({ apiKey })
-    const r = await ai.models.generateContent({
-      model: MODEL,
-      contents: [{ role: "user", parts: [{ text: `Source CV text:\n"""\n${PING}\n"""\n\nReturn JSON matching the schema.` }] }],
-      config: {
-        systemInstruction: "You are Nexa. Output strictly JSON.",
-        responseMimeType: "application/json",
-        responseSchema: { type: T.OBJECT, properties: { ok: { type: T.BOOLEAN } }, required: ["ok"] },
-        temperature: 0.75, maxOutputTokens: 3000,
-      },
-    })
-    const lat = Date.now() - tb
-    add({ p:"cv", e:"success", ms:lat, rlen:(r.text||"").length, tokIn:r.usageMetadata?.promptTokenCount, tokOut:r.usageMetadata?.candidatesTokenCount })
-    results.push({ path:"cvparser", result:"success", latencyMs:lat, textLen:(r.text||"").length, tokensIn:r.usageMetadata?.promptTokenCount, tokensOut:r.usageMetadata?.candidatesTokenCount })
-  } catch (e: any) {
-    const lat = Date.now() - tb
-    const msg = e?.message || String(e)
-    add({ p:"cv", e:"failure", ms:lat, errName:e?.name, errMsg:msg.slice(0,500), errBody:msg.slice(0,1000) })
-    results.push({ path:"cvparser", result:"failure", latencyMs:lat, errorName:e?.name, errorMessage:msg.slice(0,300) })
-  }
-
-  // Fire-and-forget persistence via Supabase REST
-  const base = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-  if (base && key) {
-    for (const r of rows) {
-      fetch(`${base}/rest/v1/ai_provider_log`, {
-        method: "POST",
-        headers: { "Content-Type":"application/json", "Authorization":`Bearer ${key}`, "apikey":key },
-        body: JSON.stringify({
-          agent_id: "compare:"+(r.p||""), provider: r.p==="gw"?"gemini-gateway":"gemini-cvparser",
-          model: MODEL, event: r.e,
-          duration_ms: r.ms ?? null, response_len: r.rlen ?? null, prompt_len: PING.length,
-          retry_count: 0, fallback_used: false,
-          error_code: r.errName ?? null, error_message: r.errMsg?.slice(0,500) ?? null, error_body: r.errBody?.slice(0,1000) ?? null,
-        }),
-      }).catch(()=>{})
+  if (CK) {
+    try {
+      const r = await fetch("https://api.cerebras.ai/v1/models", {
+        headers: { "Authorization": "Bearer " + CK },
+      })
+      const text = await r.text()
+      results.cerebras = { status: r.status, ok: r.ok }
+      try {
+        const j = JSON.parse(text)
+        results.cerebras.models = Array.isArray(j.data)
+          ? j.data.map((m: any) => ({ id: m.id }))
+          : j
+      } catch { results.cerebras.raw = text.slice(0, 2000) }
+    } catch (e: any) {
+      results.cerebras = { error: e?.message || String(e) }
     }
+  } else {
+    results.cerebras = { error: "CEREBRAS_API_KEY not configured" }
+  }
+
+  if (OK) {
+    try {
+      const r = await fetch("https://openrouter.ai/api/v1/models", {
+        headers: { "Authorization": "Bearer " + OK },
+      })
+      const text = await r.text()
+      results.openrouter = { status: r.status, ok: r.ok }
+      try {
+        const j = JSON.parse(text)
+        results.openrouter.models = Array.isArray(j.data)
+          ? j.data.map((m: any) => ({ id: m.id })).slice(0, 50)
+          : j
+      } catch { results.openrouter.raw = text.slice(0, 2000) }
+    } catch (e: any) {
+      results.openrouter = { error: e?.message || String(e) }
+    }
+  } else {
+    results.openrouter = { error: "OPENROUTER_API_KEY not configured" }
   }
 
   return results
 }
 
+async function testInference(provider: string, model: string) {
+  const apiKey = process.env[provider === "cerebras" ? "CEREBRAS_API_KEY" : "OPENROUTER_API_KEY"]
+  if (!apiKey) return { error: "No API key" }
+  const url = provider === "cerebras"
+    ? "https://api.cerebras.ai/v1/chat/completions"
+    : "https://openrouter.ai/api/v1/chat/completions"
+  const start = Date.now()
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "Say exactly: ok" }],
+        temperature: 0, max_tokens: 10,
+      }),
+    })
+    const text = await res.text()
+    const latency = Date.now() - start
+    if (!res.ok) {
+      return { provider, model, ok: false, status: res.status, latencyMs: latency, body: text.slice(0, 300) }
+    }
+    const j = JSON.parse(text)
+    return {
+      provider, model, ok: true, status: res.status, latencyMs: latency,
+      response: j.choices?.[0]?.message?.content || "",
+      modelUsed: j.model || model,
+      tokens: j.usage || null,
+    }
+  } catch (e: any) {
+    return { provider, model, ok: false, error: e?.message || String(e), latencyMs: Date.now() - start }
+  }
+}
+
 export async function POST(req: Request) {
   if (!isAuthorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const mode = new URL(req.url).searchParams.get('mode') || 'all'
-  if (mode === 'compare') {
+
+  if (mode === 'models') {
     const started = Date.now()
-    const results = await compareGeminiPaths()
-    return NextResponse.json({ ok: true, elapsedMs: Date.now() - started, results })
+    const result = await queryModelsApi()
+    return NextResponse.json({ ok: true, elapsedMs: Date.now() - started, ...result })
   }
+
+  if (mode === 'infer') {
+    const provider = new URL(req.url).searchParams.get('provider') || 'cerebras'
+    const model = new URL(req.url).searchParams.get('model') || ''
+    if (!model) return NextResponse.json({ error: 'model param required' }, { status: 400 })
+    const result = await testInference(provider, model)
+    return NextResponse.json({ ok: true, result })
+  }
+
   const started = Date.now()
-  const result = await probeAllProviders()
-  return NextResponse.json({ ok: true, elapsedMs: Date.now() - started, ...result })
+  const pr = await probeAllProviders()
+  return NextResponse.json({ ok: true, elapsedMs: Date.now() - started, ...pr })
 }
 
 export const GET = POST

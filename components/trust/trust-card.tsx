@@ -5,7 +5,7 @@ import type { TrustResult } from "@/lib/trust/types"
 import { getTrustLabel } from "@/lib/trust/engine"
 import { ShieldCheck, AlertTriangle, ChevronDown, Info, Check, AlertCircle } from "lucide-react"
 
-export function TrustCard({ trust }: { trust: TrustResult }) {
+export function TrustCard({ trust, legitimacyScore, aiConfidence }: { trust: TrustResult; legitimacyScore?: number | null; aiConfidence?: number | null }) {
   const [expanded, setExpanded] = useState(false)
   const { label, tone, color } = getTrustLabel(trust.score)
 
@@ -26,13 +26,13 @@ export function TrustCard({ trust }: { trust: TrustResult }) {
             </div>
             <div>
               <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500 flex items-center gap-1.5">
-                <ShieldCheck className="h-3 w-3" /> Nexa Trust Intelligence
+                <ShieldCheck className="h-3 w-3" /> Trust verification
               </p>
               <h3 className={`mt-1 text-[16px] font-semibold ${tone === "positive" ? "text-green-400" : tone === "warning" ? "text-red-300" : "text-yellow-300"}`}>
                 {label}
               </h3>
               <p className="mt-1 text-[12px] text-zinc-400">
-                Confidence: <span className="capitalize">{trust.confidence}</span> • Version {trust.version} • {trust.signals.length} signals checked
+                {legitimacyScore != null || aiConfidence != null ? (<>Listing legitimacy {legitimacyScore ?? trust.score} · Opportunity evidence {aiConfidence != null ? `${aiConfidence}%` : "pending"} · unified {trust.score}</>) : (<><span className="capitalize">{trust.confidence}</span> legitimacy · {trust.signals.length} signals checked</>)}
               </p>
             </div>
           </div>

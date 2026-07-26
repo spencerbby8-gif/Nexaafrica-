@@ -10,7 +10,7 @@ import { RoleViewTracker } from '@/components/role-view-tracker'
 import { EvidencePanel } from '@/components/evidence-panel'
 import { TrustCard } from '@/components/trust/trust-card'
 import { ReportButton } from '@/components/trust/report-button'
-import { calculateTrustScore } from '@/lib/trust/engine'
+import { calculateTrustScore, unifiedTrustScore } from '@/lib/trust/engine'
 import { employmentLabel, isFresh, postedLabel } from '@/lib/format'
 import { cleanDescription, getCleanMarkdownForRender } from '@/lib/cleanDescription'
 import type { Job } from '@/lib/types'
@@ -291,7 +291,7 @@ export function JobDetailLayout({
           // For SSR, this is pure and fast (<5ms)
           try {
             // @ts-ignore - allow optional fields
-            const trust = (job as any).trust_score != null && (job as any).trust_signals?.length
+            const detTrust = (job as any).trust_score != null && (job as any).trust_signals?.length
               ? {
                   score: (job as any).trust_score,
                   confidence: (job as any).trust_confidence || "medium",
@@ -302,9 +302,12 @@ export function JobDetailLayout({
                   isWarning: ((job as any).trust_score || 0) < 40,
                 }
               : calculateTrustScore(job)
+            // Unified: listing legitimacy blended with AI opportunity-evidence.
+            const aiConf = (aiIntelligence as any)?.overall_confidence ?? null
+            const trust = { ...(detTrust as any), score: unifiedTrustScore(job, aiIntelligence as any) }
             return (
               <>
-                <TrustCard trust={trust as any} />
+                <TrustCard trust={trust as any} legitimacyScore={(job as any).trust_score ?? detTrust.score} aiConfidence={aiConf} />
                 <div className="mt-4 flex justify-end">
                   <ReportButton jobId={job.id} jobSlug={job.slug} />
                 </div>

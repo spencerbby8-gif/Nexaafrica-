@@ -78,6 +78,40 @@ export function calculateTrustScore(job: Job, ctx?: TrustContext): TrustResult {
   }
 }
 
+
+/**
+ * UNIFIED trust score — one truth path.
+ *
+ * Nexa has two evidence layers:
+ *   1. Listing legitimacy (deterministic signals: ATS source, employer, freshness,
+ *      scam checks) -> the persisted jobs.trust_score.
+ *   2. Opportunity evidence (AI verifiers reading the live page: salary, Africa
+ *      eligibility, remote policy, company, experience) -> job_ai_intelligence.overall_confidence.
+ *
+ * Previously these were shown as TWO competing scores ("Trust 100" beside
+ * "Opportunity Intelligence 19%"), which contradicted. unifiedTrustScore blends
+ * them into a SINGLE honest score so a listing can never read as fully verified
+ * (100) while its opportunity is unverified. Legitimacy is real but is only half
+ * the picture; AI evidence depth is the other half.
+ *
+ *   no AI evidence yet  -> legitimacy * 0.6  (real listing, not yet analysed)
+ *   AI evidence present  -> legitimacy * 0.4 + evidence * 0.6
+ */
+export function unifiedTrustScore(
+  job: Job,
+  ai?: { overall_confidence?: number | null } | null,
+): number {
+  const legitimacyRaw = (job as any).trust_score
+  const legitimacy =
+    typeof legitimacyRaw === "number"
+      ? legitimacyRaw
+      : (calculateTrustScore(job).score ?? 50)
+  const evidence = ai?.overall_confidence
+  if (evidence == null) return Math.round(legitimacy * 0.4)
+  return Math.round(legitimacy * 0.4 + evidence * 0.6)
+}
+
+
 export function getTrustLabel(score: number): { label: string; tone: "positive" | "caution" | "warning"; color: string } {
   if (score >= 80) return { label: "Highly Trusted", tone: "positive", color: "text-green-400 border-green-500/30 bg-green-500/10" }
   if (score >= 60) return { label: "Trusted", tone: "positive", color: "text-emerald-300 border-emerald-500/30 bg-emerald-500/10" }

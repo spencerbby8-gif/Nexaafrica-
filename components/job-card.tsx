@@ -4,7 +4,7 @@ import { CompanyAvatar } from '@/components/company-avatar'
 import { employmentLabel, isFresh, postedLabel, relativeTime, salaryDisplay } from '@/lib/format'
 import { getJobCardExcerpt } from '@/lib/cleanDescription'
 import type { Job } from '@/lib/types'
-import { calculateTrustScore } from '@/lib/trust/engine'
+import { calculateTrustScore, unifiedTrustScore } from '@/lib/trust/engine'
 import { OpportunityIntelligenceSummary } from '@/components/opportunity-intelligence'
 import type { JobAIIntelligenceRow } from '@/lib/ai/queries'
 
@@ -74,8 +74,9 @@ export function JobCard({
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           {(() => {
             try {
-              const trust = (job as any).trust_score != null ? { score: (job as any).trust_score } : calculateTrustScore(job as any)
-              const score = (trust as any).score ?? (trust as any).trust_score ?? 0
+              // Unified trust: listing legitimacy (deterministic) blended with AI
+              // opportunity-evidence depth. Cannot show 100 while intelligence is vague.
+              const score = unifiedTrustScore(job as any, aiIntelligence as any)
               if (score >= 70) {
                 return <span className="inline-flex items-center gap-1 rounded-full border border-green-500/20 bg-green-500/10 px-2 py-0.5 text-[11px] text-green-300\">Trust {score}</span>
               }

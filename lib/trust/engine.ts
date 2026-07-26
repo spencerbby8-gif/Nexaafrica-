@@ -94,7 +94,7 @@ export function calculateTrustScore(job: Job, ctx?: TrustContext): TrustResult {
  * (100) while its opportunity is unverified. Legitimacy is real but is only half
  * the picture; AI evidence depth is the other half.
  *
- *   no AI evidence yet  -> legitimacy * 0.6  (real listing, not yet analysed)
+ *   no AI evidence yet  -> legitimacy * 0.4  (real listing, not yet analysed)
  *   AI evidence present  -> legitimacy * 0.4 + evidence * 0.6
  */
 export function unifiedTrustScore(

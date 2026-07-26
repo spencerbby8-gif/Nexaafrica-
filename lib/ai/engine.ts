@@ -259,23 +259,24 @@ export async function processAIQueue(batchSize = 100) {
       try {
         const { data: existing } = await supabase.from("job_ai_intelligence").select("model_version, overall_confidence").eq("job_id", job.id).maybeSingle()
         if (existing) {
-          // Allow overwrite when existing row has the old misleading constant
-          // ("gemini-2.5-flash-v1" — actually regex-based, no AI was called).
+          const jobId8 = (job as any).id?.slice(0,8) || ''
           const existingIsMisleading = existing.model_version === "gemini-2.5-flash-v1" || existing.model_version === "rule-based-v1-fast" || existing.model_version === "template-removed-2026";
           const existingIsReal = !existingIsMisleading && existing.model_version && !existing.model_version.includes("failed-no-evidence") && (existing.model_version.includes("gemini") || existing.model_version.includes("groq") || existing.model_version.includes("cerebras") || existing.model_version.includes("openrouter"))
           const newIsFailed = intelligence.modelVersion.includes("failed-no-evidence")
           if (existingIsReal && newIsFailed) {
+            console.log(JSON.stringify({ scope: "ai_engine", event: "protected_existing", jobId: jobId8, oldModel: existing.model_version, newModel: intelligence.modelVersion, reason: "existing_is_real_new_is_failed" }));
             await supabase.from("ai_processing_queue").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", item.id)
             processed++
             continue
           }
           if (existingIsReal && intelligence.overallConfidence < (existing.overall_confidence || 0) * 0.8) {
+            console.log(JSON.stringify({ scope: "ai_engine", event: "protected_existing", jobId: jobId8, oldConf: existing.overall_confidence, newConf: intelligence.overallConfidence, reason: "new_conf_too_low" }));
             await supabase.from("ai_processing_queue").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", item.id)
             processed++
             continue
           }
         }
-      } catch {}
+      } catch (e) { console.log(JSON.stringify({ scope: "ai_engine", event: "protect_check_error", jobId: (job as any).id?.slice(0,8) || '', error: e instanceof Error ? e.message.slice(0,100) : String(e).slice(0,100) })); }
 
       await supabase.from("job_ai_intelligence").upsert({
         job_id: job.id,

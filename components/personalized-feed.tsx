@@ -53,8 +53,8 @@ export async function PersonalizedFeed() {
       className="mx-auto max-w-6xl px-4 sm:px-6"
       aria-labelledby="matching-heading"
     >
-      <div className="flex items-end justify-between border-b border-border/60 pb-4">
-        <div>
+      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b border-border/60 pb-4">
+        <div className="min-w-0 flex-1">
           <h2
             id="matching-heading"
             className="text-lg font-semibold tracking-tight"
@@ -65,14 +65,14 @@ export async function PersonalizedFeed() {
         </div>
         <Link
           href="/jobs"
-          className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+          className="shrink-0 text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
           See more
         </Link>
       </div>
       <ul className="grid gap-3 py-6 sm:grid-cols-2 lg:grid-cols-3">
         {matched.map(({ job, reasons, score }) => (
-          <li key={job.id}>
+          <li key={job.id} className="min-w-0">
             <JobCard
               job={job}
               matchReasons={reasons}

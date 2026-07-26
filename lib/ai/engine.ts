@@ -84,12 +84,12 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
     },
     salary: {
       value: {
-        min: bundle?.salary?.min ?? job.salary_min,
-        max: bundle?.salary?.max ?? job.salary_max,
-        currency: bundle?.salary?.currency ?? job.salary_currency,
-        period: bundle?.salary?.period ?? job.salary_period,
+        min: bundle?.salary ? (bundle.salary.min ?? null) : (job.salary_min ?? null),
+        max: bundle?.salary ? (bundle.salary.max ?? null) : (job.salary_max ?? null),
+        currency: bundle?.salary ? (bundle.salary.currency ?? null) : (job.salary_currency ?? null),
+        period: bundle?.salary ? (bundle.salary.period ?? null) : (job.salary_period ?? null),
         isEstimated: bundle?.salary?.isEstimated ?? false,
-        transparency: bundle?.salary?.transparency || (job.salary_range ? "disclosed" as const : "unknown" as const),
+        transparency: bundle?.salary ? (bundle.salary.transparency || ("unknown" as const)) : (job.salary_range ? ("disclosed" as const) : ("unknown" as const)),
       },
       confidence: bundle?.salary?.confidence ?? (job.salary_range ? 70 : perJobLowConf()),
       evidence: bundle?.salary?.evidence ? [{ text: bundle.salary.evidence, url: job.apply_url, type: "job_description" as const }] : job.salary_range ? [{ text: job.salary_range, url: job.apply_url, type: "ats_metadata" as const }] : [],

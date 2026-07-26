@@ -4,20 +4,14 @@ export async function verifyCompanyLegitimacyReal(job: Job) {
   const hasLogo = !!job.company_logo
   const hasTrustedAts = job.apply_url.includes("greenhouse.io") || job.apply_url.includes("lever.co") || job.apply_url.includes("ashbyhq.com") || job.apply_url.includes("remoteok.com")
   let legitimacy: "verified" | "likely_legit" | "unknown" | "suspicious" = "unknown"
-  let confidence = 20
-  let evidence = "No logo nor trusted ATS"
-  if (hasLogo && hasTrustedAts) {
-    legitimacy = "verified"
-    confidence = 85
-    evidence = `Logo + trusted ATS ${new URL(job.apply_url).hostname}`
-  } else if (hasTrustedAts) {
-    legitimacy = "likely_legit"
-    confidence = 70
-    evidence = `ATS apply ${new URL(job.apply_url).hostname}`
-  } else if (hasLogo) {
+  let confidence = 15
+  let evidence = ""
+  // Truthful: a logo is NOT proof of legitimacy. Only a real ATS career page is a
+  // mild positive signal; we never claim "verified" from a logo alone.
+  if (hasTrustedAts) {
     legitimacy = "likely_legit"
     confidence = 60
-    evidence = "Company logo present"
+    evidence = `Real ATS career page (${new URL(job.apply_url).hostname})`
   }
   const lower = job.description_md.toLowerCase()
   if (/pay.*to.*apply|buy.*kit|telegram.*apply|whatsapp.*apply/i.test(lower)) {

@@ -128,6 +128,18 @@ export async function GET(req: Request) {
       unknown: aiExpUnknown.count,
     },
     providerHealth,
+    environment: {
+      GEMINI_API_KEY: !!process.env.GEMINI_API_KEY,
+      GEMINI_API_KEY_BACKUP: !!process.env.GEMINI_API_KEY_BACKUP,
+      GROQ_API_KEY: !!process.env.GROQ_API_KEY,
+      CEREBRAS_API_KEY: !!process.env.CEREBRAS_API_KEY,
+      OPENROUTER_API_KEY: !!process.env.OPENROUTER_API_KEY,
+      HUGGINGFACE_API_KEY: !!process.env.HUGGINGFACE_API_KEY,
+      anyProviderConfigured: [
+        'GEMINI_API_KEY', 'GEMINI_API_KEY_BACKUP', 'GROQ_API_KEY',
+        'CEREBRAS_API_KEY', 'OPENROUTER_API_KEY', 'HUGGINGFACE_API_KEY',
+      ].some(k => !!process.env[k]),
+    },
     checks: {
       queuePopulating: (queueTotal.count || 0) >= totalJobs * 0.9,
       aiRowCoverageHigh: coverage >= 80,

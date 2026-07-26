@@ -58,7 +58,7 @@ function classifyError(errMsg: string): {
 } {
   const msg = (errMsg || "").toLowerCase()
   const quota = msg.includes("429") || msg.includes("resource_exhausted") || msg.includes("quota exceeded") || msg.includes("exceeded your current quota")
-  const rate = msg.includes("rate_limit") || msg.includes("rate limit reached") || msg.includes("tokens per day")
+  const rate = msg.includes("rate_limit") || msg.includes("rate limit reached") || msg.includes("tokens per day") || msg.includes("requests per minute limit exceeded") || msg.includes("too_many_requests_error")
   const auth = msg.includes("401") || msg.includes("403") || msg.includes("invalid api key") || msg.includes("unauthorized")
   const nf = msg.includes("404") || msg.includes("model does not exist") || msg.includes("no endpoints found")
 
@@ -194,8 +194,9 @@ export function recordOrchFailure(id: ProviderId, errMsg: string) {
     // Auth/not-found errors are permanent — long cooldown
     s.cooldownUntil = Date.now() + 300_000 // 5 minutes
   } else {
-    // Generic failure — exponential backoff
-    const backoff = Math.min(Math.pow(2, s.consecutiveFailures) * 1000, 60_000)
+    // Generic failure — exponential backoff, but be more aggressive
+    // when failures are accumulating (multiple providers failing).
+    const backoff = Math.min(Math.pow(2, s.consecutiveFailures) * 2000, 300_000)
     s.cooldownUntil = Date.now() + backoff
   }
 }

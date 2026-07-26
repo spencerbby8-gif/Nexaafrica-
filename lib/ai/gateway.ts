@@ -86,10 +86,11 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
         messages: [...(req.systemInstruction?[{role:"system",content:req.systemInstruction}]:[]), {role:"user",content:req.prompt}],
         temperature: req.temperature??0.3, max_tokens: req.maxTokens??1024,
       }
-      // OpenRouter: force google-ai-studio routing (this key is only
-      // authorized for google-ai-studio/google-vertex, not together/deepinfra).
+      // OpenRouter: free-tier key routes through deepinfra.
+      // provider:{order:["deepinfra"]} overrides default routing.
+      // Model must be served by deepinfra: meta-llama/llama-4-maverick.
       if (providerId === "openrouter") {
-        body.provider = { order: ["google-ai-studio", "google-vertex"], allow_fallbacks: false }
+        body.provider = { order: ["deepinfra"], allow_fallbacks: false }
       }
       const res = await fetch(urls[providerId], {
         method: "POST",

@@ -1,6 +1,7 @@
 import { createServiceClient } from "@/lib/supabase/service"
 import type { Job } from "@/lib/types"
 import { AI_MODEL_VERSION, AI_INTELLIGENCE_VERSION, type JobAIIntelligence } from "./types"
+import type { ProviderCallDiag } from "./gateway"
 
 const cache = new Map<string, { result: JobAIIntelligence; timestamp: number }>()
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000
@@ -208,7 +209,7 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
   )
 
   setCachedIntelligence(job.id, result)
-  return result
+  return { intelligence: result, diags: (bundle?._diags || []) as ProviderCallDiag[] }
 }
 
 export async function processAIQueue(batchSize = 100) {
@@ -254,7 +255,9 @@ export async function processAIQueue(batchSize = 100) {
         failed++
         continue
       }
-      const intelligence = await enrichJobWithAI(job as any)
+      const aiResult = await enrichJobWithAI(job as any)
+      const intelligence = aiResult.intelligence
+      const diags = (aiResult as any).diags || []
 
       try {
         const { data: existing } = await supabase.from("job_ai_intelligence").select("model_version, overall_confidence").eq("job_id", job.id).maybeSingle()
@@ -320,6 +323,17 @@ export async function processAIQueue(batchSize = 100) {
         evidence_urls: intelligence.africa.sourceUrls,
         last_verified_at: new Date().toISOString(),
       }, { onConflict: "job_id" })
+      // Persist provider diagnostics for observability
+      if (diags.length > 0) {
+        for (const d of diags.slice(0, 100)) {
+          supabase.from("ai_provider_log").insert({
+            job_id: job.id, agent_id: "ai-queue", provider: d.provider, model: d.model, event: d.event,
+            http_status: d.httpStatus ?? null, error_code: d.errorCode ?? null, error_message: d.errorMessage?.slice(0,500) ?? null,
+            error_body: d.errorBody?.slice(0,1000) ?? null, retry_count: d.retryCount, duration_ms: d.durationMs ?? null,
+            prompt_len: d.promptLen ?? null, response_len: d.responseLen ?? null, fallback_used: d.retryCount > 0
+          }).catch(() => {})
+        }
+      }
       await supabase.from("ai_processing_queue").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", item.id)
       processed++
     } catch (e) {

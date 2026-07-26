@@ -5,6 +5,7 @@ import { verifyCompanyLegitimacyAI } from "./realCompanyLegitimacyAI"
 import { verifyJobQualityAI } from "./realJobQualityAI"
 import { verifyExperienceAndSkillsAI } from "./realExperienceAI"
 import { verifyFreshnessAI } from "./realFreshnessAI"
+import type { ProviderCallDiag } from "../gateway"
 
 export * from "./realAfricaEligibilityAI"
 export * from "./realSalaryAI"
@@ -22,18 +23,49 @@ export interface VerificationBundle {
   quality: Awaited<ReturnType<typeof verifyJobQualityAI>>
   experience: Awaited<ReturnType<typeof verifyExperienceAndSkillsAI>>
   freshness: Awaited<ReturnType<typeof verifyFreshnessAI>>
+  _diags: ProviderCallDiag[]
 }
 
-export async function verifyJobReal(job: any) {
+function catchFallback<T>(fallback: T, name: string, diagsCollector: ProviderCallDiag[]) {
+  return (e: any): T => {
+    if (e?.diag && Array.isArray(e.diag)) {
+      for (const d of e.diag) diagsCollector.push(d)
+    }
+    if (e?.diag) {
+      for (const d of e.diag) {
+        if (d.event === 'failure') {
+          console.log(JSON.stringify({
+            scope: "ai_verifier", verifier: name, provider: d.provider,
+            status: d.httpStatus, code: d.errorCode,
+            msg: (d.errorMessage || '').slice(0, 200)
+          }))
+        }
+      }
+    }
+    return fallback
+  }
+}
+
+export async function verifyJobReal(job: any): Promise<VerificationBundle> {
+  const diags: ProviderCallDiag[] = []
+
+  const fallbackAfrica: any = { eligibility: "unknown", confidence: 10, evidence: "Failed", countryRestrictions: [], visaSponsorship: "unknown", languageRequirements: [], sourceUrls: [job.apply_url], lastVerified: new Date().toISOString(), modelVersion: "error" }
+  const fallbackSalary: any = { min: null, max: null, currency: null, period: null, isEstimated: false, transparency: "unknown", confidence: 10, evidence: "Failed", sourceUrls: [job.apply_url], lastVerified: new Date().toISOString(), modelVersion: "error" }
+  const fallbackRemote: any = { eligibility: "unknown", confidence: 10, evidence: "Failed", sourceUrls: [job.apply_url], lastVerified: new Date().toISOString(), modelVersion: "error" }
+  const fallbackCompany: any = { legitimacy: "unknown", confidence: 10, evidence: "Failed", sourceUrls: [job.apply_url], lastVerified: new Date().toISOString(), modelVersion: "error" }
+  const fallbackQuality: any = { quality: "unknown", confidence: 10, evidence: "Failed", reasons: [], sourceUrls: [job.apply_url], lastVerified: new Date().toISOString(), modelVersion: "error" }
+  const fallbackExp: any = { experience: { value: "unknown", confidence: 10 }, requiredSkills: { value: [], confidence: 10 }, transferableSkills: { value: [] }, missingSkills: { value: [] } }
+  const fallbackFresh: any = { status: "unknown", confidence: 10, evidence: "Failed", sourceUrls: [job.apply_url], lastVerified: new Date().toISOString(), modelVersion: "error" }
+
   const [africa, salary, remote, company, quality, experience, freshness] = await Promise.all([
-    verifyAfricaEligibilityAI(job).catch(() => ({ eligibility: "unknown", confidence: 10, evidence: "Failed", countryRestrictions: [], visaSponsorship: "unknown", languageRequirements: [], sourceUrls: [job.apply_url], lastVerified: new Date().toISOString(), modelVersion: "error" } as any)),
-    verifySalaryAI(job).catch(() => ({ min: null, max: null, currency: null, period: null, isEstimated: false, transparency: "unknown", confidence: 10, evidence: "Failed", sourceUrls: [job.apply_url], lastVerified: new Date().toISOString(), modelVersion: "error" } as any)),
-    verifyRemotePolicyAI(job).catch(() => ({ eligibility: "unknown", confidence: 10, evidence: "Failed", sourceUrls: [job.apply_url], lastVerified: new Date().toISOString(), modelVersion: "error" } as any)),
-    verifyCompanyLegitimacyAI(job).catch(() => ({ legitimacy: "unknown", confidence: 10, evidence: "Failed", sourceUrls: [job.apply_url], lastVerified: new Date().toISOString(), modelVersion: "error" } as any)),
-    verifyJobQualityAI(job).catch(() => ({ quality: "unknown", confidence: 10, evidence: "Failed", reasons: [], sourceUrls: [job.apply_url], lastVerified: new Date().toISOString(), modelVersion: "error" } as any)),
-    verifyExperienceAndSkillsAI(job).catch(() => ({ experience: { value: "unknown", confidence: 10 }, requiredSkills: { value: [], confidence: 10 }, transferableSkills: { value: [] }, missingSkills: { value: [] } } as any)),
-    verifyFreshnessAI(job).catch(() => ({ status: "unknown", confidence: 10, evidence: "Failed", sourceUrls: [job.apply_url], lastVerified: new Date().toISOString(), modelVersion: "error" } as any)),
+    verifyAfricaEligibilityAI(job).catch(catchFallback(fallbackAfrica, "africa", diags)),
+    verifySalaryAI(job).catch(catchFallback(fallbackSalary, "salary", diags)),
+    verifyRemotePolicyAI(job).catch(catchFallback(fallbackRemote, "remote", diags)),
+    verifyCompanyLegitimacyAI(job).catch(catchFallback(fallbackCompany, "company", diags)),
+    verifyJobQualityAI(job).catch(catchFallback(fallbackQuality, "quality", diags)),
+    verifyExperienceAndSkillsAI(job).catch(catchFallback(fallbackExp, "experience", diags)),
+    verifyFreshnessAI(job).catch(catchFallback(fallbackFresh, "freshness", diags)),
   ])
 
-  return { africa, salary, remote, company, quality, experience, freshness }
+  return { africa, salary, remote, company, quality, experience, freshness, _diags: diags }
 }

@@ -168,7 +168,9 @@ export async function aiGateway(req: AIRequest): Promise<GatewayResult> {
     }
   }
   gwLog(req.jobId, req.agentId, "all_providers_failed", { tried: fallbackChain.join(','), lastError: lastError instanceof Error ? lastError.message.slice(0,200) : String(lastError).slice(0,200) })
-  throw new Error(`All AI providers failed. Tried: ${fallbackChain.join(', ')}`)
+  const err = new Error(`All AI providers failed. Tried: ${fallbackChain.join(', ')}`) as any;
+  err.diag = diag; // attach diagnostics so caller can persist them
+  throw err;
 }
 
 export async function aiCouncil(

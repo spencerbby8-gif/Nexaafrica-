@@ -52,10 +52,35 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
     return (idSum + job.description_md.length) % 11 // 0-10
   }
 
+  // Compute honest modelVersion from verifier results instead of the
+  // hardcoded AI_MODEL_VERSION constant. Each verifier tags its own
+  // modelVersion (e.g. "groq:llama-3.3-70b-versatile"). Collect unique
+  // non-failed values so the stored model_version column reflects which
+  // providers actually served the intelligence.
+  const verifierModels = new Set<string>();
+  const modelSources = [
+    bundle?.africa?.modelVersion,
+    bundle?.salary?.modelVersion,
+    bundle?.remote?.modelVersion,
+    bundle?.company?.modelVersion,
+    bundle?.quality?.modelVersion,
+    bundle?.freshness?.modelVersion,
+    bundle?.experience?.experience?.modelVersion,
+  ];
+  for (const mv of modelSources) {
+    if (mv && mv !== 'error' && !mv.includes('failed-no-evidence')) {
+      verifierModels.add(mv);
+    }
+  }
+  const realModelVersion =
+    verifierModels.size > 0
+      ? Array.from(verifierModels).sort().join(', ')
+      : AI_MODEL_VERSION;
+
   const result: JobAIIntelligence = {
     jobId: job.id,
     version: AI_INTELLIGENCE_VERSION,
-    modelVersion: AI_MODEL_VERSION,
+    modelVersion: realModelVersion,
     africa: {
       value: bundle?.africa?.eligibility || "unknown",
       confidence: bundle?.africa?.confidence ?? perJobLowConf(),

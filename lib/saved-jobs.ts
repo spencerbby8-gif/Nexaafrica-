@@ -1,9 +1,10 @@
 import 'server-only'
 import { createClient } from '@/lib/supabase/server'
 import type { Job } from '@/lib/types'
+import { getAIIntelligenceForJobs, type JobWithAI } from '@/lib/ai/queries'
 
 const JOB_COLUMNS =
-  'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, employment_type, tags, is_remote, is_open_to_africa, created_at, expires_at'
+  'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, salary_min, salary_max, salary_currency, salary_period, employment_type, intelligence, tags, is_remote, is_open_to_africa, eligibility, posted_at, created_at, expires_at, trust_score, trust_confidence, trust_signals, trust_version, is_flagged, flagged_reason, source, source_id'
 
 /**
  * Returns the set of job ids the current user has saved.
@@ -53,7 +54,7 @@ export async function isJobSaved(jobId: string): Promise<boolean> {
  * Returns the user's saved jobs, newest-saved first.
  * Hides jobs that have been deactivated since saving.
  */
-export async function getSavedJobs(): Promise<Job[]> {
+export async function getSavedJobs(): Promise<JobWithAI<Job>[]> {
   const supabase = await createClient()
   const {
     data: { user },
@@ -73,7 +74,16 @@ export async function getSavedJobs(): Promise<Job[]> {
     return []
   }
   // Supabase's typed inner-join returns `jobs` as a single object here.
-  return (data ?? []).map((row) => (row as unknown as { jobs: Job }).jobs)
+  const jobs = (data ?? []).map((row) => (row as unknown as { jobs: Job }).jobs)
+  // Enrich with AI intelligence so saved cards render the REAL result (not Pending)
+  // exactly like the Home/Jobs feeds (getJobsWithAI).
+  if (jobs.length === 0) return []
+  try {
+    const aiMap = await getAIIntelligenceForJobs(jobs.map((j) => j.id))
+    return jobs.map((j) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null }))
+  } catch {
+    return jobs.map((j) => ({ ...j, aiIntelligence: null }))
+  }
 }
 
 export async function getSavedJobsCount(): Promise<number> {

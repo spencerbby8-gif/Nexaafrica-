@@ -240,6 +240,31 @@ export async function POST(req: Request) {
       skills: parsed.skills.length,
       experience: parsed.experience.length,
     })
+    // ---- 10.5. Cerebras review (best-effort, non-fatal) -----------------
+    const tCerebras = Date.now()
+    logStep(reqId, "cerebras_review_start", { userId })
+    let reviewedBy = geminiModel
+    try {
+      const { reviewCVWithCerebras } = await import("@/lib/profile/cerebrasReview")
+      const reviewed = await reviewCVWithCerebras(parsed, text)
+      if (reviewed !== parsed) {
+        parsed = reviewed
+        reviewedBy = geminiModel + "+cerebras-review"
+        logStep(reqId, "cerebras_review_success", {
+          userId, ms: Date.now() - tCerebras,
+          skills: parsed.skills.length, experience: parsed.experience.length,
+        })
+      } else {
+        logStep(reqId, "cerebras_review_skipped", {
+          userId, ms: Date.now() - tCerebras,
+          reason: "Cerebras returned unchanged output or was unavailable",
+        })
+      }
+    } catch (e) {
+      logStep(reqId, "cerebras_review_failed_nonfatal", {
+        userId, ms: Date.now() - tCerebras, err: errMsg(e),
+      })
+    }
 
     // ---- 11. Persist profile -------------------------------------------
     logStep(reqId, "profile_save_start", {
@@ -296,7 +321,7 @@ export async function POST(req: Request) {
     const aiMeta = await supabase.from("profile_ai_metadata").upsert(
       {
         profile_id: userId,
-        model: geminiModel,
+        model: reviewedBy,
         prompt_version: promptVersion,
         raw_text_chars: text.length,
         tokens_input: tokensInput ?? null,

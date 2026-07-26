@@ -44,7 +44,7 @@ function gwLog(jobId: string | undefined, agentId: string, event: string, data: 
   try { console.log(JSON.stringify({ scope:"ai_gateway", ts:Date.now(), jobId:jobId||'-', agentId, event, ...data })); } catch {}
 }
 
-async function callProvider(providerId: ProviderId, req: AIRequest, retryCount: number, diag: ProviderCallDiag[]): Promise<AIResponse> {
+export async function callProvider(providerId: ProviderId, req: AIRequest, retryCount: number, diag: ProviderCallDiag[]): Promise<AIResponse> {
   const cfg = PROVIDERS.find(p => p.id === providerId)
   if (!cfg) throw new Error(`Provider ${providerId} not found`)
   const apiKey = process.env[cfg.envKey]
@@ -152,31 +152,23 @@ export async function aiGateway(req: AIRequest): Promise<GatewayResult> {
   const cached = cache.get(key)
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) return cached.result
 
-  const providersToTry = getHealthyProviders().length > 0 ? getHealthyProviders() : PROVIDERS.filter(p => p.enabled)
-  let lastError: any = null
-  const fallbackChain: ProviderId[] = []
-  const diag: ProviderCallDiag[] = []
-
-  for (let i = 0; i < providersToTry.length; i++) {
-    const provider = providersToTry[i]
-    fallbackChain.push(provider.id as ProviderId)
+  // Delegate to health-aware orchestrator instead of sequential failover
+  try {
+    const { orchestrate } = await import("./orchestrator")
+    const result = await orchestrate(req)
+    cache.set(key, { result, timestamp: Date.now() })
     try {
-      const response = await callProvider(provider.id as ProviderId, req, i, diag)
-      recordSuccess(provider.id as ProviderId, response.latencyMs)
-      const result: GatewayResult = { response, fallbackUsed: i > 0, fallbackChain, diag }
-      cache.set(key, { result, timestamp: Date.now() })
-      try { const { logAudit } = await import("./audit/logger"); await logAudit({ decision:`AI Gateway success via ${provider.id}`, evidence:[req.prompt.slice(0,200)], model:provider.model, confidence:80, action:"allow", jobId:req.jobId }) } catch {}
-      return result
-    } catch (e) {
-      recordFailure(provider.id as ProviderId, e instanceof Error ? e.message : String(e))
-      lastError = e
-      continue
+      const { logAudit } = await import("./audit/logger")
+      await logAudit({ decision: `AI Gateway success via ${result.response.provider}`, evidence:[req.prompt.slice(0,200)], model:result.response.model, confidence:80, action:"allow", jobId:req.jobId })
+    } catch {}
+    return result
+  } catch (e: any) {
+    if (e?.diag) {
+      gwLog(req.jobId, req.agentId, "all_providers_unhealthy", { error: e.message?.slice(0,200) || "unknown" })
     }
+    throw e
   }
-  gwLog(req.jobId, req.agentId, "all_providers_failed", { tried: fallbackChain.join(','), lastError: lastError instanceof Error ? lastError.message.slice(0,200) : String(lastError).slice(0,200) })
-  const err = new Error(`All AI providers failed. Tried: ${fallbackChain.join(', ')}`) as any;
-  err.diag = diag; // attach diagnostics so caller can persist them
-  throw err;
+
 }
 
 export async function aiCouncil(

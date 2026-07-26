@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { getOrchHealth } from '@/lib/ai/orchestrator'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -75,6 +76,8 @@ export async function GET(req: Request) {
     const { getAllProviderHealth } = await import('@/lib/ai/providers/manager')
     providerHealth = getAllProviderHealth()
   } catch {}
+  let orchHealth: any[] = []
+  try { orchHealth = getOrchHealth() } catch {}
 
   // Rendering coverage check – sample recent jobs and see if they have AI
   const { data: recentJobs } = await supabase.from('jobs').select('id, slug').eq('is_active', true).order('posted_at', { ascending: false }).limit(20)
@@ -128,6 +131,7 @@ export async function GET(req: Request) {
       unknown: aiExpUnknown.count,
     },
     providerHealth,
+    orchHealth,
     checks: {
       queuePopulating: (queueTotal.count || 0) >= totalJobs * 0.9,
       aiRowCoverageHigh: coverage >= 80,

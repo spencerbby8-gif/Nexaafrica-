@@ -165,36 +165,12 @@ export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIn
     return (idSum + job.description_md.length) % 11 // 0-10
   }
 
-  // Compute honest modelVersion from verifier results instead of the
-  // hardcoded AI_MODEL_VERSION constant. Each verifier tags its own
-  // modelVersion (e.g. "groq:llama-3.3-70b-versatile"). Collect unique
-  // non-failed values so the stored model_version column reflects which
-  // providers actually served the intelligence.
-  //
-  // When no real AI model was used (all verifiers returned regex-extracted
-  // or failed-no-evidence), the fallback is "no-ai-providers" rather than
-  // the old misleading constant "gemini-2.5-flash-v1".
-  const verifierModels = new Set<string>();
-  const modelSources = [
-    bundle?.africa?.modelVersion,
-    bundle?.salary?.modelVersion,
-    bundle?.remote?.modelVersion,
-    bundle?.company?.modelVersion,
-    bundle?.quality?.modelVersion,
-    bundle?.freshness?.modelVersion,
-    bundle?.experience?.experience?.modelVersion,
-  ];
-  for (const mv of modelSources) {
-    if (mv && mv !== 'error' && !mv.includes('failed-no-evidence')) {
-      verifierModels.add(mv);
-    }
-  }
-  const realModelVersion =
-    verifierModels.size > 0
-      ? Array.from(verifierModels).sort().join(', ')
-      : Object.keys(bundle).length > 0
-        ? "no-ai-providers"
-        : AI_MODEL_VERSION;
+  // modelVersion now comes directly from the consolidated verifier
+  // (extractWithSingleAI). It records the actual provider:model that produced
+  // the result, or "regex-extracted-Nbytes" / "no-ai-providers" when AI
+  // was not used. No more collecting tags from 7 independent verifier calls.
+  const realModelVersion = bundle?._consolidated?.modelVersion
+    || (Object.keys(bundle).length > 0 ? "no-ai-providers" : AI_MODEL_VERSION);
 
   const result: JobAIIntelligence = {
     jobId: job.id,

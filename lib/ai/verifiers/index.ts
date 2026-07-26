@@ -1,71 +1,95 @@
-import { verifyAfricaEligibilityAI } from "./realAfricaEligibilityAI"
-import { verifySalaryAI } from "./realSalaryAI"
-import { verifyRemotePolicyAI } from "./realRemoteAI"
-import { verifyCompanyLegitimacyAI } from "./realCompanyLegitimacyAI"
-import { verifyJobQualityAI } from "./realJobQualityAI"
-import { verifyExperienceAndSkillsAI } from "./realExperienceAI"
-import { verifyFreshnessAI } from "./realFreshnessAI"
 import type { ProviderCallDiag } from "../gateway"
-
-export * from "./realAfricaEligibilityAI"
-export * from "./realSalaryAI"
-export * from "./realRemoteAI"
-export * from "./realCompanyLegitimacyAI"
-export * from "./realJobQualityAI"
-export * from "./realExperienceAI"
-export * from "./realFreshnessAI"
+import type { Job } from "@/lib/types"
+import { extractWithSingleAI, type ConsolidatedResult } from "./consolidated"
 
 export interface VerificationBundle {
-  africa: Awaited<ReturnType<typeof verifyAfricaEligibilityAI>>
-  salary: Awaited<ReturnType<typeof verifySalaryAI>>
-  remote: Awaited<ReturnType<typeof verifyRemotePolicyAI>>
-  company: Awaited<ReturnType<typeof verifyCompanyLegitimacyAI>>
-  quality: Awaited<ReturnType<typeof verifyJobQualityAI>>
-  experience: Awaited<ReturnType<typeof verifyExperienceAndSkillsAI>>
-  freshness: Awaited<ReturnType<typeof verifyFreshnessAI>>
-  _diags: ProviderCallDiag[]
+  africa: any; salary: any; remote: any; company: any; quality: any;
+  experience: any; freshness: any; _diags: ProviderCallDiag[];
+  _consolidated: ConsolidatedResult | null;
 }
 
-function catchFallback<T>(fallback: T, name: string, diagsCollector: ProviderCallDiag[]) {
-  return (e: any): T => {
-    if (e?.diag && Array.isArray(e.diag)) {
-      for (const d of e.diag) diagsCollector.push(d)
-    }
-    if (e?.diag) {
-      for (const d of e.diag) {
-        if (d.event === 'failure') {
-          console.log(JSON.stringify({
-            scope: "ai_verifier", verifier: name, provider: d.provider,
-            status: d.httpStatus, code: d.errorCode,
-            msg: (d.errorMessage || '').slice(0, 200)
-          }))
-        }
-      }
-    }
-    return fallback
+export async function verifyJobReal(job: Job): Promise<VerificationBundle> {
+  const consolidated = await extractWithSingleAI(job)
+  const { ai, diags, modelVersion } = consolidated
+  const now = new Date().toISOString()
+
+  // Map consolidated AI output to the legacy bundle format expected by enrichJobWithAI
+  return {
+    africa: {
+      eligibility: ai.africa_eligibility,
+      confidence: ai.africa_confidence,
+      evidence: ai.africa_evidence || "",
+      countryRestrictions: ai.country_restrictions,
+      visaSponsorship: ai.visa_sponsorship,
+      languageRequirements: [],
+      sourceUrls: [job.apply_url],
+      lastVerified: now,
+      modelVersion,
+    },
+    salary: {
+      min: ai.salary_min,
+      max: ai.salary_max,
+      currency: ai.salary_currency,
+      period: ai.salary_period,
+      isEstimated: ai.salary_is_estimated,
+      transparency: ai.salary_transparency,
+      confidence: ai.salary_confidence,
+      evidence: ai.salary_evidence || "",
+      sourceUrls: [job.apply_url],
+      lastVerified: now,
+      modelVersion,
+    },
+    remote: {
+      eligibility: ai.remote_eligibility,
+      confidence: ai.remote_confidence,
+      evidence: ai.remote_evidence || "",
+      timezoneRequirements: ai.timezone_requirements,
+      travelRequirements: undefined,
+      asyncFlexibility: false,
+      sourceUrls: [job.apply_url],
+      lastVerified: now,
+      modelVersion,
+    },
+    company: {
+      legitimacy: ai.company_legitimacy,
+      confidence: ai.company_confidence,
+      evidence: ai.company_evidence || "",
+      reason: "",
+      sourceUrls: [job.apply_url],
+      lastVerified: now,
+      modelVersion,
+    },
+    quality: {
+      quality: ai.job_quality,
+      confidence: ai.job_quality_confidence,
+      evidence: ai.job_quality_evidence || "",
+      reasons: [],
+      sourceUrls: [job.apply_url],
+      lastVerified: now,
+      modelVersion,
+    },
+    experience: {
+      experience: { value: ai.experience_level, confidence: ai.experience_confidence, evidence: "", sourceUrls: [job.apply_url], lastVerified: now, modelVersion },
+      requiredSkills: { value: ai.required_skills, confidence: ai.experience_confidence, evidence: "", sourceUrls: [job.apply_url], lastVerified: now, modelVersion },
+      transferableSkills: { value: ai.transferable_skills || [], confidence: 20 },
+      missingSkills: { value: ai.missing_skills || [], confidence: 10 },
+    },
+    freshness: {
+      status: ai.hiring_urgency === "high" ? "active" : ai.hiring_urgency === "low" ? "stale" : "unknown",
+      confidence: ai.hiring_urgency_confidence,
+      evidence: pageFetchedEvidence(consolidated),
+      postedAgeDays: null,
+      lastSeenAgeDays: null,
+      sourceUrls: [job.apply_url],
+      lastVerified: now,
+      modelVersion,
+    },
+    _diags: diags,
+    _consolidated: consolidated,
   }
 }
 
-export async function verifyJobReal(job: any): Promise<VerificationBundle> {
-  const diags: ProviderCallDiag[] = []
-
-  const fallbackAfrica: any = { eligibility: "unknown", confidence: 10, evidence: "Failed", countryRestrictions: [], visaSponsorship: "unknown", languageRequirements: [], sourceUrls: [job.apply_url], lastVerified: new Date().toISOString(), modelVersion: "error" }
-  const fallbackSalary: any = { min: null, max: null, currency: null, period: null, isEstimated: false, transparency: "unknown", confidence: 10, evidence: "Failed", sourceUrls: [job.apply_url], lastVerified: new Date().toISOString(), modelVersion: "error" }
-  const fallbackRemote: any = { eligibility: "unknown", confidence: 10, evidence: "Failed", sourceUrls: [job.apply_url], lastVerified: new Date().toISOString(), modelVersion: "error" }
-  const fallbackCompany: any = { legitimacy: "unknown", confidence: 10, evidence: "Failed", sourceUrls: [job.apply_url], lastVerified: new Date().toISOString(), modelVersion: "error" }
-  const fallbackQuality: any = { quality: "unknown", confidence: 10, evidence: "Failed", reasons: [], sourceUrls: [job.apply_url], lastVerified: new Date().toISOString(), modelVersion: "error" }
-  const fallbackExp: any = { experience: { value: "unknown", confidence: 10 }, requiredSkills: { value: [], confidence: 10 }, transferableSkills: { value: [] }, missingSkills: { value: [] } }
-  const fallbackFresh: any = { status: "unknown", confidence: 10, evidence: "Failed", sourceUrls: [job.apply_url], lastVerified: new Date().toISOString(), modelVersion: "error" }
-
-  const [africa, salary, remote, company, quality, experience, freshness] = await Promise.all([
-    verifyAfricaEligibilityAI(job).catch(catchFallback(fallbackAfrica, "africa", diags)),
-    verifySalaryAI(job).catch(catchFallback(fallbackSalary, "salary", diags)),
-    verifyRemotePolicyAI(job).catch(catchFallback(fallbackRemote, "remote", diags)),
-    verifyCompanyLegitimacyAI(job).catch(catchFallback(fallbackCompany, "company", diags)),
-    verifyJobQualityAI(job).catch(catchFallback(fallbackQuality, "quality", diags)),
-    verifyExperienceAndSkillsAI(job).catch(catchFallback(fallbackExp, "experience", diags)),
-    verifyFreshnessAI(job).catch(catchFallback(fallbackFresh, "freshness", diags)),
-  ])
-
-  return { africa, salary, remote, company, quality, experience, freshness, _diags: diags }
+function pageFetchedEvidence(c: ConsolidatedResult): string {
+  if (c.pageFetched) return `Job page fetched (${c.pageLen} bytes), AI used: ${c.aiUsed}`
+  return "Job page not fetched"
 }

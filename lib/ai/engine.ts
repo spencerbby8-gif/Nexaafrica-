@@ -322,16 +322,17 @@ export async function processAIQueue(batchSize = 100) {
         evidence_urls: intelligence.africa.sourceUrls,
         last_verified_at: new Date().toISOString(),
       }, { onConflict: "job_id" })
-      // Persist provider diagnostics for observability
+      // Persist provider diagnostics (batch insert)
       if (diags.length > 0) {
-        for (const d of diags.slice(0, 100)) {
-          supabase.from("ai_provider_log").insert({
+        const diagRows = diags.slice(0, 100).map(function(d: any) {
+          return {
             job_id: job.id, agent_id: "ai-queue", provider: d.provider, model: d.model, event: d.event,
-            http_status: d.httpStatus ?? null, error_code: d.errorCode ?? null, error_message: d.errorMessage?.slice(0,500) ?? null,
-            error_body: d.errorBody?.slice(0,1000) ?? null, retry_count: d.retryCount, duration_ms: d.durationMs ?? null,
-            prompt_len: d.promptLen ?? null, response_len: d.responseLen ?? null, fallback_used: d.retryCount > 0
-          }).catch(() => {})
-        }
+            http_status: d.httpStatus || null, error_code: d.errorCode || null, error_message: (d.errorMessage||"").slice(0,500) || null,
+            error_body: (d.errorBody||"").slice(0,1000) || null, retry_count: d.retryCount, duration_ms: d.durationMs || null,
+            prompt_len: d.promptLen || null, response_len: d.responseLen || null, fallback_used: d.retryCount > 0
+          };
+        });
+        supabase.from("ai_provider_log").insert(diagRows).then(function(){}, function(){});
       }
       await supabase.from("ai_processing_queue").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", item.id)
       processed++

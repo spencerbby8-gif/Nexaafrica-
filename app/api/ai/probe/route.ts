@@ -12,55 +12,7 @@ function isAuthorized(req: Request): boolean {
   return req.headers.get('authorization') === `Bearer ${token}`
 }
 
-async function queryModelsApi() {
-  const results: any = {}
-  const CK = process.env.CEREBRAS_API_KEY
-  const OK = process.env.OPENROUTER_API_KEY
-
-  if (CK) {
-    try {
-      const r = await fetch("https://api.cerebras.ai/v1/models", {
-        headers: { "Authorization": "Bearer " + CK },
-      })
-      const text = await r.text()
-      results.cerebras = { status: r.status, ok: r.ok }
-      try {
-        const j = JSON.parse(text)
-        results.cerebras.models = Array.isArray(j.data)
-          ? j.data.map((m: any) => ({ id: m.id }))
-          : j
-      } catch { results.cerebras.raw = text.slice(0, 2000) }
-    } catch (e: any) {
-      results.cerebras = { error: e?.message || String(e) }
-    }
-  } else {
-    results.cerebras = { error: "CEREBRAS_API_KEY not configured" }
-  }
-
-  if (OK) {
-    try {
-      const r = await fetch("https://openrouter.ai/api/v1/models", {
-        headers: { "Authorization": "Bearer " + OK },
-      })
-      const text = await r.text()
-      results.openrouter = { status: r.status, ok: r.ok }
-      try {
-        const j = JSON.parse(text)
-        results.openrouter.models = Array.isArray(j.data)
-          ? j.data.map((m: any) => ({ id: m.id })).slice(0, 50)
-          : j
-      } catch { results.openrouter.raw = text.slice(0, 2000) }
-    } catch (e: any) {
-      results.openrouter = { error: e?.message || String(e) }
-    }
-  } else {
-    results.openrouter = { error: "OPENROUTER_API_KEY not configured" }
-  }
-
-  return results
-}
-
-async function testInference(provider: string, model: string) {
+async function testInference(provider: string, model: string, opts?: any) {
   const apiKey = process.env[provider === "cerebras" ? "CEREBRAS_API_KEY" : "OPENROUTER_API_KEY"]
   if (!apiKey) return { error: "No API key" }
   const url = provider === "cerebras"
@@ -68,27 +20,18 @@ async function testInference(provider: string, model: string) {
     : "https://openrouter.ai/api/v1/chat/completions"
   const start = Date.now()
   try {
+    const body: any = { model, messages: [{ role: "user", content: "Say exactly: ok" }], temperature: 0, max_tokens: 10 }
+    if (opts) Object.assign(body, opts)
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: "Say exactly: ok" }],
-        temperature: 0, max_tokens: 10,
-      }),
+      body: JSON.stringify(body),
     })
     const text = await res.text()
     const latency = Date.now() - start
-    if (!res.ok) {
-      return { provider, model, ok: false, status: res.status, latencyMs: latency, body: text.slice(0, 300) }
-    }
+    if (!res.ok) return { provider, model, ok: false, status: res.status, latencyMs: latency, body: text.slice(0, 500) }
     const j = JSON.parse(text)
-    return {
-      provider, model, ok: true, status: res.status, latencyMs: latency,
-      response: j.choices?.[0]?.message?.content || "",
-      modelUsed: j.model || model,
-      tokens: j.usage || null,
-    }
+    return { provider, model, ok: true, status: res.status, latencyMs: latency, response: j.choices?.[0]?.message?.content || "", modelUsed: j.model || model, tokens: j.usage || null }
   } catch (e: any) {
     return { provider, model, ok: false, error: e?.message || String(e), latencyMs: Date.now() - start }
   }
@@ -98,18 +41,50 @@ export async function POST(req: Request) {
   if (!isAuthorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const mode = new URL(req.url).searchParams.get('mode') || 'all'
 
-  if (mode === 'models') {
-    const started = Date.now()
-    const result = await queryModelsApi()
-    return NextResponse.json({ ok: true, elapsedMs: Date.now() - started, ...result })
-  }
-
   if (mode === 'infer') {
     const provider = new URL(req.url).searchParams.get('provider') || 'cerebras'
     const model = new URL(req.url).searchParams.get('model') || ''
     if (!model) return NextResponse.json({ error: 'model param required' }, { status: 400 })
     const result = await testInference(provider, model)
     return NextResponse.json({ ok: true, result })
+  }
+
+  // OpenRouter diagnostic: test multiple models and provider routing variants
+  if (mode === 'ordiag') {
+    const results: any[] = []
+    const apiKey = process.env.OPENROUTER_API_KEY
+    if (!apiKey) return NextResponse.json({ error: "OPENROUTER_API_KEY not set" })
+
+    // Test various models, provider routing combinations
+    const tests = [
+      // Variant 1: no provider hint
+      { model: "google/gemini-3.6-flash" },
+      // Variant 2: provider routes in body
+      { model: "google/gemini-3.6-flash", provider: { order: ["google-ai-studio", "google-vertex"], allow_fallbacks: true } },
+      // Variant 3: different model
+      { model: "google/gemini-3.5-flash-lite", provider: { order: ["google-ai-studio", "google-vertex"], allow_fallbacks: true } },
+      // Variant 4: try a non-Google model from the model list
+      { model: "moonshotai/kimi-k3" },
+    ]
+
+    for (const t of tests) {
+      try {
+        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey },
+          body: JSON.stringify({
+            ...t,
+            messages: [{ role: "user", content: "Hi" }],
+            temperature: 0, max_tokens: 5,
+          }),
+        })
+        const text = await res.text()
+        results.push({ model: t.model, status: res.status, ok: res.ok, body: text.slice(0, 400), hasProviderRouting: !!t.provider })
+      } catch (e: any) {
+        results.push({ model: t.model, error: e?.message || String(e) })
+      }
+    }
+    return NextResponse.json({ ok: true, results })
   }
 
   const started = Date.now()

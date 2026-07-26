@@ -12,23 +12,26 @@ function isAuthorized(req: Request): boolean {
   return req.headers.get('authorization') === `Bearer ${token}`
 }
 
-async function orProbe(model: string) {
+async function orProbe(model: string, providerOrder?: string[]) {
   const apiKey = process.env.OPENROUTER_API_KEY
   if (!apiKey) return { error: "no key" }
   const start = Date.now()
+  const body: any = { model, messages: [{ role: "user", content: "Say: ok" }], temperature: 0, max_tokens: 10 }
+  if (providerOrder) body.provider = { order: providerOrder, allow_fallbacks: false }
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey, "HTTP-Referer": "https://v0-nexaafrica.vercel.app" },
-      body: JSON.stringify({ model, messages: [{ role: "user", content: "Say: ok" }], temperature: 0, max_tokens: 10 }),
+      body: JSON.stringify(body),
     })
     const text = await res.text()
     const lat = Date.now() - start
     let p: any = null; try { p = JSON.parse(text) } catch {}
-    return { ok: res.ok, status: res.status, ms: lat, model,
-      requestedProviders: p?.error?.metadata?.requested_providers || null,
-      availableProviders: p?.error?.metadata?.available_providers || null,
-      body: text.slice(0, 300), modelUsed: p?.model, content: p?.choices?.[0]?.message?.content }
+    return { ok: res.ok, status: res.status, ms: lat, model, providerOrder: providerOrder || null,
+      requested: p?.error?.metadata?.requested_providers || null,
+      available: p?.error?.metadata?.available_providers || null,
+      modelUsed: p?.model, content: p?.choices?.[0]?.message?.content,
+      usage: p?.usage, body: text.slice(0, 300) }
   } catch (e: any) { return { ok: false, error: e?.message || String(e) } }
 }
 
@@ -37,22 +40,28 @@ export async function POST(req: Request) {
   const mode = new URL(req.url).searchParams.get('mode') || 'all'
 
   if (mode === 'orprobe') {
-    // Available providers from error: nvidia, google-ai-studio, cohere, novita, darkbloom, poolside
-    // Try models served by these providers
+    // Available providers: darkbloom, nvidia, poolside, google-ai-studio, novita
+    // Try free models that one of these providers serves.
+    // nvidia hosts many free models; poolside has free tier; google-ai-studio serves gemini free.
     const results = await Promise.all([
-      orProbe("openrouter/free"),
-      // Meta Llama via together/deepinfra (what the key is locked to)
-      orProbe("meta-llama/llama-4-maverick:free"),
-      // Free models that might route differently
-      orProbe("google/gemini-2.5-flash-lite"),
-      // Query models API for "free" tagged models
-      // Check key info
-      fetch("https://openrouter.ai/api/v1/key", {
-        headers: { "Authorization": "Bearer " + process.env.OPENROUTER_API_KEY },
-      }).then(r => r.text()).then(t => ({ keyInfo: t.slice(0, 500) })),
+      // Try routing through google-ai-studio with gemini model
+      orProbe("google/gemini-2.5-flash", ["google-ai-studio"]),
+      // Try routing through nvidia
+      orProbe("openrouter/free", ["nvidia"]),
+      // Try routing through poolside
+      orProbe("openrouter/free", ["poolside"]),
+      // Try darkbloom
+      orProbe("openrouter/free", ["darkbloom"]),
+      // Try novita
+      orProbe("openrouter/free", ["novita"]),
+      // Try the exact free model that works: deepinfra hosts meta-llama
+      orProbe("meta-llama/llama-4-maverick", ["deepinfra"]),
+      // Try together provider
+      orProbe("meta-llama/llama-4-maverick", ["together"]),
+      // Try Google Gemini flash-lite with google-ai-studio routing
+      orProbe("google/gemini-2.5-flash-lite", ["google-ai-studio"]),
     ])
-    const keyInfo = (results.pop() as any)?.keyInfo || "no key info"
-    return NextResponse.json({ ok: true, keyPrefix: (process.env.OPENROUTER_API_KEY||"").slice(0,12)+"...", keyInfo, results })
+    return NextResponse.json({ ok: true, keyPrefix: (process.env.OPENROUTER_API_KEY||"").slice(0,12)+"...", isFreeTier: true, results })
   }
 
   const started = Date.now()

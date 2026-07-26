@@ -4,7 +4,7 @@
  */
 
 import { PROVIDERS, type ProviderId } from "./providers/types"
-import { getHealthyProviders, recordSuccess, recordFailure, getProviderHealth } from "./providers/manager"
+import { getHealthyProviders, recordSuccess, recordFailure } from "./providers/manager"
 
 export interface AIRequest {
   prompt: string
@@ -17,58 +17,42 @@ export interface AIRequest {
 }
 
 export interface AIResponse {
-  text: string
-  provider: ProviderId
-  model: string
-  latencyMs: number
-  tokensInput?: number
-  tokensOutput?: number
-  costCents?: number
-  confidence?: number
-  evidence?: string[]
+  text: string; provider: ProviderId; model: string; latencyMs: number
+  tokensInput?: number; tokensOutput?: number; costCents?: number
+}
+
+export interface ProviderCallDiag {
+  provider: string; model: string; event: 'attempt' | 'success' | 'failure'
+  httpStatus?: number; errorCode?: string; errorMessage?: string; errorBody?: string
+  retryCount: number; durationMs?: number; promptLen?: number; responseLen?: number
 }
 
 export interface GatewayResult {
-  response: AIResponse
-  fallbackUsed: boolean
-  fallbackChain: ProviderId[]
-  disagreements?: any[]
+  response: AIResponse; fallbackUsed: boolean; fallbackChain: ProviderId[]
+  disagreements?: any[]; diag: ProviderCallDiag[]
 }
 
 const cache = new Map<string, { result: GatewayResult; timestamp: number }>()
 const CACHE_TTL = 24 * 60 * 60 * 1000
 
 function cacheKey(req: AIRequest): string {
-  const jobPart = req.jobId ? `${req.jobId}:` : ''
-  const promptHash = `${req.prompt.length}:${req.prompt.slice(0,500)}`
-  const sysHash = req.systemInstruction ? `${req.systemInstruction.length}:${req.systemInstruction.slice(0,200)}` : ''
-  return `${req.agentId}:${jobPart}${promptHash}:${sysHash}`
+  const jp = req.jobId ? `${req.jobId}:` : ''
+  return `${req.agentId}:${jp}${req.prompt.length}:${req.prompt.slice(0,500)}:${(req.systemInstruction||'').length}:${(req.systemInstruction||'').slice(0,200)}`
 }
 
 function gwLog(jobId: string | undefined, agentId: string, event: string, data: Record<string, unknown>) {
-  const ts = Date.now();
-  const entry = { scope: "ai_gateway", ts, jobId: jobId || "-", agentId, event, ...data };
-  try { console.log(JSON.stringify(entry)); } catch { /* best-effort */ }
+  try { console.log(JSON.stringify({ scope:"ai_gateway", ts:Date.now(), jobId:jobId||'-', agentId, event, ...data })); } catch {}
 }
 
-async function callProvider(providerId: ProviderId, req: AIRequest): Promise<AIResponse> {
+async function callProvider(providerId: ProviderId, req: AIRequest, retryCount: number, diag: ProviderCallDiag[]): Promise<AIResponse> {
   const cfg = PROVIDERS.find(p => p.id === providerId)
-  if (!cfg) {
-    gwLog(req.jobId, req.agentId, "provider_skip", { provider: providerId, reason: "not_found" })
-    throw new Error(`Provider ${providerId} not found`)
-  }
-
+  if (!cfg) throw new Error(`Provider ${providerId} not found`)
   const apiKey = process.env[cfg.envKey]
-  if (!apiKey) {
-    gwLog(req.jobId, req.agentId, "provider_skip", { provider: providerId, reason: "no_key", envKey: cfg.envKey })
-    throw new Error(`Missing env ${cfg.envKey} for provider ${providerId}`)
-  }
-
+  if (!apiKey) throw new Error(`Missing env ${cfg.envKey} for provider ${providerId}`)
   const start = Date.now()
-  gwLog(req.jobId, req.agentId, "provider_call", {
-    provider: providerId, model: cfg.model,
-    promptLen: req.prompt.length, sysLen: (req.systemInstruction || "").length
-  })
+  const promptLen = req.prompt.length
+
+  diag.push({ provider: providerId, model: cfg.model, event: "attempt", retryCount, promptLen })
 
   try {
     if (providerId.startsWith('gemini')) {
@@ -78,103 +62,77 @@ async function callProvider(providerId: ProviderId, req: AIRequest): Promise<AIR
         model: cfg.model,
         contents: [{ role: "user", parts: [{ text: req.prompt }] }],
         config: {
-          systemInstruction: req.systemInstruction,
-          temperature: req.temperature ?? 0.3,
+          systemInstruction: req.systemInstruction, temperature: req.temperature ?? 0.3,
           maxOutputTokens: req.maxTokens ?? 1024,
-          ...(req.responseSchema ? { responseMimeType: "application/json", responseSchema: req.responseSchema } : {}),
+          ...(req.responseSchema ? { responseMimeType:"application/json", responseSchema:req.responseSchema } : {}),
         },
       })
       const text = result.text || ""
       const latency = Date.now() - start
-      gwLog(req.jobId, req.agentId, "provider_success", {
-        provider: providerId, latencyMs: latency,
-        tokensIn: result.usageMetadata?.promptTokenCount,
-        tokensOut: result.usageMetadata?.candidatesTokenCount, textLen: text.length
-      })
-      return {
-        text, provider: providerId, model: cfg.model, latencyMs: latency,
-        tokensInput: result.usageMetadata?.promptTokenCount,
-        tokensOutput: result.usageMetadata?.candidatesTokenCount,
-        costCents: Math.round(((result.usageMetadata?.promptTokenCount || 0) + (result.usageMetadata?.candidatesTokenCount || 0)) * cfg.costPer1kTokens / 1000),
-      }
+      diag.push({ provider: providerId, model: cfg.model, event: "success", retryCount, durationMs: latency, promptLen, responseLen: text.length })
+      gwLog(req.jobId, req.agentId, "provider_success", { provider: providerId, latencyMs: latency, tokensIn: result.usageMetadata?.promptTokenCount, tokensOut: result.usageMetadata?.candidatesTokenCount })
+      return { text, provider: providerId, model: cfg.model, latencyMs: latency, tokensInput: result.usageMetadata?.promptTokenCount, tokensOutput: result.usageMetadata?.candidatesTokenCount, costCents: Math.round(((result.usageMetadata?.promptTokenCount||0)+(result.usageMetadata?.candidatesTokenCount||0))*cfg.costPer1kTokens/1000) }
     }
 
-    const openAICompatibleProviders: ProviderId[] = ["groq", "cerebras", "openrouter"]
-    if (openAICompatibleProviders.includes(providerId)) {
-      const baseUrls: Record<string, string> = {
+    const openAICompat: ProviderId[] = ["groq","cerebras","openrouter"]
+    if (openAICompat.includes(providerId)) {
+      const urls: Record<string,string> = {
         groq: "https://api.groq.com/openai/v1/chat/completions",
         cerebras: "https://api.cerebras.ai/v1/chat/completions",
         openrouter: "https://openrouter.ai/api/v1/chat/completions",
       }
-      const url = baseUrls[providerId]
-      if (!url) throw new Error(`No URL for ${providerId}`)
-
-      const res = await fetch(url, {
+      const res = await fetch(urls[providerId], {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+        headers: { "Content-Type":"application/json", "Authorization":`Bearer ${apiKey}` },
         body: JSON.stringify({
           model: cfg.model,
-          messages: [
-            ...(req.systemInstruction ? [{ role: "system", content: req.systemInstruction }] : []),
-            { role: "user", content: req.prompt },
-          ],
-          temperature: req.temperature ?? 0.3,
-          max_tokens: req.maxTokens ?? 1024,
+          messages: [...(req.systemInstruction?[{role:"system",content:req.systemInstruction}]:[]), {role:"user",content:req.prompt}],
+          temperature: req.temperature??0.3, max_tokens: req.maxTokens??1024,
         }),
       })
       if (!res.ok) {
         const errText = await res.text()
-        gwLog(req.jobId, req.agentId, "provider_error", {
-          provider: providerId, status: res.status, statusText: res.statusText,
-          body: errText.slice(0,300), bodyLen: errText.length
-        })
-        throw new Error(`${providerId} ${res.status}: ${errText.slice(0,200)}`)
+        const latency = Date.now() - start
+        let ec = `${res.status}`, em = errText.slice(0,500)
+        try { const j=JSON.parse(errText); ec=j.error?.code||j.error?.type||ec; em=j.error?.message||em } catch {}
+        diag.push({ provider: providerId, model: cfg.model, event: "failure", httpStatus: res.status, errorCode: ec, errorMessage: em, errorBody: errText.slice(0,1000), retryCount, durationMs: latency, promptLen })
+        gwLog(req.jobId, req.agentId, "provider_error", { provider: providerId, status: res.status, errorCode: ec, errorMessage: em.slice(0,200) })
+        throw new Error(`${providerId} ${res.status} (${ec}): ${em.slice(0,200)}`)
       }
       const data = await res.json() as any
       const text = data.choices?.[0]?.message?.content || ""
       const latency = Date.now() - start
-      gwLog(req.jobId, req.agentId, "provider_success", {
-        provider: providerId, latencyMs: latency,
-        tokensIn: data.usage?.prompt_tokens, tokensOut: data.usage?.completion_tokens, textLen: text.length
-      })
-      return {
-        text, provider: providerId, model: cfg.model, latencyMs: latency,
-        tokensInput: data.usage?.prompt_tokens, tokensOutput: data.usage?.completion_tokens,
-        costCents: Math.round(((data.usage?.prompt_tokens || 0) + (data.usage?.completion_tokens || 0)) * cfg.costPer1kTokens / 1000),
-      }
+      diag.push({ provider: providerId, model: cfg.model, event: "success", retryCount, durationMs: latency, promptLen, responseLen: text.length })
+      gwLog(req.jobId, req.agentId, "provider_success", { provider: providerId, latencyMs: latency, tokensIn: data.usage?.prompt_tokens, tokensOut: data.usage?.completion_tokens })
+      return { text, provider: providerId, model: cfg.model, latencyMs: latency, tokensInput: data.usage?.prompt_tokens, tokensOutput: data.usage?.completion_tokens, costCents: Math.round(((data.usage?.prompt_tokens||0)+(data.usage?.completion_tokens||0))*cfg.costPer1kTokens/1000) }
     }
 
     if (providerId === "huggingface") {
       const res = await fetch(`https://api-inference.huggingface.co/models/${cfg.model}`, {
         method: "POST",
-        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ inputs: req.prompt, parameters: { max_new_tokens: req.maxTokens || 512, temperature: req.temperature || 0.3 } }),
+        headers: { "Authorization":`Bearer ${apiKey}`, "Content-Type":"application/json" },
+        body: JSON.stringify({ inputs: req.prompt, parameters: { max_new_tokens: req.maxTokens||512, temperature: req.temperature||0.3 } }),
       })
       if (!res.ok) {
         const errText = await res.text()
-        gwLog(req.jobId, req.agentId, "provider_error", { provider: providerId, status: res.status, body: errText.slice(0,300) })
+        const latency = Date.now() - start
+        let ec = `${res.status}`; try { const j=JSON.parse(errText); ec=j.error||ec } catch {}
+        diag.push({ provider: providerId, model: cfg.model, event: "failure", httpStatus: res.status, errorCode: ec, errorMessage: errText.slice(0,500), errorBody: errText.slice(0,1000), retryCount, durationMs: latency, promptLen })
         throw new Error(`HuggingFace ${res.status}: ${errText.slice(0,200)}`)
       }
       const data = await res.json() as any
       const text = Array.isArray(data) ? data[0]?.generated_text || "" : data.generated_text || ""
       const latency = Date.now() - start
-      gwLog(req.jobId, req.agentId, "provider_success", { provider: providerId, latencyMs: latency, textLen: text.length })
+      diag.push({ provider: providerId, model: cfg.model, event: "success", retryCount, durationMs: latency, promptLen, responseLen: text.length })
       return { text, provider: providerId, model: cfg.model, latencyMs: latency }
     }
-
     throw new Error(`Provider ${providerId} not implemented`)
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e)
-    const alreadyLogged = /^\w+ \d{3}:/.test(errMsg)
+    const alreadyLogged = /^\w+ \d{3} \(/.test(errMsg)
     if (!alreadyLogged) {
-      const isError = e instanceof Error
-      gwLog(req.jobId, req.agentId, "provider_error", {
-        provider: providerId,
-        error: errMsg.slice(0,300),
-        name: isError ? (e as Error).name : undefined,
-        stackTop: isError ? ((e as Error).stack || "").split("\n").slice(0,3).join(" | ") : undefined,
-        latencyMs: Date.now() - start,
-      })
+      const latency = Date.now() - start
+      diag.push({ provider: providerId, model: cfg.model, event: "failure", errorCode: e instanceof Error ? (e as Error).name : "Unknown", errorMessage: errMsg.slice(0,500), retryCount, durationMs: latency, promptLen })
     }
     throw e
   }
@@ -182,88 +140,51 @@ async function callProvider(providerId: ProviderId, req: AIRequest): Promise<AIR
 
 export async function aiGateway(req: AIRequest): Promise<GatewayResult> {
   const anyKeyConfigured = PROVIDERS.some(p => process.env[p.envKey]);
-  if (!anyKeyConfigured) {
-    throw new Error("No AI provider API keys configured in environment — all providers unavailable. Set at least GEMINI_API_KEY.");
-  }
+  if (!anyKeyConfigured) throw new Error("No AI provider API keys configured in environment")
 
   const key = cacheKey(req)
   const cached = cache.get(key)
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-    return cached.result
-  }
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) return cached.result
 
-  const healthyProviders = getHealthyProviders()
-  const providersToTry = healthyProviders.length > 0 ? healthyProviders : PROVIDERS.filter(p => p.enabled)
-
+  const providersToTry = getHealthyProviders().length > 0 ? getHealthyProviders() : PROVIDERS.filter(p => p.enabled)
   let lastError: any = null
   const fallbackChain: ProviderId[] = []
+  const diag: ProviderCallDiag[] = []
 
   for (let i = 0; i < providersToTry.length; i++) {
     const provider = providersToTry[i]
     fallbackChain.push(provider.id as ProviderId)
-
     try {
-      const response = await callProvider(provider.id as ProviderId, req)
+      const response = await callProvider(provider.id as ProviderId, req, i, diag)
       recordSuccess(provider.id as ProviderId, response.latencyMs)
-
-      const result: GatewayResult = { response, fallbackUsed: i > 0, fallbackChain }
+      const result: GatewayResult = { response, fallbackUsed: i > 0, fallbackChain, diag }
       cache.set(key, { result, timestamp: Date.now() })
-
-      try {
-        const { logAudit } = await import("./audit/logger")
-        await logAudit({
-          decision: `AI Gateway success via ${provider.id}`,
-          evidence: [req.prompt.slice(0,200)], model: provider.model,
-          confidence: 80, action: "allow", jobId: req.jobId,
-        })
-      } catch {}
-
+      try { const { logAudit } = await import("./audit/logger"); await logAudit({ decision:`AI Gateway success via ${provider.id}`, evidence:[req.prompt.slice(0,200)], model:provider.model, confidence:80, action:"allow", jobId:req.jobId }) } catch {}
       return result
     } catch (e) {
-      const errMsg = e instanceof Error ? e.message : String(e)
-      recordFailure(provider.id as ProviderId, errMsg)
+      recordFailure(provider.id as ProviderId, e instanceof Error ? e.message : String(e))
       lastError = e
-      console.warn(`[AI Gateway] ${provider.id} failed, trying next: ${errMsg.slice(0,200)}`)
       continue
     }
   }
-
-  gwLog(req.jobId, req.agentId, "all_providers_failed", {
-    tried: fallbackChain.join(','),
-    lastError: lastError instanceof Error ? lastError.message.slice(0,200) : String(lastError).slice(0,200)
-  })
-  throw new Error(`All AI providers failed. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}. Tried: ${fallbackChain.join(', ')}`)
+  gwLog(req.jobId, req.agentId, "all_providers_failed", { tried: fallbackChain.join(','), lastError: lastError instanceof Error ? lastError.message.slice(0,200) : String(lastError).slice(0,200) })
+  throw new Error(`All AI providers failed. Tried: ${fallbackChain.join(', ')}`)
 }
 
 export async function aiCouncil(
   task: string, prompt: string,
   options: { models?: string[], agentId: string, jobId?: string } = { agentId: "council:generic" }
 ): Promise<{ consensus: string; confidence: number; disagreements: any[]; provider: ProviderId; fallbackUsed: boolean }> {
-  const modelsToUse = options.models || ["gemini", "groq", "cerebras"]
+  const modelsToUse = options.models || ["gemini","groq","cerebras"]
   const results: { provider: ProviderId; text: string; confidence: number }[] = []
-
-  for (const modelId of modelsToUse.slice(0, 2)) {
+  for (const modelId of modelsToUse.slice(0,2)) {
     try {
-      const provider = PROVIDERS.find(p => p.id === modelId) || PROVIDERS[0]
-      const req: AIRequest = {
-        prompt: task === "profile-transform"
-          ? `You are reviewing this profile transformation. Check for truthfulness, no fabrication, evidence-based:\n${prompt}`
-          : prompt,
-        agentId: options.agentId, jobId: options.jobId, temperature: 0.3,
-      }
-      const gwResult = await aiGateway(req)
-      results.push({ provider: gwResult.response.provider, text: gwResult.response.text, confidence: 75 })
-    } catch (e) { console.warn(`[Council] ${modelId} failed:`, e) }
+      const provider = PROVIDERS.find(p=>p.id===modelId)||PROVIDERS[0]
+      const gwResult = await aiGateway({ prompt: task==="profile-transform"?`You are reviewing this profile transformation:\n${prompt}`:prompt, agentId:options.agentId, jobId:options.jobId, temperature:0.3 })
+      results.push({ provider: gwResult.response.provider, text: gwResult.response.text, confidence:75 })
+    } catch(e) { console.warn(`[Council] ${modelId} failed:`,e) }
   }
-
-  if (results.length === 0) throw new Error("All council models failed")
-
-  const hasDisagreement = results.length >= 2 && results[0].text.slice(0,100) !== results[1].text.slice(0,100)
-  const disagreements = hasDisagreement ? [{ model: results[1].provider, verdict: "challenge", reason: "Different output than first model" }] : []
-
-  return {
-    consensus: results[0].text, confidence: disagreements.length === 0 ? 85 : 65,
-    disagreements, provider: results[0].provider,
-    fallbackUsed: results.length < modelsToUse.length,
-  }
+  if (results.length===0) throw new Error("All council models failed")
+  const hasDisagreement = results.length>=2 && results[0].text.slice(0,100)!==results[1].text.slice(0,100)
+  return { consensus:results[0].text, confidence:hasDisagreement?65:85, disagreements:hasDisagreement?[{model:results[1].provider, verdict:"challenge", reason:"Different output than first model"}]:[], provider:results[0].provider, fallbackUsed:results.length<modelsToUse.length }
 }

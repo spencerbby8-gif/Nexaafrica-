@@ -85,7 +85,6 @@ function companyLabel(legit: string | null | undefined, hasLogo?: boolean | null
         return { label: legit, tone: 'neutral' as const }
     }
   }
-  if (hasLogo) return { label: 'Likely legitimate (logo present)', tone: 'caution' as const }
   return { label: 'Company legitimacy unknown', tone: 'neutral' as const }
 }
 
@@ -148,7 +147,7 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
   if (!hasAI) {
     return (
       <div className="mt-2.5 rounded-md border border-border/60 bg-secondary/30 px-2.5 py-2.5">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
           <p className="flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-foreground">
             <ShieldCheck className="h-3.5 w-3.5 text-amber-500" aria-hidden />
             Opportunity Intelligence
@@ -177,7 +176,7 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
 
   return (
     <div className="mt-2.5 rounded-md border border-border/70 bg-secondary/40 px-2.5 py-2.5">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
         <p className="flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-foreground">
           <ShieldCheck className="h-3.5 w-3.5 text-accent" aria-hidden />
           Opportunity Intelligence

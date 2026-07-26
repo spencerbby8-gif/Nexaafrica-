@@ -56,12 +56,12 @@ export function JobCard({
         )}
 
         {matchScore != null && showOpportunityIntelligence && (
-          <div className="-mt-1 flex items-center gap-2">
+          <div className="-mt-1 flex min-w-0 items-center gap-2">
             <span className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/15 px-2 py-0.5 text-[11px] font-medium text-accent">
               Match Score {matchScore}
             </span>
             {matchReasons && matchReasons.length > 0 && (
-              <span className="text-[11px] text-muted-foreground truncate">{matchReasons[0]}</span>
+              <span className="min-w-0 truncate text-[11px] text-muted-foreground">{matchReasons[0]}</span>
             )}
           </div>
         )}

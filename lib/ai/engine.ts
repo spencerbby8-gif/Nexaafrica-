@@ -193,8 +193,12 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
     lastVerifiedAt: now,
   }
 
+  // Average the 5 most verifiable dimensions. Drops visa (derived from
+  // africa — double-counts) and quality (subjective / deterministic).
+  // Includes experience (output of the real experience+skills verifier).
+  // Formula matches the truth cleanup migration (20260727000000).
   result.overallConfidence = Math.round(
-    (result.africa.confidence + result.remote.confidence + result.visa.confidence + result.salary.confidence + result.company.confidence + result.quality.confidence) / 6
+    (result.africa.confidence + result.remote.confidence + result.salary.confidence + result.company.confidence + result.experience.confidence) / 5
   )
 
   setCachedIntelligence(job.id, result)

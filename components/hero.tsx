@@ -39,11 +39,11 @@ export function Hero({
             type="search"
             inputMode="search"
             placeholder="Search roles, companies, skills"
-            className="h-10 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+            className="h-10 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           />
           <button
             type="submit"
-            className="h-10 rounded-md bg-accent px-4 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/90"
+            className="h-10 shrink-0 rounded-md bg-accent px-4 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/90"
           >
             Search
           </button>

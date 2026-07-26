@@ -185,14 +185,14 @@ export async function processAIQueue(batchSize = 100) {
       .from("ai_processing_queue")
       .update({ status: "pending", error: "Reset after interruption - was stuck in processing >10min" })
       .eq("status", "processing")
-      .lt("started_at", new Date(Date.now() - 10 * 60 * 1000).toISOString())
+      .or(`started_at.is.null,started_at.lt.${new Date(Date.now() - 10 * 60 * 1000).toISOString()}`)
   } catch {}
   try {
     await supabase
       .from("ai_processing_queue")
       .update({ status: "pending", error: "Reset after interruption - was stuck in processing >5min" })
       .eq("status", "processing")
-      .lt("started_at", new Date(Date.now() - 5 * 60 * 1000).toISOString())
+      .or(`started_at.is.null,started_at.lt.${new Date(Date.now() - 5 * 60 * 1000).toISOString()}`)
   } catch {}
 
   const { data: queueItems } = await supabase
@@ -208,7 +208,9 @@ export async function processAIQueue(batchSize = 100) {
   let processed = 0
   let failed = 0
 
+  const loopStart = Date.now()
   for (const item of queueItems) {
+    if (Date.now() - loopStart > 240000) break // stop before serverless maxDuration to avoid stuck processing rows
     try {
       await supabase.from("ai_processing_queue").update({ status: "processing", started_at: new Date().toISOString(), attempts: item.attempts + 1 }).eq("id", item.id)
       const { data: job } = await supabase.from("jobs").select("*").eq("id", item.job_id).maybeSingle()
@@ -248,10 +250,12 @@ export async function processAIQueue(batchSize = 100) {
         country_restrictions: intelligence.africa.countryRestrictions,
         visa_sponsorship: intelligence.visa.value,
         visa_confidence: intelligence.visa.confidence,
+        visa_evidence: intelligence.visa.evidence?.[0]?.text ?? null,
         timezone_requirements: intelligence.remote.timezoneRequirements || null,
         timezone_confidence: intelligence.remote.confidence,
         remote_eligibility: intelligence.remote.value,
         remote_confidence: intelligence.remote.confidence,
+        remote_evidence: intelligence.remote.evidence?.[0]?.text ?? null,
         required_skills: intelligence.skills.required.value,
         transferable_skills: intelligence.skills.transferable.value,
         missing_skills: intelligence.skills.missing.value,
@@ -263,11 +267,14 @@ export async function processAIQueue(batchSize = 100) {
         salary_period: intelligence.salary.value.period,
         salary_is_estimated: intelligence.salary.value.isEstimated,
         salary_transparency: intelligence.salary.value.transparency,
+        salary_evidence: intelligence.salary.evidence?.[0]?.text ?? null,
         salary_confidence: intelligence.salary.confidence,
         company_legitimacy: intelligence.company.value,
         company_confidence: intelligence.company.confidence,
+        company_evidence: intelligence.company.evidence?.[0]?.text ?? null,
         job_quality: intelligence.quality.value,
         job_quality_confidence: intelligence.quality.confidence,
+        job_quality_evidence: intelligence.quality.evidence?.[0]?.text ?? null,
         application_difficulty: intelligence.applicationDifficulty.value,
         hiring_urgency: intelligence.hiringUrgency.value,
         overall_confidence: intelligence.overallConfidence,

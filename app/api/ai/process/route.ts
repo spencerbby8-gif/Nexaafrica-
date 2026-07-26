@@ -16,7 +16,7 @@ export async function POST(req: Request) {
   if (!isAuthorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const url = new URL(req.url)
-  const batch = Math.max(1, Math.min(50, Number(url.searchParams.get('batch')) || 10))
+  const batch = Math.max(1, Math.min(150, Number(url.searchParams.get('batch')) || 50))
 
   const started = Date.now()
   const result = await processAIQueue(batch)

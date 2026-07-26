@@ -27,7 +27,7 @@ export function JobCard({
   return (
     <Link
       href={`/role/${job.slug}`}
-      className="group block rounded-lg border border-border/70 bg-card p-4 transition-colors hover:border-foreground/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-5"
+      className="group block w-full max-w-full overflow-hidden rounded-lg border border-border/70 bg-card p-4 transition-colors hover:border-foreground/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-5"
     >
       <article className="flex flex-col gap-3.5">
         <div className="flex items-start gap-3">
@@ -71,7 +71,7 @@ export function JobCard({
         </p>
 
         {/* Trust & basic badges – kept for scannability but now secondary to AI intelligence */}
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           {(() => {
             try {
               const trust = (job as any).trust_score != null ? { score: (job as any).trust_score } : calculateTrustScore(job as any)

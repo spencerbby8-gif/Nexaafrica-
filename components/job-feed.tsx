@@ -33,7 +33,7 @@ export function JobFeed({
       {jobs.map((job) => {
         const withAI = job as JobWithAI<Job>
         return (
-          <li key={job.id}>
+          <li key={job.id} className="min-w-0">
             <JobCard
               job={job}
               aiIntelligence={withAI.aiIntelligence || null}

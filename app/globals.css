@@ -120,6 +120,36 @@
   }
 }
 
+  /* ===== Permanent responsive guardrails (no horizontal overflow on any screen) ===== */
+  /* 1. The document never exceeds the viewport width. */
+  html,
+  body {
+    max-width: 100%;
+  }
+  /* 2. Replaced media scales down to its container; never overflows. */
+  img,
+  video,
+  svg,
+  canvas,
+  picture,
+  iframe,
+  embed,
+  object {
+    max-width: 100%;
+    height: auto;
+  }
+  /* 3. ROOT CAUSE FIX: CSS grid items default to min-width:auto, which stops a
+        cell (and its card content) from shrinking below its content size and
+        forces horizontal overflow on narrow screens. All Nexa job feeds and
+        chip groups are <ul class="...grid..."><li>, so any <li> inside a grid
+        <ul> is allowed to shrink -> long titles/locations wrap or truncate
+        inside the card instead of pushing past the viewport. Permanent:
+        every current and future feed grid inherits this. */
+  ul[class*="grid"] > li,
+  ol[class*="grid"] > li {
+    min-width: 0;
+  }
+
 /* ----------------------------------------------------------------
    Nexa atmosphere utilities — restrained, premium, dark-first.
    Used only on hero surfaces and the transformation moment.

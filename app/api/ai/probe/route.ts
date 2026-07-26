@@ -12,54 +12,23 @@ function isAuthorized(req: Request): boolean {
   return req.headers.get('authorization') === `Bearer ${token}`
 }
 
-async function openRouterProbe() {
+async function orProbe(model: string, extraFields?: Record<string, any>) {
   const apiKey = process.env.OPENROUTER_API_KEY
-  if (!apiKey) return { error: "OPENROUTER_API_KEY not set in process.env" }
-
+  if (!apiKey) return { error: "OPENROUTER_API_KEY not set" }
   const start = Date.now()
-  const reqBody = {
-    model: "openrouter/free",
-    messages: [{ role: "user", content: "Say exactly: ok" }],
-    temperature: 0, max_tokens: 10,
-  }
-
+  const body: any = { model, messages: [{ role: "user", content: "Say: ok" }], temperature: 0, max_tokens: 10 }
+  if (extraFields) Object.assign(body, extraFields)
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + apiKey,
-        "HTTP-Referer": "https://v0-nexaafrica.vercel.app",
-        "X-Title": "Nexa",
-      },
-      body: JSON.stringify(reqBody),
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey, "HTTP-Referer": "https://v0-nexaafrica.vercel.app" },
+      body: JSON.stringify(body),
     })
     const text = await res.text()
-    const latency = Date.now() - start
-
-    let parsed: any = null
-    try { parsed = JSON.parse(text) } catch {}
-
-    return {
-      ok: res.ok,
-      status: res.status,
-      latencyMs: latency,
-      requestBody: reqBody,
-      responseBody: text.slice(0, 1000),
-      parsed: parsed ? {
-        modelUsed: parsed.model || null,
-        provider: parsed.provider || null,
-        content: parsed.choices?.[0]?.message?.content || null,
-        finishReason: parsed.choices?.[0]?.finish_reason || null,
-        usage: parsed.usage || null,
-      } : null,
-      keyPresent: !!apiKey,
-      keyLength: apiKey.length,
-      keyPrefix: apiKey.slice(0, 8) + "...",
-    }
-  } catch (e: any) {
-    return { ok: false, error: e?.message || String(e), latencyMs: Date.now() - start, keyPresent: !!apiKey, keyLength: apiKey?.length || 0 }
-  }
+    const lat = Date.now() - start
+    let p: any = null; try { p = JSON.parse(text) } catch {}
+    return { ok: res.ok, status: res.status, latencyMs: lat, model, extraFields, body: text.slice(0, 600), parsed: p ? { modelUsed: p.model, content: p.choices?.[0]?.message?.content, usage: p.usage } : null }
+  } catch (e: any) { return { ok: false, error: e?.message || String(e) } }
 }
 
 export async function POST(req: Request) {
@@ -67,8 +36,16 @@ export async function POST(req: Request) {
   const mode = new URL(req.url).searchParams.get('mode') || 'all'
 
   if (mode === 'orprobe') {
-    const result = await openRouterProbe()
-    return NextResponse.json({ ok: true, result })
+    // Test multiple routing strategies
+    const results = await Promise.all([
+      orProbe("openrouter/free"),
+      orProbe("openrouter/free", { provider: { order: ["google-ai-studio"], allow_fallbacks: false } }),
+      orProbe("openrouter/free", { provider: { order: ["google-ai-studio", "nvidia", "cohere"], allow_fallbacks: true } }),
+      orProbe("google/gemini-2.5-flash", { provider: { order: ["google-ai-studio"], allow_fallbacks: false } }),
+      // Try providers field (some docs use this)
+      orProbe("openrouter/free", { providers: ["google-ai-studio"] }),
+    ])
+    return NextResponse.json({ ok: true, keyPrefix: (process.env.OPENROUTER_API_KEY||"").slice(0,10)+"...", results })
   }
 
   const started = Date.now()

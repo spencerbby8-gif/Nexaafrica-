@@ -40,7 +40,7 @@ function EvidenceRow({ signal }: { signal: EvidenceSignal }) {
           {signal.reason}
         </p>
         {signal.excerpt && (
-          <blockquote className="mt-1.5 border-l-2 border-border pl-2.5 text-[12px] italic leading-relaxed text-foreground/70">
+          <blockquote className="mt-1.5 break-words border-l-2 border-border pl-2.5 text-[12px] italic leading-relaxed text-foreground/70">
             {'\u201c'}
             {signal.excerpt}
             {'\u201d'}

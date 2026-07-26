@@ -111,7 +111,7 @@ function EvidenceQuote({ text, url, allowLink = true }: { text?: string | null; 
   const cleaned = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220)
   if (!cleaned) return null
   return (
-    <blockquote className="mt-1.5 border-l-2 border-border pl-2.5 text-[11.5px] italic leading-relaxed text-foreground/70">
+    <blockquote className="mt-1.5 break-words border-l-2 border-border pl-2.5 text-[11.5px] italic leading-relaxed text-foreground/70">
       “{cleaned}”
       {url && allowLink && (
         <>

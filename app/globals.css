@@ -102,6 +102,11 @@
        sheets, modals) cannot widen layout. clip > hidden because clip
        does not establish a scroll container, preserving sticky/fixed. */
     overflow-x: clip;
+    /* Defensive word-break: very long URLs / tokens in job descriptions,
+       evidence quotes and links wrap instead of widening the layout and
+       being clipped by overflow-x: clip. Does not affect badges
+       (inline-flex + whitespace-nowrap + shrink-0). */
+    overflow-wrap: anywhere;
     /* Prevent rubber-band overscroll from flashing background on iOS,
        and stop horizontal swipe from triggering navigator back/forward. */
     overscroll-behavior-y: none;

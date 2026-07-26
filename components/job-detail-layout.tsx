@@ -81,7 +81,7 @@ function Markdown({ source }: { source: string }) {
     .filter(Boolean)
 
   return (
-    <div className="space-y-6 text-[15px] leading-7 text-foreground/85 sm:text-base sm:leading-[1.75]">
+    <div className="break-words space-y-6 text-[15px] leading-7 text-foreground/85 sm:text-base sm:leading-[1.75]">
       {blocks.map((block, i) => {
         if (block.startsWith('### ')) {
           return (

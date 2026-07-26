@@ -57,6 +57,10 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
   // modelVersion (e.g. "groq:llama-3.3-70b-versatile"). Collect unique
   // non-failed values so the stored model_version column reflects which
   // providers actually served the intelligence.
+  //
+  // When no real AI model was used (all verifiers returned regex-extracted
+  // or failed-no-evidence), the fallback is "no-ai-providers" rather than
+  // the old misleading constant "gemini-2.5-flash-v1".
   const verifierModels = new Set<string>();
   const modelSources = [
     bundle?.africa?.modelVersion,
@@ -75,7 +79,9 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
   const realModelVersion =
     verifierModels.size > 0
       ? Array.from(verifierModels).sort().join(', ')
-      : AI_MODEL_VERSION;
+      : Object.keys(bundle).length > 0
+        ? "no-ai-providers"
+        : AI_MODEL_VERSION;
 
   const result: JobAIIntelligence = {
     jobId: job.id,
@@ -253,7 +259,10 @@ export async function processAIQueue(batchSize = 100) {
       try {
         const { data: existing } = await supabase.from("job_ai_intelligence").select("model_version, overall_confidence").eq("job_id", job.id).maybeSingle()
         if (existing) {
-          const existingIsReal = existing.model_version && !existing.model_version.includes("failed-no-evidence") && (existing.model_version.includes("gemini") || existing.model_version.includes("groq") || existing.model_version.includes("cerebras") || existing.model_version.includes("openrouter"))
+          // Allow overwrite when existing row has the old misleading constant
+          // ("gemini-2.5-flash-v1" — actually regex-based, no AI was called).
+          const existingIsMisleading = existing.model_version === "gemini-2.5-flash-v1" || existing.model_version === "rule-based-v1-fast" || existing.model_version === "template-removed-2026";
+          const existingIsReal = !existingIsMisleading && existing.model_version && !existing.model_version.includes("failed-no-evidence") && (existing.model_version.includes("gemini") || existing.model_version.includes("groq") || existing.model_version.includes("cerebras") || existing.model_version.includes("openrouter"))
           const newIsFailed = intelligence.modelVersion.includes("failed-no-evidence")
           if (existingIsReal && newIsFailed) {
             await supabase.from("ai_processing_queue").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", item.id)

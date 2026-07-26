@@ -161,6 +161,15 @@ async function callProvider(providerId: ProviderId, req: AIRequest): Promise<AIR
 }
 
 export async function aiGateway(req: AIRequest): Promise<GatewayResult> {
+  // Short-circuit: if no provider has a configured API key, fail immediately
+  // with a clear diagnostic instead of trying all 6 providers and generating
+  // 6 wasted error paths. Verifiers have their own regex/page-fetch fallbacks;
+  // they only need AI for classification, which can't work without keys.
+  const anyKeyConfigured = PROVIDERS.some(p => process.env[p.envKey]);
+  if (!anyKeyConfigured) {
+    throw new Error("No AI provider API keys configured in environment — all providers unavailable. Set at least GEMINI_API_KEY.");
+  }
+
   const key = cacheKey(req)
   const cached = cache.get(key)
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {

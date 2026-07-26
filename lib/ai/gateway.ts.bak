@@ -81,20 +81,14 @@ async function callProvider(providerId: ProviderId, req: AIRequest, retryCount: 
         cerebras: "https://api.cerebras.ai/v1/chat/completions",
         openrouter: "https://openrouter.ai/api/v1/chat/completions",
       }
-      const body: any = {
-        model: cfg.model,
-        messages: [...(req.systemInstruction?[{role:"system",content:req.systemInstruction}]:[]), {role:"user",content:req.prompt}],
-        temperature: req.temperature??0.3, max_tokens: req.maxTokens??1024,
-      }
-      // OpenRouter: force google-ai-studio routing (this key is only
-      // authorized for google-ai-studio/google-vertex, not together/deepinfra).
-      if (providerId === "openrouter") {
-        body.provider = { order: ["google-ai-studio", "google-vertex"], allow_fallbacks: false }
-      }
       const res = await fetch(urls[providerId], {
         method: "POST",
         headers: { "Content-Type":"application/json", "Authorization":`Bearer ${apiKey}` },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          model: cfg.model,
+          messages: [...(req.systemInstruction?[{role:"system",content:req.systemInstruction}]:[]), {role:"user",content:req.prompt}],
+          temperature: req.temperature??0.3, max_tokens: req.maxTokens??1024,
+        }),
       })
       if (!res.ok) {
         const errText = await res.text()

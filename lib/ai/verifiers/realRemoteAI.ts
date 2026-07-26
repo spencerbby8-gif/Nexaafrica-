@@ -77,7 +77,7 @@ export async function verifyRemotePolicyAI(job: Job) {
 
   return {
     eligibility,
-    confidence: eligibility !== "unknown" ? 70 : 0,
+    confidence: eligibility === "fully_remote" ? 40 : eligibility !== "unknown" ? 65 : 0,
     evidence: remoteContext.context.slice(0,200),
     timezoneRequirements: undefined,
     travelRequirements: undefined,

@@ -3,7 +3,7 @@ import { cleanDescription } from "@/lib/cleanDescription"
 import { aiGateway } from "../gateway"
 
 function extractAfricaContext(text: string): { match: string; context: string } | null {
-  const africaRegex = /\b(africa|nigeria|kenya|south africa|ghana|egypt|morocco|rwanda|uganda|ethiopia|tanzania|emea|worldwide|anywhere|global.*remote|us only|uk only|eu only|must reside|residents only|no visa sponsorship)\b/i
+  const africaRegex = /\b(africa|nigeria|kenya|south africa|ghana|egypt|morocco|rwanda|uganda|ethiopia|tanzania|emea|us only|uk only|eu only|must reside|residents only|no visa sponsorship)\b/i
   const m = text.match(africaRegex)
   if (m && m[0]) {
     const idx = m.index || 0
@@ -102,7 +102,7 @@ export async function verifyAfricaEligibilityAI(job: Job) {
 
   return {
     eligibility,
-    confidence: eligibility !== "unknown" ? 70 : 0,
+    confidence: eligibility === "explicit" ? 75 : eligibility === "restricted" ? 70 : 0,
     evidence: africaContext.context.slice(0,200),
     countryRestrictions: [],
     visaSponsorship: "unknown" as const,

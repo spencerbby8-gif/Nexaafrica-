@@ -203,7 +203,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   let intelligence: any = null
   try {
     const { enrichJobWithAI } = await import('@/lib/ai/engine')
-    intelligence = await enrichJobWithAI(job as any)
+    const aiResult = await enrichJobWithAI(job as any)
+    intelligence = aiResult.intelligence
     trace.step12_dataWritten = intelligence
 
     // Check failures

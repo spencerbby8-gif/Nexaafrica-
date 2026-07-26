@@ -3,7 +3,7 @@ import type { Job } from "@/lib/types"
 import { AI_MODEL_VERSION, AI_INTELLIGENCE_VERSION, type JobAIIntelligence } from "./types"
 import type { ProviderCallDiag } from "./gateway"
 
-const cache = new Map<string, { result: JobAIIntelligence; timestamp: number }>()
+const cache = new Map<string, { result: { intelligence: JobAIIntelligence; diags: any[] }; timestamp: number }>()
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000
 let lastCallTime = 0
 const MIN_INTERVAL_MS = 100
@@ -17,7 +17,7 @@ async function rateLimit() {
   lastCallTime = Date.now()
 }
 
-export async function getCachedIntelligence(jobId: string): Promise<JobAIIntelligence | null> {
+export async function getCachedIntelligence(jobId: string): Promise<{ intelligence: JobAIIntelligence; diags: any[] } | null> {
   const cached = cache.get(jobId)
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
     return cached.result
@@ -25,11 +25,11 @@ export async function getCachedIntelligence(jobId: string): Promise<JobAIIntelli
   return null
 }
 
-export function setCachedIntelligence(jobId: string, result: JobAIIntelligence) {
+export function setCachedIntelligence(jobId: string, result: { intelligence: JobAIIntelligence; diags: any[] }) {
   cache.set(jobId, { result, timestamp: Date.now() })
 }
 
-export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
+export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIntelligence; diags: ProviderCallDiag[] }> {
   const cached = await getCachedIntelligence(job.id)
   if (cached) return cached
   await rateLimit()
@@ -208,8 +208,7 @@ export async function enrichJobWithAI(job: Job): Promise<JobAIIntelligence> {
     (result.africa.confidence + result.remote.confidence + result.salary.confidence + result.company.confidence + result.experience.confidence) / 5
   )
 
-  setCachedIntelligence(job.id, result)
-  return { intelligence: result, diags: (bundle?._diags || []) as ProviderCallDiag[] }
+  return { intelligence: result, diags: (bundle?._diags || []) as any[] }
 }
 
 export async function processAIQueue(batchSize = 100) {

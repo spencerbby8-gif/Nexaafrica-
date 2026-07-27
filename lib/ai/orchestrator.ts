@@ -50,16 +50,22 @@ async function persistHealth(id: ProviderId) {
     const s = getState(id)
     const { createServiceClient } = await import("@/lib/supabase/service")
     const supabase = createServiceClient()
-    await supabase.from("ai_orch_health").upsert({
+    const upsertData: any = {
       provider: id, updated_at: new Date().toISOString(),
-      consecutive_failures: s.consecutiveFailures, last_failure_at: s.lastFailureAt ? new Date(s.lastFailureAt).toISOString() : null,
+      consecutive_failures: s.consecutiveFailures,
+      last_failure_at: s.lastFailureAt ? new Date(s.lastFailureAt).toISOString() : null,
       last_success_at: s.lastSuccessAt ? new Date(s.lastSuccessAt).toISOString() : null,
       cooldown_until: s.cooldownUntil ? new Date(s.cooldownUntil).toISOString() : null,
-      last_error_code: s.lastErrorCode || null, last_error_message: s.lastErrorMessage?.slice(0,300) || null,
+      last_error_code: s.lastErrorCode || null,
+      last_error_message: s.lastErrorMessage?.slice(0,300) || null,
       avg_latency_ms: s.avgLatencyMs || null,
-      is_quota_exhausted: s.isQuotaExhausted, quota_reset_at: s.quotaResetAt ? new Date(s.quotaResetAt).toISOString() : null,
+      is_quota_exhausted: s.isQuotaExhausted,
+      quota_reset_at: s.quotaResetAt ? new Date(s.quotaResetAt).toISOString() : null,
       is_rate_limited: s.isRateLimited,
-    }, { onConflict: "provider" })
+      total_successes: s.totalRequests - s.totalFailures,
+      total_failures: s.totalFailures,
+    }
+    await supabase.from("ai_orch_health").upsert(upsertData, { onConflict: "provider" })
   } catch {}
 }
 
@@ -139,6 +145,7 @@ export function recordOrchSuccess(id: ProviderId, latencyMs: number) {
   s.avgLatencyMs = s.avgLatencyMs > 0 ? Math.round(s.avgLatencyMs * 0.7 + latencyMs * 0.3) : latencyMs
   s.isQuotaExhausted = false; s.isRateLimited = false; s.cooldownUntil = 0
   persistHealth(id)
+
 }
 
 export function recordOrchFailure(id: ProviderId, errMsg: string) {
@@ -203,5 +210,5 @@ export function getOrchHealth(): Array<{ id: string; enabled: boolean; healthy: 
   })
 }
 
-// Re-export for probes routed through orchestrator
+export { warmHealthFromDB }
 export { probeProvider }

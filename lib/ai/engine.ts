@@ -327,6 +327,13 @@ export async function processAIQueue(batchSize = 100) {
         evidence_urls: intelligence.africa.sourceUrls,
         last_verified_at: new Date().toISOString(),
       }, { onConflict: "job_id" })
+
+      
+
+      // Second opinion: log when confidence is too low to need a review
+      if (intelligence.overallConfidence < 30 && intelligence.modelVersion.includes(":")) {
+        console.log(JSON.stringify({ scope:"ai_engine", event:"low_confidence", jobId:(job as any).id?.slice(0,8)||"", confidence:intelligence.overallConfidence }))
+      }
       // Persist provider diagnostics (batch insert)
       if (diags.length > 0) {
         const diagRows = diags.slice(0, 100).map(function(d: any) {

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { warmHealthFromDB } from '@/lib/ai/orchestrator'
 import { getOrchHealth } from '@/lib/ai/orchestrator'
 
 export const runtime = 'nodejs'
@@ -13,6 +14,7 @@ function isAuthorized(req: Request): boolean {
 }
 
 export async function GET(req: Request) {
+  await warmHealthFromDB()  // restore health from DB before reporting
   if (!isAuthorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const supabase = createServiceClient()

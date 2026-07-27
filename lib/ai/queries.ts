@@ -60,22 +60,38 @@ export interface JobAIIntelligenceRow {
 }
 
 async function getSupabaseForAI() {
-  // Prefer anon client for public RLS, fallback to service client for resilience
-  // In production, public policy allows anon read; service client always works
+  // Prefer service client for reliable reads. Anon client (createClient) relies
+  // on cookies for auth which may be absent in ISR/revalidate contexts, causing
+  // silent empty responses even with "using (true)" RLS policy.
+  // Service client bypasses RLS entirely — always returns data if it exists.
   try {
-    const anon = await createClient()
-    return anon
+    return createServiceClient() as any
   } catch {
     try {
-      return createServiceClient() as any
-    } catch {
-      // Last resort: anon
       return await createClient()
+    } catch {
+      return createServiceClient() as any
     }
   }
 }
 
 export async function getAIIntelligenceForJobs(jobIds: string[]): Promise<Map<string, JobAIIntelligenceRow>> {
+  return getAIIntelligenceForJobsInternal(jobIds)
+}
+
+export async function getAIIntelligenceWithQueueStatus(jobIds: string[]): Promise<{ aiMap: Map<string, JobAIIntelligenceRow>; queueStatus: Map<string, string> }> {
+  const aiMap = await getAIIntelligenceForJobsInternal(jobIds)
+  // Fetch queue status in parallel to help UI distinguish pending vs missing
+  const queueStatus = new Map<string, string>()
+  try {
+    const supabase = createServiceClient()
+    const { data } = await supabase.from("ai_processing_queue").select("job_id, status").in("job_id", jobIds)
+    if (data) for (const row of data as any[]) queueStatus.set(row.job_id, row.status)
+  } catch {}
+  return { aiMap, queueStatus }
+}
+
+async function getAIIntelligenceForJobsInternal(jobIds: string[]): Promise<Map<string, JobAIIntelligenceRow>> {
   if (jobIds.length === 0) return new Map()
   // Deduplicate
   const uniqueIds = Array.from(new Set(jobIds))

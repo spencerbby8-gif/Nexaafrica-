@@ -1,7 +1,7 @@
 import 'server-only'
 import { createClient } from '@/lib/supabase/server'
 import type { Job } from '@/lib/types'
-import { getAIIntelligenceForJobs, type JobWithAI } from '@/lib/ai/queries'
+import { getAIIntelligenceWithQueueStatus, type JobWithAI } from '@/lib/ai/queries'
 
 const JOB_COLUMNS =
   'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, salary_min, salary_max, salary_currency, salary_period, employment_type, intelligence, tags, is_remote, is_open_to_africa, eligibility, posted_at, created_at, expires_at, trust_score, trust_confidence, trust_signals, trust_version, is_flagged, flagged_reason, source, source_id'
@@ -79,8 +79,8 @@ export async function getSavedJobs(): Promise<JobWithAI<Job>[]> {
   // exactly like the Home/Jobs feeds (getJobsWithAI).
   if (jobs.length === 0) return []
   try {
-    const aiMap = await getAIIntelligenceForJobs(jobs.map((j) => j.id))
-    return jobs.map((j) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null }))
+    const { aiMap, queueStatus } = await getAIIntelligenceWithQueueStatus(jobs.map((j) => j.id))
+    return jobs.map((j) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null } as any))
   } catch {
     return jobs.map((j) => ({ ...j, aiIntelligence: null }))
   }

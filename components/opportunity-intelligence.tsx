@@ -10,6 +10,34 @@ interface Props {
   variant?: 'card' | 'detail'
 }
 
+
+function intelligenceState(row: any | null | undefined, queueStatus?: string | null): { status: "pending"|"complete"|"degraded"|"failed"; label: string; tone: string } {
+  // Has AI row — determine state from model_version
+  if (row) {
+    const mv = row.model_version || "";
+    // Real AI inference: contains provider:model pattern (e.g. "groq:llama-3.3-70b-versatile")
+    if (mv.includes(":") && !mv.includes("gemini-2.5-flash-v1") && !mv.includes("template-removed") && !mv.includes("rule-based")) {
+      return { status: "complete", label: "Verified", tone: "accent" };
+    }
+    // Regex/fallback only — no real AI
+    if (mv.startsWith("regex-") || mv === "no-ai-providers") {
+      return { status: "degraded", label: "Fallback", tone: "amber" };
+    }
+    // Old misleading constants — treated as degraded
+    if (mv === "gemini-2.5-flash-v1" || mv === "template-removed-2026" || mv === "rule-based-v1-fast") {
+      return { status: "degraded", label: "Legacy", tone: "amber" };
+    }
+    // Has data but unrecognized model
+    return { status: "complete", label: "Verified", tone: "accent" };
+  }
+
+  // No AI row — check queue status
+  if (queueStatus === "processing") return { status: "pending", label: "Processing", tone: "amber" };
+  if (queueStatus === "pending") return { status: "pending", label: "Queued", tone: "amber" };
+  if (queueStatus === "failed") return { status: "failed", label: "Failed", tone: "red" };
+  if (queueStatus === "completed") return { status: "failed", label: "Error", tone: "red" };
+  return { status: "pending", label: "Pending", tone: "amber" };
+}
 function africaFitLabel(elig: string | null | undefined, fallbackElig?: string | null): { label: string; tone: 'positive' | 'caution' | 'neutral' } {
   const effective = elig || fallbackElig || null
   switch (effective) {
@@ -135,6 +163,7 @@ function EvidenceQuote({ text, url, allowLink = true }: { text?: string | null; 
 export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons }: Props) {
   // Always show something, even when AI missing, using job fallbacks
   const hasAI = !!intelligence
+  const state = intelligenceState(intelligence, (job as any)?._queueStatus)
   const africa = africaFitLabel(intelligence?.africa_eligibility, job?.eligibility)
   const remote = remoteLabel(intelligence?.remote_eligibility, job?.is_remote)
   const salary = salaryTruthLabel(intelligence, job || null)
@@ -181,7 +210,7 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
           <ShieldCheck className="h-3.5 w-3.5 text-accent" aria-hidden />
           Opportunity Intelligence
         </p>
-        <span className={`text-[10px] ${isHigh ? 'text-accent' : 'text-muted-foreground'}`}>
+        <span className={`text-[10px] ${isHigh ? 'text-accent' : 'text-muted-foreground'}`}>{state.status === 'degraded' ? 'Degraded • ' : ''}
           {overall}% confidence • {intelligence.last_verified_at ? new Date(intelligence.last_verified_at).toLocaleDateString() : 'recently verified'}
         </span>
       </div>

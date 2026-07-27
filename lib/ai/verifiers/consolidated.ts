@@ -124,6 +124,18 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
     if (m) { try { aiResp = { ...AF, ...JSON.parse(m[0]) }; modelVersion = gw.response.provider + ":" + gw.response.model; aiUsed = true } catch {} }
   } catch (e: any) { if (e?.diag && Array.isArray(e.diag)) for (const d of e.diag) diags.push(d) }
 
+  // Normalize confidence values: AI models return either 0-1 (fractional)
+  // or 0-100 scale.  If all confidence fields are ≤ 1.0 and at least one
+  // is > 0, assume 0-1 scale and multiply by 100.
+  const confFields = ["africa_confidence","remote_confidence","salary_confidence","company_confidence","job_quality_confidence","experience_confidence","hiring_urgency_confidence"] as const
+  const allLeOne = confFields.every(f => (aiResp as any)[f] <= 1.0)
+  const anyGtZero = confFields.some(f => (aiResp as any)[f] > 0)
+  if (allLeOne && anyGtZero) {
+    for (const f of confFields) {
+      (aiResp as any)[f] = Math.round((aiResp as any)[f] * 100)
+    }
+  }
+
   const rx = { ...regexAfrica(combined), ...regexRemote(combined, job.is_remote), ...regexSalary(combined, job) }
   const merged = { ...AF, ...rx, ...aiResp }
   if (aiResp.africa_eligibility && aiResp.africa_eligibility !== "unknown") merged.africa_eligibility = aiResp.africa_eligibility

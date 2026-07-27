@@ -102,8 +102,19 @@ export async function POST(req: Request) {
     // ---- 7. Read bytes --------------------------------------------------
     let buffer: Buffer
     try {
+      logStep(reqId, "reading_bytes", { reportedSize: fileSize })
       const ab = await file.arrayBuffer()
       buffer = Buffer.from(ab)
+      logStep(reqId, "bytes_read", {
+        reportedSize: fileSize,
+        actualSize: buffer.length,
+        match: buffer.length === fileSize,
+        firstBytes: buffer.slice(0, 16).toString("hex"),
+      })
+      if (buffer.length === 0) {
+        logStep(reqId, "empty_buffer", { reportedSize: fileSize })
+        return jsonError(reqId, "This file looks empty.", 400)
+      }
     } catch (e) {
       logStep(reqId, "buffer_read_failed", { userId, err: errMsg(e) })
       throw new Error("We could not read this file. Please try again.")

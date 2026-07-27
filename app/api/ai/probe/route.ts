@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
 import { probeProvider } from '@/lib/ai/orchestrator'
 import { PROVIDERS } from '@/lib/ai/providers/types'
+import { getBenchmarkJobs, runBenchmark, compareBenchmarks } from '@/lib/ai/benchmark'
 
-export const runtime = 'nodejs'; export const dynamic = 'force-dynamic'; export const maxDuration = 120
+export const runtime = 'nodejs'; export const dynamic = 'force-dynamic'; export const maxDuration = 300
 
 function isAuthorized(req: Request): boolean {
   if (req.headers.get('x-vercel-cron') === '1') return true
@@ -12,10 +13,27 @@ function isAuthorized(req: Request): boolean {
 
 export async function POST(req: Request) {
   if (!isAuthorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const mode = new URL(req.url).searchParams.get('mode') || 'all'
+
+  if (mode === 'benchmark') {
+    const started = Date.now()
+    const jobs = await getBenchmarkJobs()
+    if (!jobs.length) return NextResponse.json({ error: 'No benchmark jobs found' }, { status: 500 })
+    const current = await runBenchmark(jobs)
+    const comparison = await compareBenchmarks(current)
+    return NextResponse.json({
+      ok: true, elapsedMs: Date.now() - started, jobsTested: jobs.length,
+      summary: comparison.summary, regressions: comparison.regressions.slice(0, 10),
+      results: current.map(r => ({
+        job: r.jobTitle?.slice(0,50), company: r.company, source: r.source,
+        provider: r.provider, quality: r.qualityScore, latency: r.latencyMs,
+        aiUsed: r.aiUsed, hallucinations: r.hallucinationRisk,
+      })),
+    })
+  }
 
   let probed = 0, success = 0, failed = 0
   const results: any[] = []
-
   for (const cfg of PROVIDERS) {
     if (!cfg.enabled) continue
     probed++
@@ -23,29 +41,8 @@ export async function POST(req: Request) {
     const result = await probeProvider(cfg)
     const latency = Date.now() - start
     if (result.ok) success++; else failed++
-    results.push({ provider: cfg.id, model: cfg.model, ok: result.ok, latencyMs: latency, error: result.error?.slice(0, 200) || null })
-
-    // Persist probe result to diagnostics table
-    try {
-      const base = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-      const key = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-      if (base && key) {
-        fetch(`${base}/rest/v1/ai_provider_log`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}`, "apikey": key },
-          body: JSON.stringify({
-            agent_id: "provider-probe", provider: cfg.id, model: cfg.model,
-            event: result.ok ? "success" : "failure",
-            retry_count: 0, fallback_used: false, duration_ms: latency,
-            prompt_len: 2, response_len: result.ok ? 2 : null,
-            error_code: result.error ? "probe_failed" : null,
-            error_message: result.error?.slice(0, 500) || null,
-          }),
-        }).catch(() => {})
-      }
-    } catch {}
+    results.push({ provider: cfg.id, model: cfg.model, ok: result.ok, latencyMs: latency, error: result.error?.slice(0,200) || null })
   }
-
   return NextResponse.json({ ok: true, probed, success, failed, results })
 }
 

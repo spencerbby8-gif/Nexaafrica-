@@ -249,10 +249,41 @@ export async function processAIQueue(batchSize = 100) {
 
       
 
-      // Second opinion: log when confidence is too low to need a review
-      if (intelligence.overallConfidence < 30 && intelligence.modelVersion.includes(":")) {
-        console.log(JSON.stringify({ scope:"ai_engine", event:"low_confidence", jobId:(job as any).id?.slice(0,8)||"", confidence:intelligence.overallConfidence }))
-      }
+      // Second opinion: trigger dual-provider verification when quality is low
+      try {
+        const { shouldVerify, getSecondOpinion } = await import("./secondOpinion")
+        const check = shouldVerify({
+          africa_eligibility: intelligence.africa.value, africa_evidence: intelligence.africa.evidence[0]?.text,
+          africa_confidence: intelligence.africa.confidence, remote_eligibility: intelligence.remote.value,
+          remote_evidence: intelligence.remote.evidence[0]?.text, remote_confidence: intelligence.remote.confidence,
+          salary_transparency: intelligence.salary.value.transparency, salary_evidence: intelligence.salary.evidence[0]?.text,
+          salary_confidence: intelligence.salary.confidence, company_legitimacy: intelligence.company.value,
+          company_evidence: intelligence.company.evidence[0]?.text, company_confidence: intelligence.company.confidence,
+          experience_level: intelligence.experience.value, experience_confidence: intelligence.experience.confidence,
+          job_quality: intelligence.quality.value, job_quality_evidence: intelligence.quality.evidence[0]?.text,
+          job_quality_confidence: intelligence.quality.confidence, required_skills: intelligence.skills.required.value,
+        })
+        if (check.needed) {
+          const jobId = (job as any).id
+          const result = await getSecondOpinion(job as any, {
+            ai: {
+              africa_eligibility: intelligence.africa.value, africa_evidence: intelligence.africa.evidence[0]?.text,
+              africa_confidence: intelligence.africa.confidence, remote_eligibility: intelligence.remote.value,
+              remote_evidence: intelligence.remote.evidence[0]?.text, remote_confidence: intelligence.remote.confidence,
+              salary_transparency: intelligence.salary.value.transparency, salary_evidence: intelligence.salary.evidence[0]?.text,
+              salary_confidence: intelligence.salary.confidence, company_legitimacy: intelligence.company.value,
+              company_evidence: intelligence.company.evidence[0]?.text, company_confidence: intelligence.company.confidence,
+              experience_level: intelligence.experience.value, experience_confidence: intelligence.experience.confidence,
+              job_quality: intelligence.quality.value, job_quality_evidence: intelligence.quality.evidence[0]?.text,
+              job_quality_confidence: intelligence.quality.confidence, required_skills: intelligence.skills.required.value,
+            }, modelVersion: intelligence.modelVersion, diags: diags
+          })
+          console.log(JSON.stringify({ scope:"ai_engine", event:"second_opinion",
+            jobId: jobId?.slice(0,8)||"", needed:check.needed, reason:check.reason,
+            used:result.used, audit:result.auditNote }))
+        }
+      } catch (e) { console.log(JSON.stringify({ scope:"ai_engine", event:"so_error",
+        error:(e instanceof Error?e.message:String(e)).slice(0,200) })) }
       // Persist provider diagnostics (batch insert)
       if (diags.length > 0) {
         const diagRows = diags.slice(0, 100).map(function(d: any) {

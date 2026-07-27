@@ -287,7 +287,7 @@ export async function POST(req: Request) {
 
     // ---- 16. Side metadata (non-fatal) ---------------------------------
     if (cvPath) {
-      await supabase.from("profiles").update({ cv_storage_path: cvPath }).eq("id", userId).catch(() => {})
+      supabase.from("profiles").update({ cv_storage_path: cvPath }).eq("id", userId).then(() => {}, () => {})
     }
 
     // Use service client for internal metadata table
@@ -298,7 +298,7 @@ export async function POST(req: Request) {
     } catch {}
 
     const now = new Date().toISOString()
-    await metaClient.from("profile_ai_metadata").upsert({
+    const aiMeta = await metaClient.from("profile_ai_metadata").upsert({
       profile_id: userId,
       model: modelChain,
       prompt_version: PROMPT_VERSION,
@@ -327,11 +327,14 @@ export async function POST(req: Request) {
       ats_score: atsScore,
       reviewer_changes: reviewerChanges.length > 0 ? reviewerChanges : null,
       factual_consistency_score: consistencyReport.score,
-    }, { onConflict: "profile_id" }).catch((e: any) => {
+    }, { onConflict: "profile_id" })
+
+    if (aiMeta?.error) {
       logStep(reqId, "metadata_save_fail", {
-        code: e?.code, message: e?.message?.slice(0, 200),
+        code: aiMeta.error.code ?? null,
+        message: aiMeta.error.message?.slice(0, 200),
       })
-    })
+    }
 
     logStep(reqId, "response_sent", { userId, totalMs: Date.now() - t0 })
     return NextResponse.json({

@@ -246,6 +246,25 @@ export async function processAIQueue(batchSize = 100) {
           const newIsFailed = intelligence.modelVersion.includes("failed-no-evidence")
           if (existingIsReal && newIsFailed) {
             console.log(JSON.stringify({ scope: "ai_engine", event: "protected_existing", jobId: jobId8, oldModel: existing.model_version, newModel: intelligence.modelVersion, reason: "existing_is_real_new_is_failed" }));
+
+      
+
+      // Second opinion: log when confidence is too low to need a review
+      if (intelligence.overallConfidence < 30 && intelligence.modelVersion.includes(":")) {
+        console.log(JSON.stringify({ scope:"ai_engine", event:"low_confidence", jobId:(job as any).id?.slice(0,8)||"", confidence:intelligence.overallConfidence }))
+      }
+      // Persist provider diagnostics (batch insert)
+      if (diags.length > 0) {
+        const diagRows = diags.slice(0, 100).map(function(d: any) {
+          return {
+            job_id: job.id, agent_id: "ai-queue", provider: d.provider, model: d.model, event: d.event,
+            http_status: d.httpStatus || null, error_code: d.errorCode || null, error_message: (d.errorMessage||"").slice(0,500) || null,
+            error_body: (d.errorBody||"").slice(0,1000) || null, retry_count: d.retryCount, duration_ms: d.durationMs || null,
+            prompt_len: d.promptLen || null, response_len: d.responseLen || null, fallback_used: d.retryCount > 0
+          };
+        });
+        supabase.from("ai_provider_log").insert(diagRows).then(function(){}, function(){});
+      }
             // Evaluate quality for every completed intelligence record
       try {
         const { evaluateIntelligence } = await import("./quality")
@@ -327,25 +346,6 @@ export async function processAIQueue(batchSize = 100) {
         evidence_urls: intelligence.africa.sourceUrls,
         last_verified_at: new Date().toISOString(),
       }, { onConflict: "job_id" })
-
-      
-
-      // Second opinion: log when confidence is too low to need a review
-      if (intelligence.overallConfidence < 30 && intelligence.modelVersion.includes(":")) {
-        console.log(JSON.stringify({ scope:"ai_engine", event:"low_confidence", jobId:(job as any).id?.slice(0,8)||"", confidence:intelligence.overallConfidence }))
-      }
-      // Persist provider diagnostics (batch insert)
-      if (diags.length > 0) {
-        const diagRows = diags.slice(0, 100).map(function(d: any) {
-          return {
-            job_id: job.id, agent_id: "ai-queue", provider: d.provider, model: d.model, event: d.event,
-            http_status: d.httpStatus || null, error_code: d.errorCode || null, error_message: (d.errorMessage||"").slice(0,500) || null,
-            error_body: (d.errorBody||"").slice(0,1000) || null, retry_count: d.retryCount, duration_ms: d.durationMs || null,
-            prompt_len: d.promptLen || null, response_len: d.responseLen || null, fallback_used: d.retryCount > 0
-          };
-        });
-        supabase.from("ai_provider_log").insert(diagRows).then(function(){}, function(){});
-      }
       await supabase.from("ai_processing_queue").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", item.id)
       processed++
     } catch (e) {

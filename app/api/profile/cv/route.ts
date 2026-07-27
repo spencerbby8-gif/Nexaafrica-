@@ -236,17 +236,55 @@ export async function POST(req: Request) {
       })
     }
 
-    // ---- 14. Build complete metadata -----------------------------------
+    // ---- 14. STAGE 5: ATS scoring, skill categorization, metrics -------
+    const tEnrichment = Date.now()
+    const { scoreATSCompatibility } = await import("@/lib/profile/ats")
+    const { categorizeSkills } = await import("@/lib/profile/skills")
+    const { getMetricSummary } = await import("@/lib/profile/metrics")
+
+    // ATS scoring
+    const atsResult = scoreATSCompatibility(finalProfile)
+    logStep(reqId, "ats_scoring_done", {
+      ms: Date.now() - tEnrichment,
+      score: atsResult.overall,
+      issues: atsResult.issues.length,
+      suggestions: atsResult.suggestions.length,
+    })
+
+    // Skill categorization
+    const categorizedSkills = categorizeSkills(finalProfile.skills)
+    logStep(reqId, "skill_categorization_done", {
+      technical: categorizedSkills.technical.length,
+      soft: categorizedSkills.soft.length,
+      tools: categorizedSkills.tools.length,
+      languages: categorizedSkills.languages.length,
+      other: categorizedSkills.other.length,
+    })
+
+    // Metric extraction
+    const fullText = `${finalProfile.headline} ${finalProfile.summary} ${finalProfile.experience.map(e => e.description).join(' ')}`
+    const metricSummary = getMetricSummary(fullText)
+    logStep(reqId, "metric_extraction_done", {
+      total: metricSummary.total,
+      percentages: metricSummary.byType.percentage,
+      numbers: metricSummary.byType.number,
+      timeframes: metricSummary.byType.timeframe,
+      currency: metricSummary.byType.currency,
+      comparisons: metricSummary.byType.comparison,
+    })
+
+    // ---- 15. Build complete metadata -----------------------------------
     const tokensInput = geminiResult.tokensInput || 0
     const tokensOutput = geminiResult.tokensOutput || 0
 
     const qualityScore = Math.round(
-      (validationReport.confidence.overall * 0.4) +
-      (consistencyReport.score * 0.4) +
-      (reviewerApplied ? 20 : 0)
+      (validationReport.confidence.overall * 0.3) +
+      (consistencyReport.score * 0.3) +
+      (atsResult.overall * 0.3) +
+      (reviewerApplied ? 10 : 0)
     )
 
-    const atsScore = validationReport.confidence.overall // Base ATS on validation strength
+    const atsScore = atsResult.overall // Use actual ATS score instead of validation confidence
 
     const pipelineMetadata = {
       parserModel: MODEL,
@@ -257,18 +295,34 @@ export async function POST(req: Request) {
       consistencyPassed: consistencyReport.passed,
       consistencyScore: consistencyReport.score,
       atsScore,
+      atsBreakdown: atsResult.breakdown,
+      atsIssues: atsResult.issues.length,
+      atsSuggestions: atsResult.suggestions,
       qualityScore,
       reviewerChanges,
       consistencyIssues: consistencyReport.issues.map((i) => ({
         field: i.field, type: i.type, message: i.message,
       })),
+      skillCategorization: {
+        technical: categorizedSkills.technical.length,
+        soft: categorizedSkills.soft.length,
+        tools: categorizedSkills.tools.length,
+        languages: categorizedSkills.languages.length,
+        other: categorizedSkills.other.length,
+      },
+      metrics: {
+        total: metricSummary.total,
+        byType: metricSummary.byType,
+        suggestions: metricSummary.suggestions,
+      },
       tokenUsage: { input: tokensInput, output: tokensOutput },
       timings: {
-        pdfExtractionMs: Date.now() - tPdf - (Date.now() - tGemini) - (Date.now() - tValidate) - (Date.now() - tCerebras) - (Date.now() - tConsistency),
+        pdfExtractionMs: Date.now() - tPdf - (Date.now() - tGemini) - (Date.now() - tValidate) - (Date.now() - tCerebras) - (Date.now() - tConsistency) - (Date.now() - tEnrichment),
         geminiMs: Date.now() - tGemini,
         validationMs: Date.now() - tValidate,
         cerebrasMs: Date.now() - tCerebras,
         consistencyMs: Date.now() - tConsistency,
+        enrichmentMs: Date.now() - tEnrichment,
         totalMs: Date.now() - t0,
       },
     }
@@ -334,6 +388,15 @@ export async function POST(req: Request) {
           field: i.field, type: i.type, severity: i.severity, message: i.message,
         })),
       },
+      ats_result: {
+        score: atsResult.overall,
+        breakdown: atsResult.breakdown,
+        issues: atsResult.issues,
+        suggestions: atsResult.suggestions,
+        keywordDensity: atsResult.keywordDensity,
+      },
+      skill_categorization: categorizedSkills,
+      metrics: metricSummary,
       quality_score: qualityScore,
       ats_score: atsScore,
       reviewer_changes: reviewerChanges.length > 0 ? reviewerChanges : null,
@@ -361,9 +424,19 @@ export async function POST(req: Request) {
         consistencyScore: consistencyReport.score,
         qualityScore,
         atsScore,
+        atsBreakdown: atsResult.breakdown,
+        atsIssues: atsResult.issues.slice(0, 5), // Top 5 issues
+        atsSuggestions: atsResult.suggestions.slice(0, 3), // Top 3 suggestions
         factualConsistencyScore: consistencyReport.score,
         changesByReviewer: reviewerChanges,
         consistencyIssues: consistencyReport.issues.slice(0, 10),
+        skillCategorization: categorizedSkills,
+        metrics: {
+          total: metricSummary.total,
+          byType: metricSummary.byType,
+          topMetrics: metricSummary.metrics.slice(0, 5), // Top 5 metrics
+          suggestions: metricSummary.suggestions,
+        },
       },
     })
   } catch (err) {

@@ -246,7 +246,32 @@ export async function processAIQueue(batchSize = 100) {
           const newIsFailed = intelligence.modelVersion.includes("failed-no-evidence")
           if (existingIsReal && newIsFailed) {
             console.log(JSON.stringify({ scope: "ai_engine", event: "protected_existing", jobId: jobId8, oldModel: existing.model_version, newModel: intelligence.modelVersion, reason: "existing_is_real_new_is_failed" }));
-            await supabase.from("ai_processing_queue").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", item.id)
+            // Evaluate quality for every completed intelligence record
+      try {
+        const { evaluateIntelligence } = await import("./quality")
+        const metrics = evaluateIntelligence({
+          africa_eligibility: intelligence.africa.value, africa_evidence: intelligence.africa.evidence[0]?.text,
+          africa_confidence: intelligence.africa.confidence, remote_eligibility: intelligence.remote.value,
+          remote_evidence: intelligence.remote.evidence[0]?.text, remote_confidence: intelligence.remote.confidence,
+          salary_transparency: intelligence.salary.value.transparency, salary_evidence: intelligence.salary.evidence[0]?.text,
+          salary_confidence: intelligence.salary.confidence, company_legitimacy: intelligence.company.value,
+          company_evidence: intelligence.company.evidence[0]?.text, company_confidence: intelligence.company.confidence,
+          job_quality: intelligence.quality.value, job_quality_evidence: intelligence.quality.evidence[0]?.text,
+          job_quality_confidence: intelligence.quality.confidence, experience_level: intelligence.experience.value,
+          experience_confidence: intelligence.experience.confidence,
+        })
+        supabase.from("job_ai_intelligence").update({
+          quality_score: metrics.overallQuality,
+          quality_breakdown: {
+            truth_score: metrics.truthScore, evidence_coverage: metrics.evidenceCoverage,
+            hallucination_risk: metrics.hallucinationRisk, missing_fields: metrics.missingFields,
+            confidence_calibration: metrics.confidenceCalibration, evidence_strength: metrics.evidenceStrength,
+            dimensions: metrics.dimensions,
+          },
+          quality_evaluated_at: new Date().toISOString(),
+        }).eq("job_id", job.id).then(()=>{},()=>{})
+      } catch {}
+      await supabase.from("ai_processing_queue").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", item.id)
             processed++
             continue
           }

@@ -7,6 +7,7 @@ import {
   isOpenToAfrica,
   parsePostedDate,
   resolveCountry,
+  validateJobData,
   type NormalizedJob,
 } from '@/lib/ingest/normalize'
 
@@ -65,6 +66,12 @@ export async function fetchHimalayas(limit = 100): Promise<NormalizedJob[]> {
   
   for (const j of allJobs.slice(0, limit)) {
     if (!j.title || !j.companyName) continue
+    
+    // Validate company and title to reject placeholder/bad data
+    if (!validateJobData(j.companyName, j.title)) {
+      console.log(`[himalayas] Skipping job with invalid data: company="${j.companyName}", title="${j.title}"`)
+      continue
+    }
     
     const description_md = htmlToMarkdown(j.description || j.excerpt)
     if (description_md.length < 60) continue

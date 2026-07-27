@@ -7,6 +7,7 @@ import {
   isOpenToAfrica,
   parsePostedDate,
   resolveCountry,
+  validateJobData,
   type NormalizedJob,
 } from '@/lib/ingest/normalize'
 
@@ -46,6 +47,12 @@ export async function fetchRemoteOK(): Promise<NormalizedJob[]> {
   
   for (const j of jobs as RemoteOKJob[]) {
     if (!j.position || !j.company) continue
+    
+    // Validate company and title to reject placeholder/bad data
+    if (!validateJobData(j.company, j.position)) {
+      console.log(`[remoteok] Skipping job with invalid data: company="${j.company}", title="${j.position}"`)
+      continue
+    }
     
     // RemoteOK is 100% remote
     const description_md = htmlToMarkdown(j.description)

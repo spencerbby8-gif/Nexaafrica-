@@ -174,6 +174,8 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
   const requiredSkills = (intelligence?.required_skills || job?.tags || []).slice(0, 4)
 
   if (!hasAI) {
+    const badgeColor = state.status === 'failed' ? 'border-red-500/20 bg-red-500/10 text-red-600' : 'border-amber-500/20 bg-amber-500/10 text-amber-600'
+    const msg = state.status === 'failed' ? 'Intelligence unavailable — processing failed' : 'Intelligence pending — our verifier is checking this role'
     return (
       <div className="mt-2.5 rounded-md border border-border/60 bg-secondary/30 px-2.5 py-2.5">
         <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
@@ -181,7 +183,7 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
             <ShieldCheck className="h-3.5 w-3.5 text-amber-500" aria-hidden />
             Opportunity Intelligence
           </p>
-          <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[9px] text-amber-600">Pending</span>
+          <span className={'rounded-full border px-1.5 py-0.5 text-[9px] ' + badgeColor}>{state.label}</span>
         </div>
         <ul className="mt-2 grid gap-1.5 text-[11px] leading-snug">
           <li className="flex gap-1.5"><Globe className="mt-[1px] h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /><span className="text-muted-foreground">{africa.label}</span></li>
@@ -191,8 +193,8 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
           <li className="flex gap-1.5"><GraduationCap className="mt-[1px] h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /><span className="text-muted-foreground">{exp} {requiredSkills.length ? `• ${requiredSkills.join(', ')}` : ''}</span></li>
         </ul>
         <p className="mt-2 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" aria-hidden />
-          Intelligence pending — our verifier is checking this role
+          <span className={'h-1.5 w-1.5 rounded-full ' + (state.status === 'pending' ? 'animate-pulse bg-amber-500' : 'bg-red-400')} aria-hidden />
+          {msg}
         </p>
         {matchReasons && matchReasons.length > 0 && (
           <p className="mt-1.5 rounded bg-accent/10 px-2 py-1.5 text-[11px] leading-relaxed text-foreground/90">

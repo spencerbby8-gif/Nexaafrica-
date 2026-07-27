@@ -170,8 +170,43 @@ export function CvUpload({ next }: Props) {
     setError(null)
 
     try {
+      // [FIX] Pre-flight content check: materialize the file content before
+      // creating FormData. This catches Android Google Drive files that
+      // report size > 0 but have inaccessible content (streaming proxy).
+      // Without this, fetch() fails during multipart encoding with a
+      // generic "Failed to fetch" error that's hard to debug.
+      let uploadFile = file
+      try {
+        const ab = await file.arrayBuffer()
+        if (ab.byteLength === 0 && file.size > 0) {
+          // File reported size > 0 but arrayBuffer() returned 0 bytes
+          // This is the Android Drive streaming proxy scenario
+          setError({
+            title: "We couldn\u2019t read this PDF correctly.",
+            hint: "If you opened the file from cloud storage like Google Drive, download it to your device first, then upload that copy.",
+          })
+          setStatus("error")
+          return
+        }
+        if (ab.byteLength > 0 && ab.byteLength !== file.size) {
+          // Content size doesn't match reported size — reconstruct File
+          uploadFile = new File([ab], file.name, {
+            type: file.type || "application/pdf",
+            lastModified: file.lastModified,
+          })
+        }
+      } catch {
+        // arrayBuffer() threw — content is inaccessible
+        setError({
+          title: "We couldn\u2019t read this PDF correctly.",
+          hint: "If you opened the file from cloud storage like Google Drive, download it to your device first, then upload that copy.",
+        })
+        setStatus("error")
+        return
+      }
+
       const fd = new FormData()
-      fd.append("file", file)
+      fd.append("file", uploadFile)
 
       // Move into parsing UI as soon as upload starts; the API call covers both.
       setStatus("parsing")
@@ -189,16 +224,15 @@ export function CvUpload({ next }: Props) {
         stopStepRotation()
         setStatus("error")
         track({ name: "cv_upload_failed", props: { reason: "network" } })
-        // If the file was small (likely a Drive content URI), the fetch
-        // failure is probably a content-access issue, not a network drop.
-        if (fileWasSmallRef.current) {
-          setError({
-            title: "We couldn\u2019t read this PDF correctly.",
-            hint: "If you opened the file from cloud storage like Google Drive, download it to your device first, then upload that copy.",
-          })
-        } else {
-          setHumanError(networkErr, "cv-upload")
-        }
+        // [FIX] Android Google Drive files can report size > 0 but have
+        // inaccessible content (streaming proxy). When fetch() fails during
+        // CV upload, ALWAYS show the Drive hint — it's the most common cause
+        // of upload failures on mobile. The previous check (fileWasSmallRef)
+        // only caught size < 1024, missing files with real PDF sizes.
+        setError({
+          title: "We couldn\u2019t read this PDF correctly.",
+          hint: "If you opened the file from cloud storage like Google Drive, download it to your device first, then upload that copy. Otherwise, check your connection and try again.",
+        })
         return
       }
 

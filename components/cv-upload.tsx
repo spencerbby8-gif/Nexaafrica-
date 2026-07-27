@@ -45,6 +45,7 @@ type Props = {
 export function CvUpload({ next }: Props) {
   const router = useRouter()
   const inputRef = useRef<HTMLInputElement>(null)
+  const fileWasSmallRef = useRef(false) // true when uploaded file reported size < 1024
   const [file, setFile] = useState<File | null>(null)
   const [status, setStatus] = useState<Status>("idle")
   const [error, setError] = useState<{ title: string; hint?: string } | null>(null)
@@ -62,7 +63,7 @@ export function CvUpload({ next }: Props) {
     setError(humanizeError(input as Parameters<typeof humanizeError>[0], ctx))
   }
 
-  const validate = (f: File): { title: string; hint?: string } | null => {
+  const validate = async (f: File): Promise<{ title: string; hint?: string } | null> => {
     if (f.type !== "application/pdf" && !f.name.toLowerCase().endsWith(".pdf")) {
       return { title: "Please upload a PDF file.", hint: "Other file types aren\u2019t supported." }
     }
@@ -72,18 +73,34 @@ export function CvUpload({ next }: Props) {
         hint: "Please upload a PDF under 4MB.",
       }
     }
+    // Google Drive on mobile often provides File objects whose reported size
+    // is 0 (content:// URI not yet materialised) or a tiny reference stencil
+    // (< 1 KB).  Try to read the actual bytes before deciding the file is
+    // invalid — if the browser can access the content we let it through.
     if (f.size < 1024) {
-      return {
-        title: "We couldn\u2019t read this PDF correctly.",
-        hint: "If you opened the file from cloud storage like Google Drive, download it to your device first, then upload that copy.",
+      try {
+        const ab = await f.arrayBuffer()
+        if (ab.byteLength === 0) {
+          return {
+            title: "We couldn\u2019t read this PDF correctly.",
+            hint: "If you opened the file from cloud storage like Google Drive, download it to your device first, then upload that copy.",
+          }
+        }
+        // Bytes accessible — allow through (server validates content).
+      } catch {
+        return {
+          title: "We couldn\u2019t read this PDF correctly.",
+          hint: "If you opened the file from cloud storage like Google Drive, download it to your device first, then upload that copy.",
+        }
       }
     }
     return null
   }
 
-  const onSelect = (f: File | null) => {
+  const onSelect = async (f: File | null) => {
     if (!f) return
-    const v = validate(f)
+    fileWasSmallRef.current = f.size < 1024
+    const v = await validate(f)
     if (v) {
       setError(v)
       setStatus("error")
@@ -98,7 +115,7 @@ export function CvUpload({ next }: Props) {
     e.preventDefault()
     setDragActive(false)
     const f = e.dataTransfer.files?.[0]
-    if (f) onSelect(f)
+    if (f) void onSelect(f)
   }, [])
 
   const startStepRotation = () => {
@@ -143,7 +160,16 @@ export function CvUpload({ next }: Props) {
         stopStepRotation()
         setStatus("error")
         track({ name: "cv_upload_failed", props: { reason: "network" } })
-        setHumanError(networkErr, "cv-upload")
+        // If the file was small (likely a Drive content URI), the fetch
+        // failure is probably a content-access issue, not a network drop.
+        if (fileWasSmallRef.current) {
+          setError({
+            title: "We couldn\u2019t read this PDF correctly.",
+            hint: "If you opened the file from cloud storage like Google Drive, download it to your device first, then upload that copy.",
+          })
+        } else {
+          setHumanError(networkErr, "cv-upload")
+        }
         return
       }
 
@@ -187,6 +213,7 @@ export function CvUpload({ next }: Props) {
     setFile(null)
     setError(null)
     setStatus("idle")
+    fileWasSmallRef.current = false
     if (inputRef.current) inputRef.current.value = ""
   }
 
@@ -366,7 +393,7 @@ export function CvUpload({ next }: Props) {
           type="file"
           accept="application/pdf,.pdf"
           className="sr-only"
-          onChange={(e) => onSelect(e.target.files?.[0] ?? null)}
+          onChange={(e) => { void onSelect(e.target.files?.[0] ?? null) }}
         />
       </label>
 

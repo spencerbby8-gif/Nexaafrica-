@@ -117,12 +117,20 @@ async function probeProvider(cfg: ProviderConfig): Promise<{ ok: boolean; latenc
   } catch (e: any) { return { ok: false, latencyMs: Date.now() - start, error: e?.message || String(e) } }
 }
 
-export async function selectProvider(): Promise<ProviderConfig | null> {
+export async function selectProvider(taskType?: string): Promise<ProviderConfig | null> {
   await warmHealthFromDB()
   const now = Date.now()
   const enabled = PROVIDERS.filter(p => p.enabled)
   if (!enabled.length) return null
-  const scored = enabled.map(cfg => {
+  
+  // Filter by task type if specified
+  const candidates = taskType 
+    ? enabled.filter(p => !p.taskTypes || p.taskTypes.length === 0 || p.taskTypes.includes(taskType))
+    : enabled
+  
+  if (candidates.length === 0) return null
+  
+  const scored = candidates.map(cfg => {
     const s = getState(cfg.id)
     const inCooldown = now < s.cooldownUntil
     const quotaOk = !s.isQuotaExhausted || now > s.quotaResetAt
@@ -130,7 +138,8 @@ export async function selectProvider(): Promise<ProviderConfig | null> {
     const latencyPenalty = s.avgLatencyMs > 0 ? s.avgLatencyMs / 100 : 0
     const failurePenalty = s.consecutiveFailures * 10
     const priorityBonus = (10 - cfg.priority) * 5
-    const score = usable ? priorityBonus - latencyPenalty - failurePenalty : -9999
+    const taskBonus = taskType && cfg.taskTypes?.includes(taskType) ? 20 : 0
+    const score = usable ? priorityBonus - latencyPenalty - failurePenalty + taskBonus : -9999
     return { cfg, score, usable }
   })
   scored.sort((a, b) => b.score - a.score)
@@ -179,14 +188,31 @@ export async function refreshProviderHealth() {
 }
 
 export async function orchestrate(req: AIRequest): Promise<GatewayResult> {
-  let provider = await selectProvider()
+  // Detect task type from agentId
+  const taskType = detectTaskType(req.agentId)
+  
+  let provider = await selectProvider(taskType)
   const diag: ProviderCallDiag[] = []
-  if (!provider) { await refreshProviderHealth(); provider = await selectProvider() }
+  if (!provider) { await refreshProviderHealth(); provider = await selectProvider(taskType) }
   if (!provider) { const err: any = new Error("All providers unhealthy"); err.diag = diag; throw err }
-  return tryProvider(provider, req, diag)
+  return tryProvider(provider, req, diag, taskType)
 }
 
-async function tryProvider(cfg: ProviderConfig, req: AIRequest, diag: ProviderCallDiag[]): Promise<GatewayResult> {
+function detectTaskType(agentId: string): string | undefined {
+  const id = agentId.toLowerCase()
+  if (id.includes('cv') || id.includes('profile')) return 'cv_parsing'
+  if (id.includes('job') || id.includes('intelligence')) return 'job_intelligence'
+  if (id.includes('verifier') || id.includes('extract')) return 'fast_extraction'
+  if (id.includes('analysis') || id.includes('complex')) return 'complex_analysis'
+  if (id.includes('bulk') || id.includes('batch')) return 'bulk_processing'
+  if (id.includes('code')) return 'code_analysis'
+  if (id.includes('edge')) return 'edge_processing'
+  if (id.includes('european')) return 'european_jobs'
+  if (id.includes('gpu')) return 'gpu_accelerated'
+  return undefined
+}
+
+async function tryProvider(cfg: ProviderConfig, req: AIRequest, diag: ProviderCallDiag[], taskType?: string): Promise<GatewayResult> {
   const s = getState(cfg.id); const rc = s.consecutiveFailures
   diag.push({ provider: cfg.id, model: cfg.model, event: "attempt", retryCount: rc, promptLen: req.prompt.length })
   try {
@@ -195,8 +221,8 @@ async function tryProvider(cfg: ProviderConfig, req: AIRequest, diag: ProviderCa
     return { response, fallbackUsed: rc > 0, fallbackChain: [cfg.id], diag }
   } catch (e: any) {
     recordOrchFailure(cfg.id, e instanceof Error ? e.message : String(e))
-    const next = await selectProvider()
-    if (next && next.id !== cfg.id) return tryProvider(next, req, diag)
+    const next = await selectProvider(taskType)
+    if (next && next.id !== cfg.id) return tryProvider(next, req, diag, taskType)
     const err: any = new Error(`AI pipeline failed. Last: ${cfg.id}: ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`)
     err.diag = diag; throw err
   }

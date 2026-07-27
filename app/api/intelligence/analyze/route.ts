@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { IntelligenceOrchestrator } from '@/lib/intelligence/orchestrator'
+import { withRateLimit, intelligenceRateLimiters } from '@/lib/rate-limit'
 
 /**
  * POST /api/intelligence/analyze
  * Analyze a job and generate intelligence scores
  */
-export async function POST(request: NextRequest) {
+async function analyzeHandler(request: NextRequest): Promise<NextResponse> {
   try {
     const body = await request.json()
     const { job_id } = body
@@ -67,11 +68,14 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// Export with rate limiting applied
+export const POST = withRateLimit(analyzeHandler, intelligenceRateLimiters.analyze)
+
 /**
  * GET /api/intelligence/analyze
  * Get existing intelligence for a job
  */
-export async function GET(request: NextRequest) {
+async function getHandler(request: NextRequest): Promise<NextResponse> {
   try {
     const { searchParams } = new URL(request.url)
     const jobId = searchParams.get('job_id')
@@ -130,3 +134,6 @@ export async function GET(request: NextRequest) {
     )
   }
 }
+
+// Export with rate limiting applied
+export const GET = withRateLimit(getHandler, intelligenceRateLimiters.get)

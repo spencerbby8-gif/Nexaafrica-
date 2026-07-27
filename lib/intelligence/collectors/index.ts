@@ -11,6 +11,7 @@ export { DomainQualityCollector } from './domain-quality'
 export { BrokenLinksCollector } from './broken-links'
 export { DuplicateDetectionCollector } from './duplicate-detection'
 export { SalaryRealismCollector } from './salary-realism'
+export { CompanyReputationCollector } from './company-reputation'
 
 // Collector registry
 import { BaseEvidenceCollector } from './base'
@@ -21,6 +22,7 @@ import { DomainQualityCollector } from './domain-quality'
 import { BrokenLinksCollector } from './broken-links'
 import { DuplicateDetectionCollector } from './duplicate-detection'
 import { SalaryRealismCollector } from './salary-realism'
+import { CompanyReputationCollector } from './company-reputation'
 import type { EvidenceType } from '../types'
 
 export const COLLECTOR_REGISTRY: Record<EvidenceType, new () => BaseEvidenceCollector> = {
@@ -31,12 +33,11 @@ export const COLLECTOR_REGISTRY: Record<EvidenceType, new () => BaseEvidenceColl
   broken_links: BrokenLinksCollector,
   duplicate_detection: DuplicateDetectionCollector,
   salary_realism: SalaryRealismCollector,
-  // Additional collectors will be added here
-  company_reputation: CompanyWebsiteCollector, // Placeholder
-  hiring_regions: CareerPageCollector, // Placeholder
-  visa_support: CareerPageCollector, // Placeholder
-  eor_payroll: CareerPageCollector, // Placeholder
-  prior_intelligence: CompanyWebsiteCollector, // Placeholder
+  company_reputation: CompanyReputationCollector,
+  hiring_regions: CareerPageCollector, // Placeholder - TODO: Implement dedicated collector
+  visa_support: CareerPageCollector, // Placeholder - TODO: Implement dedicated collector
+  eor_payroll: CareerPageCollector, // Placeholder - TODO: Implement dedicated collector
+  prior_intelligence: CompanyWebsiteCollector, // Placeholder - TODO: Implement dedicated collector
 }
 
 /**

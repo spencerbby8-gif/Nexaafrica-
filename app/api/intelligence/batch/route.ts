@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { IntelligenceOrchestrator } from '@/lib/intelligence/orchestrator'
+import { withRateLimit, intelligenceRateLimiters } from '@/lib/rate-limit'
 
 /**
  * POST /api/intelligence/batch
  * Analyze multiple jobs in batch
  */
-export async function POST(request: NextRequest) {
+async function batchHandler(request: NextRequest): Promise<NextResponse> {
   try {
     const body = await request.json()
     const { job_ids, concurrency = 5 } = body
@@ -98,3 +99,6 @@ export async function POST(request: NextRequest) {
     )
   }
 }
+
+// Export with rate limiting applied
+export const POST = withRateLimit(batchHandler, intelligenceRateLimiters.batch)

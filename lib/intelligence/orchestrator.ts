@@ -149,60 +149,107 @@ export class IntelligenceOrchestrator {
     eligibility: AfricaEligibility,
     intelligenceScore: IntelligenceScore
   ): Promise<void> {
-    if (!this.supabase) return
+    if (!this.supabase) {
+      console.warn('Supabase client not initialized, skipping database save')
+      return
+    }
+    
+    const errors: string[] = []
     
     try {
       // Save evidence records
       for (const ev of evidence) {
-        await this.supabase
-          .from('job_evidence')
-          .upsert({
-            job_id: jobId,
-            evidence_type: ev.evidence_type,
-            verification_status: ev.verification_status,
-            confidence_score: ev.confidence_score,
-            evidence_data: ev.evidence_data,
-            evidence_summary: ev.evidence_summary,
-            source_url: ev.source_url,
-            source_name: ev.source_name,
-            collected_at: ev.collected_at,
-          })
+        try {
+          const { error } = await this.supabase
+            .from('job_evidence')
+            .upsert({
+              job_id: jobId,
+              evidence_type: ev.evidence_type,
+              verification_status: ev.verification_status,
+              confidence_score: ev.confidence_score,
+              evidence_data: ev.evidence_data,
+              evidence_summary: ev.evidence_summary,
+              source_url: ev.source_url,
+              source_name: ev.source_name,
+              collected_at: ev.collected_at,
+            })
+          
+          if (error) {
+            const errorMsg = `Failed to save evidence ${ev.evidence_type}: ${error.message}`
+            console.error(errorMsg)
+            errors.push(errorMsg)
+          }
+        } catch (error: any) {
+          const errorMsg = `Exception saving evidence ${ev.evidence_type}: ${error.message}`
+          console.error(errorMsg)
+          errors.push(errorMsg)
+        }
       }
       
       // Save scores
-      await this.supabase
-        .from('job_scores')
-        .upsert({
-          job_id: jobId,
-          trust_score: trustScore.score,
-          trust_level: trustScore.level,
-          trust_breakdown: trustScore.breakdown,
-          trust_reasons: trustScore.reasons,
-          africa_eligibility: eligibility.level,
-          africa_confidence: eligibility.confidence,
-          africa_evidence: eligibility.evidence,
-          africa_reasons: eligibility.reasons,
-          intelligence_score: intelligenceScore.score,
-          intelligence_level: intelligenceScore.level,
-          evidence_quality: intelligenceScore.evidence_quality,
-          completeness: intelligenceScore.completeness,
-          intelligence_reasons: intelligenceScore.reasons,
-          calculated_at: new Date().toISOString(),
-        })
+      try {
+        const { error: scoresError } = await this.supabase
+          .from('job_scores')
+          .upsert({
+            job_id: jobId,
+            trust_score: trustScore.score,
+            trust_level: trustScore.level,
+            trust_breakdown: trustScore.breakdown,
+            trust_reasons: trustScore.reasons,
+            africa_eligibility: eligibility.level,
+            africa_confidence: eligibility.confidence,
+            africa_evidence: eligibility.evidence,
+            africa_reasons: eligibility.reasons,
+            intelligence_score: intelligenceScore.score,
+            intelligence_level: intelligenceScore.level,
+            evidence_quality: intelligenceScore.evidence_quality,
+            completeness: intelligenceScore.completeness,
+            intelligence_reasons: intelligenceScore.reasons,
+            calculated_at: new Date().toISOString(),
+          })
+        
+        if (scoresError) {
+          const errorMsg = `Failed to save scores: ${scoresError.message}`
+          console.error(errorMsg)
+          errors.push(errorMsg)
+        }
+      } catch (error: any) {
+        const errorMsg = `Exception saving scores: ${error.message}`
+        console.error(errorMsg)
+        errors.push(errorMsg)
+      }
       
       // Update job table with intelligence score
-      await this.supabase
-        .from('jobs')
-        .update({
-          intelligence_score: intelligenceScore.score,
-          trust_score: trustScore.score,
-          africa_eligibility: eligibility.level,
-          africa_confidence: eligibility.confidence,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', jobId)
+      try {
+        const { error: jobError } = await this.supabase
+          .from('jobs')
+          .update({
+            intelligence_score: intelligenceScore.score,
+            trust_score: trustScore.score,
+            africa_eligibility: eligibility.level,
+            africa_confidence: eligibility.confidence,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', jobId)
+        
+        if (jobError) {
+          const errorMsg = `Failed to update job: ${jobError.message}`
+          console.error(errorMsg)
+          errors.push(errorMsg)
+        }
+      } catch (error: any) {
+        const errorMsg = `Exception updating job: ${error.message}`
+        console.error(errorMsg)
+        errors.push(errorMsg)
+      }
+      
+      // If there were any errors, throw them so the caller knows
+      if (errors.length > 0) {
+        throw new Error(`Database save completed with ${errors.length} error(s): ${errors.join('; ')}`)
+      }
     } catch (error: any) {
       console.error('Failed to save intelligence to database:', error)
+      throw error // Re-throw so caller can handle it
     }
   }
   

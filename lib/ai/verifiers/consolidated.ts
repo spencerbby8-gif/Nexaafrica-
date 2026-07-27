@@ -18,20 +18,50 @@ interface AIResp {
 
 const AF: AIResp = { africa_eligibility:"unknown",africa_confidence:0,africa_evidence:null,country_restrictions:[],visa_sponsorship:"unknown",remote_eligibility:"unknown",remote_confidence:0,remote_evidence:null,timezone_requirements:null,salary_min:null,salary_max:null,salary_currency:null,salary_period:null,salary_is_estimated:false,salary_transparency:"unknown",salary_confidence:0,salary_evidence:null,company_legitimacy:"unknown",company_confidence:0,company_evidence:null,job_quality:"unknown",job_quality_confidence:0,job_quality_evidence:null,experience_level:"unknown",experience_confidence:0,required_skills:[],transferable_skills:[],missing_skills:[],hiring_urgency:"unknown",hiring_urgency_confidence:0 }
 
-// Page fetch with 2 retries and delayed backoff
-async function fetchJobPage(url: string): Promise<string> {
+// Page fetch with retries, better UA, and ATS-specific handling.
+// Most ATS pages (Greenhouse, Ashby, Lever) are JS-rendered SPAs.
+// A plain fetch gets back an empty shell. We try:
+//  1. The apply_url directly (may work for some sources)
+//  2. Fall back to the job description_md already stored (always available)
+// For sources known to have API endpoints, we could add those later.
+async function fetchJobPage(url: string, job: Job): Promise<string> {
+  // If the URL is from a known ATS, the page fetch almost certainly
+  // won't return useful content. Save the HTTP round-trip.
+  const atsHosts = ['boards.greenhouse.io','jobs.ashbyhq.com','jobs.lever.co','apply.workable.com','jobs.smartrecruiters.com','recruitee.com','comeet.com','personio.com']
+  const urlHost = (() => { try { return new URL(url).hostname } catch { return '' } })()
+  const isAtsPage = atsHosts.some(h => urlHost.includes(h))
+  
+  // For ATS pages: skip the page fetch entirely and rely on the stored
+  // job description (already fetched during ingest with proper UA).
+  // This avoids wasting HTTP requests that return empty shells.
+  if (isAtsPage) {
+    // Return the job description_md which was fetched by the ATS adapter
+    // during ingest with proper handling. This is our best available text.
+    const desc = job.description_md || ''
+    return desc.length >= 100 ? desc : ''
+  }
+
   for (let attempt = 0; attempt <= 2; attempt++) {
     try {
       const c = new AbortController()
       const t = setTimeout(() => c.abort(), 8000 + attempt * 4000)
-      const res = await fetch(url, { headers: { "User-Agent": "Nexa Verifier" }, signal: c.signal })
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; NexaBot/2.0; +https://nexaafrica.vercel.app)",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.5",
+        },
+        signal: c.signal,
+        redirect: "follow",
+      })
       clearTimeout(t)
       if (res.ok) {
         const html = await res.text()
+        const { cleanDescription } = await import("@/lib/cleanDescription")
         const text = cleanDescription(html)
-        if (text.length >= 100) return text // success
+        if (text.length >= 100) return text
         if (attempt < 2) { await new Promise(r => setTimeout(r, 1000 * (attempt + 1))); continue }
-        return text // last attempt, return what we have
+        return text
       }
       if (attempt < 2) { await new Promise(r => setTimeout(r, 1000 * (attempt + 1))); continue }
     } catch { if (attempt < 2) { await new Promise(r => setTimeout(r, 1000 * (attempt + 1))); continue } }
@@ -67,7 +97,7 @@ export interface ConsolidatedResult { ai: AIResp; diags: ProviderCallDiag[]; mod
 
 export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult> {
   const diags: ProviderCallDiag[] = []
-  const pageText = await fetchJobPage(job.apply_url)
+  const pageText = await fetchJobPage(job.apply_url, job)
   const combined = (job.description_md + "\n\n" + pageText).slice(0, 4500)
 
   // Compact prompt: ~700 tokens with description. Groq 100K TPD → ~140 jobs/day.

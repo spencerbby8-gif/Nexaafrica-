@@ -335,7 +335,7 @@ export async function processAIQueue(batchSize = 100) {
         }
       } catch (e) { console.log(JSON.stringify({ scope: "ai_engine", event: "protect_check_error", jobId: (job as any).id?.slice(0,8) || '', error: e instanceof Error ? e.message.slice(0,100) : String(e).slice(0,100) })); }
 
-      await supabase.from("job_ai_intelligence").upsert({
+      const { error: upsertErr } = await supabase.from("job_ai_intelligence").upsert({
         job_id: job.id,
         version: intelligence.version,
         model_version: intelligence.modelVersion,
@@ -377,6 +377,14 @@ export async function processAIQueue(batchSize = 100) {
         evidence_urls: intelligence.africa.sourceUrls,
         last_verified_at: new Date().toISOString(),
       }, { onConflict: "job_id" })
+      if (upsertErr) {
+        console.log(JSON.stringify({ scope:"ai_engine", event:"upsert_failed", jobId:(job as any).id?.slice(0,8)||"",
+          code: (upsertErr as any).code, message: upsertErr.message?.slice(0,200), details: (upsertErr as any).details?.slice(0,200) }))
+        // Mark as failed so it can be retried, not silently lost
+        await supabase.from("ai_processing_queue").update({ status: "failed", error: `JAI upsert: ${upsertErr.message?.slice(0,300)}`, completed_at: new Date().toISOString() }).eq("id", item.id)
+        failed++
+        continue
+      }
       await supabase.from("ai_processing_queue").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", item.id)
       processed++
     } catch (e) {

@@ -73,34 +73,23 @@ export function CvUpload({ next }: Props) {
         hint: "Please upload a PDF under 4MB.",
       }
     }
-    // Google Drive on mobile often provides File objects whose reported size
-    // is 0 (content:// URI not yet materialised) or a tiny reference stencil
-    // (< 1 KB).  Try reading a small chunk to verify the bytes are actually
-    // accessible.  We use slice() so the original File stream stays intact
-    // for the subsequent fetch — full-file arrayBuffer() would drain a
-    // single-use content:// URI on Android and cause the upload to fail.
-    if (f.size < 1024) {
-      // f.size === 0: cannot slice (end is clamped to size, so slice(0,N)
-      // always returns empty).  Reject — a zero-byte file cannot be a valid
-      // PDF regardless of source.
-      if (f.size === 0) {
-        return {
-          title: "We couldn\u2019t read this PDF correctly.",
-          hint: "If you opened the file from cloud storage like Google Drive, download it to your device first, then upload that copy.",
-        }
+    if (f.size === 0) {
+      return {
+        title: "We couldn\u2019t read this PDF correctly.",
+        hint: "If you opened the file from cloud storage like Google Drive, download it to your device first, then upload that copy.",
       }
+    }
+    // For very small files (< 1 KB), probe the first few bytes via slice
+    // to confirm the content is accessible before submitting the upload.
+    if (f.size < 1024) {
       try {
-        // Read only the first 512 bytes (or the whole file if it's smaller)
-        // through a slice so the original File/Blob is not consumed.
-        const sliceEnd = Math.min(f.size, 512)
-        const ab = await f.slice(0, sliceEnd).arrayBuffer()
+        const ab = await f.slice(0, Math.min(f.size, 512)).arrayBuffer()
         if (ab.byteLength === 0) {
           return {
             title: "We couldn\u2019t read this PDF correctly.",
             hint: "If you opened the file from cloud storage like Google Drive, download it to your device first, then upload that copy.",
           }
         }
-        // Bytes accessible — allow through (server validates content).
       } catch {
         return {
           title: "We couldn\u2019t read this PDF correctly.",
@@ -114,14 +103,40 @@ export function CvUpload({ next }: Props) {
   const onSelect = async (f: File | null) => {
     if (!f) return
     fileWasSmallRef.current = f.size < 1024
-    const v = await validate(f)
+
+    // Android Google Drive (and other cloud storage providers) often return
+    // a content:// URI File with size:0 because the bytes haven't been
+    // downloaded yet.  The Blob.slice() used in validate() can never read
+    // content from a 0-size Blob (slice end is clamped to this.size), so
+    // we must call arrayBuffer() on the *original* File to trigger the
+    // Android content provider to fetch and cache the actual bytes.  We
+    // then reconstruct a new File from the materialized buffer — the
+    // reconstructed File is used everywhere downstream (validation display,
+    // FormData submit) so the upload always sends real content.
+    let actualFile: File = f
+    if (f.size === 0 && f.name.toLowerCase().endsWith(".pdf")) {
+      try {
+        const ab = await f.arrayBuffer()
+        if (ab.byteLength > 0) {
+          actualFile = new File([ab], f.name, {
+            type: f.type || "application/pdf",
+            lastModified: f.lastModified,
+          })
+          fileWasSmallRef.current = actualFile.size < 1024
+        }
+      } catch {
+        // Content not accessible — let validate() reject the zero-size file
+      }
+    }
+
+    const v = await validate(actualFile)
     if (v) {
       setError(v)
       setStatus("error")
       return
     }
     setError(null)
-    setFile(f)
+    setFile(actualFile)
     setStatus("idle")
   }
 

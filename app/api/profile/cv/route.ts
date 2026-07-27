@@ -247,12 +247,14 @@ export async function POST(req: Request) {
     try {
       const { reviewCVWithCerebras } = await import("@/lib/profile/cerebrasReview")
       const reviewed = await reviewCVWithCerebras(parsed, text)
-      if (reviewed !== parsed) {
-        parsed = reviewed
+      if (reviewed.applied) {
+        parsed = reviewed.parsed
         reviewedBy = geminiModel + "+cerebras-review"
         logStep(reqId, "cerebras_review_success", {
           userId, ms: Date.now() - tCerebras,
           skills: parsed.skills.length, experience: parsed.experience.length,
+          changes: reviewed.changes.length,
+          sample: reviewed.changes.slice(0, 3).map((c: any) => c.field),
         })
       } else {
         logStep(reqId, "cerebras_review_skipped", {

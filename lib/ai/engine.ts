@@ -267,6 +267,7 @@ async function triggerSecondOpinionIfNeeded(
   diags: ProviderCallDiag[],
 ): Promise<void> {
   try {
+    console.log(`[SecondOpinion] Checking job ${job.id.slice(0,8)}, quality_score will be calculated by evaluateAndPersistQuality`)
     const { shouldVerify, getSecondOpinion } = await import("./secondOpinion")
     const check = shouldVerify({
       africa_eligibility: intelligence.africa.value, africa_evidence: intelligence.africa.evidence[0]?.text,
@@ -279,6 +280,7 @@ async function triggerSecondOpinionIfNeeded(
       job_quality: intelligence.quality.value, job_quality_evidence: intelligence.quality.evidence[0]?.text,
       job_quality_confidence: intelligence.quality.confidence, required_skills: intelligence.skills.required.value,
     })
+    console.log(`[SecondOpinion] shouldVerify returned: needed=${check.needed}, reason=${check.reason}`)
     if (!check.needed) return
 
     const result = await getSecondOpinion(job as any, {

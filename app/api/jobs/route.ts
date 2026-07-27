@@ -54,11 +54,23 @@ export async function GET(request: NextRequest) {
       .select(JOB_COLUMNS)
       .eq('is_active', true)
       .order('posted_at', { ascending: false })
+      .order('id', { ascending: false }) // Secondary sort to handle duplicate posted_at
       .limit(limit)
     
     // Apply cursor (fetch jobs older than cursor)
     if (cursor) {
-      query = query.lt('posted_at', cursor)
+      // Parse cursor to get posted_at and id
+      const [cursorPostedAt, cursorId] = cursor.split('|')
+      
+      if (cursorId) {
+        // Use both posted_at and id for precise cursor pagination
+        query = query.or(
+          `posted_at.lt.${cursorPostedAt},and(posted_at.eq.${cursorPostedAt},id.lt.${cursorId})`
+        )
+      } else {
+        // Fallback to posted_at only (backward compatibility)
+        query = query.lt('posted_at', cursorPostedAt)
+      }
     }
     
     // Apply filters
@@ -106,7 +118,7 @@ export async function GET(request: NextRequest) {
     // Determine if there are more jobs
     const hasMore = jobsWithAI.length === limit
     const nextCursor = hasMore && jobsWithAI.length > 0
-      ? jobsWithAI[jobsWithAI.length - 1].posted_at
+      ? `${jobsWithAI[jobsWithAI.length - 1].posted_at}|${jobsWithAI[jobsWithAI.length - 1].id}`
       : null
     
     return NextResponse.json({

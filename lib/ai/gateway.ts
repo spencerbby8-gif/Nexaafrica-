@@ -4,7 +4,7 @@
  */
 
 import { PROVIDERS, type ProviderId } from "./providers/types"
-import { getHealthyProviders, recordSuccess, recordFailure } from "./providers/manager"
+import { createHash } from "crypto"
 
 export interface AIRequest {
   prompt: string
@@ -36,8 +36,10 @@ const cache = new Map<string, { result: GatewayResult; timestamp: number }>()
 const CACHE_TTL = 24 * 60 * 60 * 1000
 
 function cacheKey(req: AIRequest): string {
-  const jp = req.jobId ? `${req.jobId}:` : ''
-  return `${req.agentId}:${jp}${req.prompt.length}:${req.prompt.slice(0,500)}:${(req.systemInstruction||'').length}:${(req.systemInstruction||'').slice(0,200)}`
+  // [FIX #5] Use SHA-256 hash of full prompt + system instruction to prevent
+  // collisions between different jobs with similar prompt prefixes.
+  const raw = `${req.agentId}:${req.jobId || ''}:${req.prompt}:${req.systemInstruction || ''}`
+  return createHash("sha256").update(raw).digest("hex").slice(0, 32)
 }
 
 function gwLog(jobId: string | undefined, agentId: string, event: string, data: Record<string, unknown>) {

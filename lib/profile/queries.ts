@@ -98,6 +98,7 @@ export async function saveParsedProfile(
   client?: SupabaseClient,
   rawCvText?: string,
   options?: { model?: string; promptVersion?: string },
+  metadata?: import("./types").PipelineMetadata,
 ) {
   const supabase = client ?? (await createClient())
 
@@ -256,6 +257,23 @@ export async function saveParsedProfile(
       ats_breakdown: atsData.breakdown || {},
       improvements: atsData.improvements || [],
       is_selected: true,
+      metadata: metadata
+        ? {
+            parser_model: metadata.parserModel,
+            reviewer_model: metadata.reviewerModel,
+            reviewer_applied: metadata.reviewerApplied,
+            validation_passed: metadata.validationPassed,
+            validation_confidence: metadata.validationConfidence,
+            consistency_passed: metadata.consistencyPassed,
+            consistency_score: metadata.consistencyScore,
+            ats_score: metadata.atsScore,
+            quality_score: metadata.qualityScore,
+            reviewer_changes: metadata.reviewerChanges,
+            consistency_issues: metadata.consistencyIssues,
+            token_usage: metadata.tokenUsage,
+            timings: metadata.timings,
+          }
+        : null,
     })
   } catch (e) {
     console.warn("[v0][versions] failed to save version, non-fatal", e)

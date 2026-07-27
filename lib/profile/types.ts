@@ -31,3 +31,19 @@ export interface ParsedProfile {
   skills: string[]
   experience: ProfileExperience[]
 }
+
+export interface PipelineMetadata {
+  parserModel: string
+  reviewerModel: string | null
+  reviewerApplied: boolean
+  validationPassed: boolean
+  validationConfidence: number
+  consistencyPassed: boolean
+  consistencyScore: number
+  atsScore: number | null
+  qualityScore: number
+  reviewerChanges: Array<{ field: string; before: string; after: string }>
+  consistencyIssues: Array<{ field: string; type: string; message: string }>
+  tokenUsage: { input: number; output: number }
+  timings: { pdfExtractionMs: number; geminiMs: number; validationMs: number; cerebrasMs: number; consistencyMs: number; totalMs: number }
+}

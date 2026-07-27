@@ -277,7 +277,10 @@ export async function POST(req: Request) {
     try {
       const { saveParsedProfile, PersistenceError } = await import("@/lib/profile/queries")
       try {
-        await saveParsedProfile(userId, parsed, supabase)
+        await saveParsedProfile(userId, parsed, supabase, text, {
+          model: reviewedBy,
+          promptVersion,
+        })
       } catch (e) {
         if (e instanceof PersistenceError) {
           // Log the real Postgrest error with table + code so we can diagnose.
@@ -320,7 +323,13 @@ export async function POST(req: Request) {
       }
     }
 
-    const aiMeta = await supabase.from("profile_ai_metadata").upsert(
+    // Use service client for metadata — the auth client may lack RLS write permissions
+    let metaClient = supabase
+    try {
+      const { createServiceClient } = await import("@/lib/supabase/service")
+      metaClient = createServiceClient()
+    } catch { /* fall back to auth client */ }
+    const aiMeta = await metaClient.from("profile_ai_metadata").upsert(
       {
         profile_id: userId,
         model: reviewedBy,

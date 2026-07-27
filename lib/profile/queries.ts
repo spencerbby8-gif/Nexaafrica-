@@ -97,6 +97,7 @@ export async function saveParsedProfile(
   parsed: ParsedProfile,
   client?: SupabaseClient,
   rawCvText?: string,
+  options?: { model?: string; promptVersion?: string },
 ) {
   const supabase = client ?? (await createClient())
 
@@ -245,8 +246,8 @@ export async function saveParsedProfile(
     await supabase.from("profile_versions").insert({
       profile_id: userId,
       version_number: nextVersion,
-      prompt_version: "2026-07-23.god-tier-v1",
-      model: "gemini-2.5-flash",
+      prompt_version: options?.promptVersion || "2026-07-23.god-tier-v1",
+      model: options?.model || "gemini-2.5-flash",
       headline,
       summary,
       skills: skillsArr,

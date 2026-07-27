@@ -266,7 +266,8 @@ export async function processAIQueue(batchSize = 100) {
             truth_score: metrics.truthScore, evidence_coverage: metrics.evidenceCoverage,
             hallucination_risk: metrics.hallucinationRisk, missing_fields: metrics.missingFields,
             confidence_calibration: metrics.confidenceCalibration, evidence_strength: metrics.evidenceStrength,
-            dimensions: metrics.dimensions,
+            skills_coverage: metrics.skillsCoverage, dimensions: metrics.dimensions,
+            explanation: metrics.explanation,
           },
           quality_evaluated_at: new Date().toISOString(),
         }).eq("job_id", job.id).then(()=>{},()=>{})

@@ -34,18 +34,28 @@ export default async function JobsPage({
   searchParams: Promise<SearchParams>
 }) {
   const sp = await searchParams
+  
+  // Build filters object for both initial fetch and client-side pagination
+  const filters = {
+    q: sp.q?.trim() || undefined,
+    category: sp.category || undefined,
+    employmentType: (sp.employment_type as EmploymentType) || undefined,
+    remoteOnly: sp.remote === '1',
+    openToAfrica: sp.africa === '1',
+    usdOnly: sp.usd === '1',
+  }
+  
+  // Fetch only first page (20 jobs) - rest will load via infinite scroll
   const [jobs, categories] = await Promise.all([
     getJobsWithAI({
-      q: sp.q?.trim() || undefined,
-      category: sp.category || undefined,
-      employmentType: (sp.employment_type as EmploymentType) || undefined,
-      remoteOnly: sp.remote === '1',
-      openToAfrica: sp.africa === '1',
-      usdOnly: sp.usd === '1',
-      limit: 100,
+      ...filters,
+      limit: 20,
     }),
     getCategories(),
   ])
+  
+  // Calculate cursor for next page (last job's posted_at)
+  const initialCursor = jobs.length > 0 ? jobs[jobs.length - 1].posted_at : null
 
   const hasFilters = Boolean(
     sp.q || sp.category || sp.employment_type || sp.remote || sp.africa || sp.usd,
@@ -128,7 +138,9 @@ export default async function JobsPage({
 
         <div className="mt-4 pb-14">
           <JobFeed
-            jobs={jobs}
+            initialJobs={jobs}
+            initialCursor={initialCursor}
+            filters={filters}
             empty={
               <EmptyState
                 title={

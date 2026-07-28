@@ -1,9 +1,26 @@
 export type ProviderId = "cerebras" | "gemini" | "gemini_backup" | "groq" | "openrouter" | "huggingface" | "github_models" | "cloudflare" | "mistral" | "nvidia"
 
 export interface ProviderConfig {
-  id: ProviderId; name: string; envKey: string; model: string; enabled: boolean
-  priority: number; rateLimitPerSec: number; timeoutMs: number; costPer1kTokens: number
-  taskTypes?: string[] // Task types this provider excels at
+  id: ProviderId
+  name: string
+  envKey: string
+  model: string
+  enabled: boolean
+  priority: number
+  rateLimitPerSec: number
+  timeoutMs: number
+  costPer1kTokens: number
+  taskTypes?: string[]
+  // Discovered model information
+  discoveredAt?: string
+  verifiedAt?: string
+  usable?: boolean
+  latencyMs?: number
+  capabilities?: {
+    maxTokens?: number
+    supportsJSON?: boolean
+    supportsSystemPrompt?: boolean
+  }
 }
 
 export const PROVIDERS: ProviderConfig[] = [

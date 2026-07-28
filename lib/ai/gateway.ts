@@ -3,7 +3,8 @@
  * Supports automatic routing, retries, fallback, health checks, cost tracking
  */
 
-import { PROVIDERS, type ProviderId } from "./providers/types"
+import { getProviders, getProvider, refreshProviderRegistry } from './providers/dynamic-registry'
+import type { ProviderId } from './providers/types'
 import { createHash } from "crypto"
 
 export interface AIRequest {
@@ -47,8 +48,9 @@ function gwLog(jobId: string | undefined, agentId: string, event: string, data: 
 }
 
 export async function callProvider(providerId: ProviderId, req: AIRequest, retryCount: number, diag: ProviderCallDiag[]): Promise<AIResponse> {
-  const cfg = PROVIDERS.find(p => p.id === providerId)
+  const cfg = getProvider(providerId)
   if (!cfg) throw new Error(`Provider ${providerId} not found`)
+  if (!cfg.enabled) throw new Error(`Provider ${providerId} is disabled`)
   const apiKey = process.env[cfg.envKey]
   if (!apiKey) throw new Error(`Missing env ${cfg.envKey} for provider ${providerId}`)
   const start = Date.now()
@@ -181,7 +183,11 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
 }
 
 export async function aiGateway(req: AIRequest): Promise<GatewayResult> {
-  const anyKeyConfigured = PROVIDERS.some(p => process.env[p.envKey]);
+  // Refresh provider registry if needed
+  await refreshProviderRegistry()
+  
+  const providers = getProviders()
+  const anyKeyConfigured = providers.some(p => process.env[p.envKey])
   if (!anyKeyConfigured) throw new Error("No AI provider API keys configured in environment")
 
   const key = cacheKey(req)
@@ -215,7 +221,11 @@ export async function aiCouncil(
   const results: { provider: ProviderId; text: string; confidence: number }[] = []
   for (const modelId of modelsToUse.slice(0,2)) {
     try {
-      const provider = PROVIDERS.find(p=>p.id===modelId)||PROVIDERS[0]
+      const provider = getProvider(modelId as ProviderId)
+      if (!provider) {
+        console.warn(`[Council] Provider ${modelId} not found`)
+        continue
+      }
       const gwResult = await aiGateway({ prompt: task==="profile-transform"?`You are reviewing this profile transformation:\n${prompt}`:prompt, agentId:options.agentId, jobId:options.jobId, temperature:0.3 })
       results.push({ provider: gwResult.response.provider, text: gwResult.response.text, confidence:75 })
     } catch(e) { console.warn(`[Council] ${modelId} failed:`,e) }

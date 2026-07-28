@@ -4,12 +4,13 @@
  */
 
 import { BaseEvidenceCollector } from './base'
-import type { Evidence, EvidenceType, JobWithIntelligence } from '../types'
+import type { Evidence, EvidenceType } from '../types'
+import type { Job } from '@/lib/types'
 
 export class BrokenLinksCollector extends BaseEvidenceCollector {
   type: EvidenceType = 'broken_links'
   
-  async collect(job: JobWithIntelligence): Promise<Evidence> {
+  async collect(job: Job): Promise<Evidence> {
     const startTime = Date.now()
     
     try {
@@ -20,10 +21,8 @@ export class BrokenLinksCollector extends BaseEvidenceCollector {
         linksToCheck.push({ name: 'Apply URL', url: job.apply_url })
       }
       
-      // Add company website
-      if (job.company_website) {
-        linksToCheck.push({ name: 'Company Website', url: job.company_website })
-      }
+      // Note: company_website is not available on Job type, only on JobWithIntelligence
+      // Skipping company website check for now
       
       if (linksToCheck.length === 0) {
         return this.createEvidence(

@@ -4,12 +4,13 @@
  */
 
 import { BaseEvidenceCollector } from './base'
-import type { Evidence, EvidenceType, JobWithIntelligence } from '../types'
+import type { Evidence, EvidenceType } from '../types'
+import type { Job } from '@/lib/types'
 
 export class DomainQualityCollector extends BaseEvidenceCollector {
   type: EvidenceType = 'domain_quality'
   
-  async collect(job: JobWithIntelligence): Promise<Evidence> {
+  async collect(job: Job): Promise<Evidence> {
     const startTime = Date.now()
     
     try {

@@ -24,11 +24,10 @@ export class TrustScoreEngine {
   calculate(evidence: Evidence[]): TrustScore {
     if (evidence.length === 0) {
       return {
-        score: 0,
-        level: 'very_low',
-        breakdown: {},
-        reasons: ['No evidence available'],
-        calculated_at: new Date().toISOString(),
+        trust_score: 0,
+        trust_level: 'very_low',
+        trust_breakdown: {},
+        trust_reasons: ['No evidence available'],
       }
     }
     
@@ -61,11 +60,10 @@ export class TrustScoreEngine {
     const level = this.determineTrustLevel(finalScore)
     
     return {
-      score: finalScore,
-      level,
-      breakdown,
-      reasons: reasons.slice(0, 5), // Top 5 reasons
-      calculated_at: new Date().toISOString(),
+      trust_score: finalScore,
+      trust_level: level,
+      trust_breakdown: breakdown,
+      trust_reasons: reasons.slice(0, 5), // Top 5 reasons
     }
   }
   

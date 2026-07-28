@@ -30,11 +30,41 @@ export interface RateLimitConfig {
   keyGenerator?: (req: NextRequest) => string // Custom key generator
 }
 
-export function rateLimit(config: RateLimitConfig) {
+export function rateLimit(config: RateLimitConfig): (req: NextRequest) => Promise<NextResponse | null>;
+export function rateLimit(key: string, options: { limit: number; windowMs: number }): { ok: boolean; retryAfterSeconds: number };
+export function rateLimit(configOrKey: RateLimitConfig | string, options?: { limit: number; windowMs: number }) {
+  // Backward compatibility: support old signature rateLimit(key, { limit, windowMs })
+  if (typeof configOrKey === 'string' && options) {
+    const key = configOrKey
+    const { limit, windowMs } = options
+    const now = Date.now()
+
+    // Initialize or reset window
+    if (!store[key] || store[key].resetTime < now) {
+      store[key] = {
+        count: 0,
+        resetTime: now + windowMs
+      }
+    }
+
+    // Increment counter
+    store[key].count++
+
+    // Check if limit exceeded
+    if (store[key].count > limit) {
+      const retryAfter = Math.ceil((store[key].resetTime - now) / 1000)
+      return { ok: false, retryAfterSeconds: retryAfter }
+    }
+
+    return { ok: true, retryAfterSeconds: 0 }
+  }
+
+  // New signature: rateLimit(config)
+  const config = configOrKey as RateLimitConfig
   const { windowMs, maxRequests, keyGenerator } = config
 
   return async (req: NextRequest): Promise<NextResponse | null> => {
-    const key = keyGenerator ? keyGenerator(req) : req.ip || 'unknown'
+    const key = keyGenerator ? keyGenerator(req) : req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown'
     const now = Date.now()
 
     // Initialize or reset window
@@ -91,7 +121,7 @@ export const intelligenceRateLimiters = {
     windowMs: 60 * 1000,
     maxRequests: 10,
     keyGenerator: (req) => {
-      const ip = req.ip || req.headers.get('x-forwarded-for') || 'unknown'
+      const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown'
       const userId = req.headers.get('x-user-id') || 'anonymous'
       return `analyze:${ip}:${userId}`
     }
@@ -102,7 +132,7 @@ export const intelligenceRateLimiters = {
     windowMs: 60 * 1000,
     maxRequests: 5,
     keyGenerator: (req) => {
-      const ip = req.ip || req.headers.get('x-forwarded-for') || 'unknown'
+      const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown'
       const userId = req.headers.get('x-user-id') || 'anonymous'
       return `batch:${ip}:${userId}`
     }
@@ -113,7 +143,7 @@ export const intelligenceRateLimiters = {
     windowMs: 60 * 1000,
     maxRequests: 30,
     keyGenerator: (req) => {
-      const ip = req.ip || req.headers.get('x-forwarded-for') || 'unknown'
+      const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown'
       return `get:${ip}`
     }
   })

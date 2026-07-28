@@ -212,7 +212,7 @@ export interface JobWithIntelligence {
 
 export interface EvidenceCollector {
   type: EvidenceType
-  collect(job: JobWithIntelligence): Promise<Evidence>
+  collect(job: import('@/lib/types').Job): Promise<Evidence>
 }
 
 // ============================================================================

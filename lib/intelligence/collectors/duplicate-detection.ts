@@ -4,13 +4,14 @@
  */
 
 import { BaseEvidenceCollector } from './base'
-import type { Evidence, EvidenceType, JobWithIntelligence } from '../types'
+import type { Evidence, EvidenceType } from '../types'
+import type { Job } from '@/lib/types'
 import { createClient } from '@supabase/supabase-js'
 
 export class DuplicateDetectionCollector extends BaseEvidenceCollector {
   type: EvidenceType = 'duplicate_detection'
   
-  async collect(job: JobWithIntelligence): Promise<Evidence> {
+  async collect(job: Job): Promise<Evidence> {
     const startTime = Date.now()
     
     try {
@@ -87,7 +88,7 @@ export class DuplicateDetectionCollector extends BaseEvidenceCollector {
   /**
    * Find potential duplicates in database
    */
-  private async findDuplicates(supabase: any, job: JobWithIntelligence): Promise<Array<{
+  private async findDuplicates(supabase: any, job: Job): Promise<Array<{
     job_id: string
     title: string
     company: string
@@ -142,7 +143,7 @@ export class DuplicateDetectionCollector extends BaseEvidenceCollector {
   /**
    * Calculate similarity between two jobs
    */
-  private calculateSimilarity(job1: JobWithIntelligence, job2: any): { score: number; reason: string } {
+  private calculateSimilarity(job1: Job, job2: any): { score: number; reason: string } {
     let score = 0
     const reasons: string[] = []
     

@@ -4,12 +4,13 @@
  */
 
 import { BaseEvidenceCollector } from './base'
-import type { Evidence, EvidenceType, JobWithIntelligence } from '../types'
+import type { Evidence, EvidenceType } from '../types'
+import type { Job } from '@/lib/types'
 
 export class CareerPageCollector extends BaseEvidenceCollector {
   type: EvidenceType = 'career_page'
   
-  async collect(job: JobWithIntelligence): Promise<Evidence> {
+  async collect(job: Job): Promise<Evidence> {
     const startTime = Date.now()
     
     try {
@@ -94,7 +95,7 @@ export class CareerPageCollector extends BaseEvidenceCollector {
   /**
    * Analyze career page content
    */
-  private async analyzeCareerPage(job: JobWithIntelligence, careerPageUrl: string, startTime: number): Promise<Evidence> {
+  private async analyzeCareerPage(job: Job, careerPageUrl: string, startTime: number): Promise<Evidence> {
     // Fetch career page content
     const htmlResult = await this.fetchHtml(careerPageUrl, 8000)
     
@@ -185,56 +186,43 @@ export class CareerPageCollector extends BaseEvidenceCollector {
   }
   
   /**
-   * Infer career page URL from company website
+   * Infer career page URL from company name
    */
-  private inferCareerPageUrl(job: JobWithIntelligence): string | null {
-    const baseUrl = job.company_website
-    
-    if (!baseUrl) {
-      // Try to infer from company name
-      if (!job.company) return null
-      const companyName = job.company.toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 30)
-      if (companyName.length < 3) return null
-      return `https://${companyName}.com/careers`
-    }
-    
-    // Append /careers to base URL
-    try {
-      const url = new URL(baseUrl)
-      return `${url.origin}/careers`
-    } catch {
-      return `${baseUrl}/careers`
-    }
+  private inferCareerPageUrl(job: Job): string | null {
+    // Note: company_website is not available on Job type, only on JobWithIntelligence
+    // Try to infer from company name
+    if (!job.company) return null
+    const companyName = job.company.toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 30)
+    if (companyName.length < 3) return null
+    return `https://${companyName}.com/careers`
   }
   
   /**
    * Get alternative career page URLs
    */
-  private getAlternativeCareerUrls(job: JobWithIntelligence): string[] {
-    const baseUrl = job.company_website
-    if (!baseUrl) return []
+  private getAlternativeCareerUrls(job: Job): string[] {
+    // Note: company_website is not available on Job type, only on JobWithIntelligence
+    // Try to infer from company name
+    if (!job.company) return []
+    const companyName = job.company.toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 30)
+    if (companyName.length < 3) return []
     
-    try {
-      const url = new URL(baseUrl)
-      const origin = url.origin
-      
-      return [
-        `${origin}/jobs`,
-        `${origin}/positions`,
-        `${origin}/join-us`,
-        `${origin}/work-with-us`,
-        `${origin}/about/careers`,
-        `${origin}/company/careers`,
-      ]
-    } catch {
-      return []
-    }
+    const origin = `https://${companyName}.com`
+    
+    return [
+      `${origin}/jobs`,
+      `${origin}/positions`,
+      `${origin}/join-us`,
+      `${origin}/work-with-us`,
+      `${origin}/about/careers`,
+      `${origin}/company/careers`,
+    ]
   }
   
   /**
    * Check if specific job is listed on career page
    */
-  private checkJobListed(html: string, job: JobWithIntelligence): boolean {
+  private checkJobListed(html: string, job: Job): boolean {
     const lowerHtml = html.toLowerCase()
     const jobTitle = job.title.toLowerCase()
     

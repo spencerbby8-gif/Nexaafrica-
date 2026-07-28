@@ -3,7 +3,8 @@
  * Coordinates evidence collection, scoring, and storage
  */
 
-import type { Evidence, TrustScore, AfricaEligibility, IntelligenceScore, Job } from '../types'
+import type { Evidence, TrustScore, AfricaEligibility, IntelligenceScore } from './types'
+import type { Job } from '@/lib/types'
 import { getCollector } from './collectors'
 import { TrustScoreEngine } from './scoring/trust-score'
 import { AfricaEligibilityEngine } from './scoring/africa-eligibility'
@@ -109,29 +110,16 @@ export class IntelligenceOrchestrator {
         job_id: job.id,
         evidence: [],
         trust_score: {
-          score: 0,
-          level: 'very_low',
-          breakdown: {},
-          reasons: ['Analysis failed'],
-          calculated_at: new Date().toISOString(),
-        },
-        eligibility: {
-          level: 'Unknown',
-          confidence: 0,
-          evidence: [],
-          reasons: ['Analysis failed'],
-          calculated_at: new Date().toISOString(),
-        },
-        intelligence_score: {
-          score: 0,
-          level: 'poor',
           trust_score: 0,
-          eligibility_level: 'Unknown',
-          eligibility_confidence: 0,
-          evidence_quality: 0,
-          completeness: 0,
-          reasons: ['Analysis failed'],
-          calculated_at: new Date().toISOString(),
+          trust_level: 'very_low',
+          trust_breakdown: {},
+          trust_reasons: ['Analysis failed'],
+        },
+        eligibility: 'Unknown',
+        intelligence_score: {
+          intelligence_score: 0,
+          intelligence_breakdown: {},
+          intelligence_reasons: ['Analysis failed'],
         },
         success: false,
         errors,
@@ -192,19 +180,14 @@ export class IntelligenceOrchestrator {
           .from('job_scores')
           .upsert({
             job_id: jobId,
-            trust_score: trustScore.score,
-            trust_level: trustScore.level,
-            trust_breakdown: trustScore.breakdown,
-            trust_reasons: trustScore.reasons,
-            africa_eligibility: eligibility.level,
-            africa_confidence: eligibility.confidence,
-            africa_evidence: eligibility.evidence,
-            africa_reasons: eligibility.reasons,
-            intelligence_score: intelligenceScore.score,
-            intelligence_level: intelligenceScore.level,
-            evidence_quality: intelligenceScore.evidence_quality,
-            completeness: intelligenceScore.completeness,
-            intelligence_reasons: intelligenceScore.reasons,
+            trust_score: trustScore.trust_score,
+            trust_level: trustScore.trust_level,
+            trust_breakdown: trustScore.trust_breakdown,
+            trust_reasons: trustScore.trust_reasons,
+            africa_eligibility: eligibility,
+            intelligence_score: intelligenceScore.intelligence_score,
+            intelligence_breakdown: intelligenceScore.intelligence_breakdown,
+            intelligence_reasons: intelligenceScore.intelligence_reasons,
             calculated_at: new Date().toISOString(),
           })
         
@@ -224,10 +207,9 @@ export class IntelligenceOrchestrator {
         const { error: jobError } = await this.supabase
           .from('jobs')
           .update({
-            intelligence_score: intelligenceScore.score,
-            trust_score: trustScore.score,
-            africa_eligibility: eligibility.level,
-            africa_confidence: eligibility.confidence,
+            intelligence_score: intelligenceScore.intelligence_score,
+            trust_score: trustScore.trust_score,
+            africa_eligibility: eligibility,
             updated_at: new Date().toISOString(),
           })
           .eq('id', jobId)

@@ -4,7 +4,8 @@
  */
 
 import { BaseEvidenceCollector } from './base'
-import type { Evidence, EvidenceType, JobWithIntelligence } from '../types'
+import type { Evidence, EvidenceType } from '../types'
+import type { Job } from '@/lib/types'
 
 export class SalaryRealismCollector extends BaseEvidenceCollector {
   type: EvidenceType = 'salary_realism'
@@ -34,7 +35,7 @@ export class SalaryRealismCollector extends BaseEvidenceCollector {
     'default': { min: 40000, max: 300000 },
   }
   
-  async collect(job: JobWithIntelligence): Promise<Evidence> {
+  async collect(job: Job): Promise<Evidence> {
     const startTime = Date.now()
     
     try {
@@ -59,7 +60,7 @@ export class SalaryRealismCollector extends BaseEvidenceCollector {
       const expectedRange = this.SALARY_RANGES[roleCategory] || this.SALARY_RANGES['default']
       
       // Adjust for location (simplified)
-      const locationMultiplier = this.getLocationMultiplier(job.location)
+      const locationMultiplier = this.getLocationMultiplier(job.location || undefined)
       const adjustedRange = {
         min: expectedRange.min * locationMultiplier,
         max: expectedRange.max * locationMultiplier,

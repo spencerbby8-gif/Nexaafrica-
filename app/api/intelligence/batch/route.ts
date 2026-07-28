@@ -58,14 +58,14 @@ async function batchHandler(request: NextRequest): Promise<NextResponse> {
     
     // Calculate summary statistics
     const successCount = results.filter(r => r.success).length
-    const avgTrustScore = results.reduce((sum, r) => sum + r.trust_score.score, 0) / results.length
-    const avgIntelligenceScore = results.reduce((sum, r) => sum + r.intelligence_score.score, 0) / results.length
+    const avgTrustScore = results.reduce((sum, r) => sum + r.trust_score.trust_score, 0) / results.length
+    const avgIntelligenceScore = results.reduce((sum, r) => sum + r.intelligence_score.intelligence_score, 0) / results.length
     
     const eligibilityBreakdown = {
-      Explicit: results.filter(r => r.eligibility.level === 'Explicit').length,
-      Likely: results.filter(r => r.eligibility.level === 'Likely').length,
-      Unknown: results.filter(r => r.eligibility.level === 'Unknown').length,
-      Restricted: results.filter(r => r.eligibility.level === 'Restricted').length,
+      Explicit: results.filter(r => r.eligibility === 'Explicit').length,
+      Likely: results.filter(r => r.eligibility === 'Likely').length,
+      Unknown: results.filter(r => r.eligibility === 'Unknown').length,
+      Restricted: results.filter(r => r.eligibility === 'Restricted').length,
     }
     
     return NextResponse.json({
@@ -81,12 +81,12 @@ async function batchHandler(request: NextRequest): Promise<NextResponse> {
       results: results.map(r => ({
         job_id: r.job_id,
         success: r.success,
-        trust_score: r.trust_score.score,
-        trust_level: r.trust_score.level,
-        eligibility: r.eligibility.level,
-        eligibility_confidence: r.eligibility.confidence,
-        intelligence_score: r.intelligence_score.score,
-        intelligence_level: r.intelligence_score.level,
+        trust_score: r.trust_score.trust_score,
+        trust_level: r.trust_score.trust_level,
+        eligibility: r.eligibility,
+        eligibility_confidence: 0, // AfricaEligibility is just a string type, no confidence
+        intelligence_score: r.intelligence_score.intelligence_score,
+        intelligence_level: r.intelligence_score.intelligence_score >= 80 ? 'excellent' : r.intelligence_score.intelligence_score >= 60 ? 'good' : r.intelligence_score.intelligence_score >= 40 ? 'fair' : 'poor',
         evidence_count: r.evidence.length,
         errors: r.errors,
       })),

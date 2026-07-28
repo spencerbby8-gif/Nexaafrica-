@@ -4,12 +4,13 @@
  */
 
 import { BaseEvidenceCollector } from './base'
-import type { Evidence, EvidenceType, JobWithIntelligence } from '../types'
+import type { Evidence, EvidenceType } from '../types'
+import type { Job } from '@/lib/types'
 
 export class ATSDataCollector extends BaseEvidenceCollector {
   type: EvidenceType = 'ats_data'
   
-  async collect(job: JobWithIntelligence): Promise<Evidence> {
+  async collect(job: Job): Promise<Evidence> {
     const startTime = Date.now()
     
     try {
@@ -57,7 +58,7 @@ export class ATSDataCollector extends BaseEvidenceCollector {
         job,
         {
           ats_source: job.source,
-          ats_job_id: job.source_id,
+          ats_job_id: job.source_id || "",
           has_ats_data: true,
           source_exists: verification.source_exists,
           job_exists: verification.job_exists,
@@ -92,7 +93,7 @@ export class ATSDataCollector extends BaseEvidenceCollector {
   /**
    * Verify ATS data based on source type
    */
-  private async verifyATSData(job: JobWithIntelligence): Promise<{
+  private async verifyATSData(job: Job): Promise<{
     source_exists: boolean
     job_exists: boolean
     data_consistent: boolean
@@ -141,9 +142,9 @@ export class ATSDataCollector extends BaseEvidenceCollector {
   /**
    * Verify Greenhouse job
    */
-  private async verifyGreenhouse(job: JobWithIntelligence, discrepancies: string[], details: Record<string, any>) {
+  private async verifyGreenhouse(job: Job, discrepancies: string[], details: Record<string, any>) {
     // Greenhouse board URL pattern: https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs/{job_id}
-    const apiUrl = `https://boards-api.greenhouse.io/v1/boards/${job.source_id}/jobs`
+    const apiUrl = `https://boards-api.greenhouse.io/v1/boards/${job.source_id || ""}/jobs`
     
     const result = await this.fetchJson(apiUrl, 8000)
     
@@ -158,7 +159,9 @@ export class ATSDataCollector extends BaseEvidenceCollector {
     }
     
     const jobs = result.data?.jobs || []
-    const atsJob = jobs.find((j: any) => j.id === parseInt(job.source_id.split('_').pop() || '0'))
+    const sourceIdParts = job.source_id?.split('_') || []
+    const atsJobId = sourceIdParts.length > 0 ? parseInt(sourceIdParts.pop() || '0') : 0
+    const atsJob = jobs.find((j: any) => j.id === atsJobId)
     
     if (!atsJob) {
       return {
@@ -194,10 +197,10 @@ export class ATSDataCollector extends BaseEvidenceCollector {
   /**
    * Verify Lever job
    */
-  private async verifyLever(job: JobWithIntelligence, discrepancies: string[], details: Record<string, any>) {
+  private async verifyLever(job: Job, discrepancies: string[], details: Record<string, any>) {
     // Lever API pattern: https://api.lever.co/v0/postings/{company}?mode=json
-    const company = job.source_id.split('_')[0]
-    const jobId = job.source_id.split('_')[1]
+    const company = job.source_id?.split('_')[0]
+    const jobId = job.source_id?.split('_')[1]
     const apiUrl = `https://api.lever.co/v0/postings/${company}?mode=json`
     
     const result = await this.fetchJson(apiUrl, 8000)
@@ -249,7 +252,7 @@ export class ATSDataCollector extends BaseEvidenceCollector {
   /**
    * Verify Ashby job
    */
-  private async verifyAshby(job: JobWithIntelligence, discrepancies: string[], details: Record<string, any>) {
+  private async verifyAshby(job: Job, discrepancies: string[], details: Record<string, any>) {
     // Ashby doesn't have a public API, so we verify the apply URL is accessible
     const applyUrlCheck = await this.checkUrlAccessible(job.apply_url, 8000)
     
@@ -275,7 +278,7 @@ export class ATSDataCollector extends BaseEvidenceCollector {
   /**
    * Verify Workable job
    */
-  private async verifyWorkable(job: JobWithIntelligence, discrepancies: string[], details: Record<string, any>) {
+  private async verifyWorkable(job: Job, discrepancies: string[], details: Record<string, any>) {
     // Workable doesn't have a public API, verify apply URL
     const applyUrlCheck = await this.checkUrlAccessible(job.apply_url, 8000)
     
@@ -291,7 +294,7 @@ export class ATSDataCollector extends BaseEvidenceCollector {
   /**
    * Verify SmartRecruiters job
    */
-  private async verifySmartRecruiters(job: JobWithIntelligence, discrepancies: string[], details: Record<string, any>) {
+  private async verifySmartRecruiters(job: Job, discrepancies: string[], details: Record<string, any>) {
     const applyUrlCheck = await this.checkUrlAccessible(job.apply_url, 8000)
     
     return {
@@ -306,7 +309,7 @@ export class ATSDataCollector extends BaseEvidenceCollector {
   /**
    * Verify Recruitee job
    */
-  private async verifyRecruitee(job: JobWithIntelligence, discrepancies: string[], details: Record<string, any>) {
+  private async verifyRecruitee(job: Job, discrepancies: string[], details: Record<string, any>) {
     const applyUrlCheck = await this.checkUrlAccessible(job.apply_url, 8000)
     
     return {
@@ -321,7 +324,7 @@ export class ATSDataCollector extends BaseEvidenceCollector {
   /**
    * Verify Personio job
    */
-  private async verifyPersonio(job: JobWithIntelligence, discrepancies: string[], details: Record<string, any>) {
+  private async verifyPersonio(job: Job, discrepancies: string[], details: Record<string, any>) {
     const applyUrlCheck = await this.checkUrlAccessible(job.apply_url, 8000)
     
     return {
@@ -336,7 +339,7 @@ export class ATSDataCollector extends BaseEvidenceCollector {
   /**
    * Verify Comeet job
    */
-  private async verifyComeet(job: JobWithIntelligence, discrepancies: string[], details: Record<string, any>) {
+  private async verifyComeet(job: Job, discrepancies: string[], details: Record<string, any>) {
     const applyUrlCheck = await this.checkUrlAccessible(job.apply_url, 8000)
     
     return {
@@ -351,7 +354,7 @@ export class ATSDataCollector extends BaseEvidenceCollector {
   /**
    * Verify RemoteOK job
    */
-  private async verifyRemoteOK(job: JobWithIntelligence, discrepancies: string[], details: Record<string, any>) {
+  private async verifyRemoteOK(job: Job, discrepancies: string[], details: Record<string, any>) {
     // RemoteOK API: https://remoteok.com/api
     const apiUrl = 'https://remoteok.com/api'
     const result = await this.fetchJson(apiUrl, 8000)
@@ -403,7 +406,7 @@ export class ATSDataCollector extends BaseEvidenceCollector {
   /**
    * Verify WeWorkRemotely job
    */
-  private async verifyWeWorkRemotely(job: JobWithIntelligence, discrepancies: string[], details: Record<string, any>) {
+  private async verifyWeWorkRemotely(job: Job, discrepancies: string[], details: Record<string, any>) {
     const applyUrlCheck = await this.checkUrlAccessible(job.apply_url, 8000)
     
     return {
@@ -418,7 +421,7 @@ export class ATSDataCollector extends BaseEvidenceCollector {
   /**
    * Verify Himalayas job
    */
-  private async verifyHimalayas(job: JobWithIntelligence, discrepancies: string[], details: Record<string, any>) {
+  private async verifyHimalayas(job: Job, discrepancies: string[], details: Record<string, any>) {
     // Himalayas API: https://himalayas.app/jobs/api
     const apiUrl = 'https://himalayas.app/jobs/api'
     const result = await this.fetchJson(apiUrl, 8000)

@@ -4,17 +4,20 @@
  */
 
 import { BaseEvidenceCollector } from './base'
-import type { Evidence, EvidenceType, JobWithIntelligence } from '../types'
+import type { Evidence, EvidenceType } from '../types'
+import type { Job } from '@/lib/types'
 
 export class CompanyWebsiteCollector extends BaseEvidenceCollector {
   type: EvidenceType = 'company_website'
   
-  async collect(job: JobWithIntelligence): Promise<Evidence> {
+  async collect(job: Job): Promise<Evidence> {
     const startTime = Date.now()
     
     try {
       // Get company website URL
-      const websiteUrl = job.company_website || this.inferWebsiteUrl(job)
+      // Note: company_website is not available on Job type, only on JobWithIntelligence
+      // Try to infer from company name
+      const websiteUrl = this.inferWebsiteUrl(job)
       
       if (!websiteUrl) {
         return this.createEvidence(
@@ -155,7 +158,7 @@ export class CompanyWebsiteCollector extends BaseEvidenceCollector {
   /**
    * Infer company website from company name
    */
-  private inferWebsiteUrl(job: JobWithIntelligence): string | null {
+  private inferWebsiteUrl(job: Job): string | null {
     if (!job.company) return null
     
     // Simple inference: company.com
@@ -171,7 +174,7 @@ export class CompanyWebsiteCollector extends BaseEvidenceCollector {
   /**
    * Check if job title is mentioned on the website
    */
-  private checkJobMentioned(html: string, job: JobWithIntelligence): boolean {
+  private checkJobMentioned(html: string, job: Job): boolean {
     const lowerHtml = html.toLowerCase()
     const jobTitle = job.title.toLowerCase()
     

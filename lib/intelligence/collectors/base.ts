@@ -3,18 +3,19 @@
  * Provides common functionality for all evidence collectors
  */
 
-import type { Evidence, EvidenceCollector, EvidenceType, JobWithIntelligence, VerificationStatus } from '../types'
+import type { Evidence, EvidenceCollector, EvidenceType, VerificationStatus } from '../types'
+import type { Job } from '@/lib/types'
 
 export abstract class BaseEvidenceCollector implements EvidenceCollector {
   abstract type: EvidenceType
   
-  abstract collect(job: JobWithIntelligence): Promise<Evidence>
+  abstract collect(job: Job): Promise<Evidence>
   
   /**
    * Create a basic evidence object with common fields
    */
   protected createEvidence(
-    job: JobWithIntelligence,
+    job: Job,
     data: Record<string, any>,
     status: VerificationStatus,
     confidence: number,

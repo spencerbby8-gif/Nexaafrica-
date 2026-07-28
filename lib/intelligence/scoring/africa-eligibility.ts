@@ -3,7 +3,7 @@
  * Determines if job is open to African candidates
  */
 
-import type { Evidence, AfricaEligibility, AfricaEligibilityLevel } from '../types'
+import type { Evidence, AfricaEligibility } from '../types'
 
 export class AfricaEligibilityEngine {
   // Keywords that indicate explicit Africa eligibility
@@ -76,59 +76,29 @@ export class AfricaEligibilityEngine {
     // Check for explicit mentions
     const explicitMatches = this.findKeywordMatches(allText, this.EXPLICIT_KEYWORDS)
     if (explicitMatches.length > 0) {
-      return {
-        level: 'Explicit',
-        confidence: Math.min(100, 70 + explicitMatches.length * 10),
-        evidence: explicitMatches.slice(0, 3),
-        reasons: [`Explicit mention of ${explicitMatches.slice(0, 3).join(', ')}`],
-        calculated_at: new Date().toISOString(),
-      }
+      return 'Explicit'
     }
     
     // Check for likely indicators
     const likelyMatches = this.findKeywordMatches(allText, this.LIKELY_KEYWORDS)
     if (likelyMatches.length > 0) {
-      return {
-        level: 'Likely',
-        confidence: Math.min(90, 60 + likelyMatches.length * 10),
-        evidence: likelyMatches.slice(0, 3),
-        reasons: [`Global/EMEA role: ${likelyMatches.slice(0, 3).join(', ')}`],
-        calculated_at: new Date().toISOString(),
-      }
+      return 'Likely'
     }
     
     // Check for restrictions
     const restrictedMatches = this.findKeywordMatches(allText, this.RESTRICTED_KEYWORDS)
     if (restrictedMatches.length > 0) {
-      return {
-        level: 'Restricted',
-        confidence: Math.min(100, 70 + restrictedMatches.length * 10),
-        evidence: restrictedMatches.slice(0, 3),
-        reasons: [`Location restrictions: ${restrictedMatches.slice(0, 3).join(', ')}`],
-        calculated_at: new Date().toISOString(),
-      }
+      return 'Restricted'
     }
     
     // Check for remote work indicators
     const remoteIndicators = this.checkRemoteIndicators(allText)
     if (remoteIndicators.isRemote) {
-      return {
-        level: 'Likely',
-        confidence: 50 + remoteIndicators.confidence,
-        evidence: remoteIndicators.evidence.slice(0, 3),
-        reasons: ['Remote work indicated, likely open to Africa'],
-        calculated_at: new Date().toISOString(),
-      }
+      return 'Likely'
     }
     
     // Default to Unknown
-    return {
-      level: 'Unknown',
-      confidence: 30,
-      evidence: [],
-      reasons: ['No clear indication of Africa eligibility'],
-      calculated_at: new Date().toISOString(),
-    }
+    return 'Unknown'
   }
   
   /**

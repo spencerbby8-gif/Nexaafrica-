@@ -28,10 +28,15 @@ export class IntelligenceScoreEngine {
     // Calculate completeness score
     const completeness = this.calculateCompleteness(evidence)
     
+    // Calculate eligibility score (convert string to numeric score)
+    const eligibilityScore = eligibility === 'Explicit' ? 100 : 
+                           eligibility === 'Likely' ? 75 :
+                           eligibility === 'Unknown' ? 50 : 25
+    
     // Calculate weighted score
     const weightedScore = 
-      (trustScore.score * this.WEIGHTS.trust) +
-      (eligibility.confidence * this.WEIGHTS.eligibility) +
+      (trustScore.trust_score * this.WEIGHTS.trust) +
+      (eligibilityScore * this.WEIGHTS.eligibility) +
       (evidenceQuality * this.WEIGHTS.evidence_quality) +
       (completeness * this.WEIGHTS.completeness)
     
@@ -43,15 +48,15 @@ export class IntelligenceScoreEngine {
     // Build reasons
     const reasons: string[] = []
     
-    if (trustScore.score >= 70) {
-      reasons.push(`High trust score (${trustScore.score}%)`)
-    } else if (trustScore.score < 50) {
-      reasons.push(`Low trust score (${trustScore.score}%)`)
+    if (trustScore.trust_score >= 70) {
+      reasons.push(`High trust score (${trustScore.trust_score}%)`)
+    } else if (trustScore.trust_score < 50) {
+      reasons.push(`Low trust score (${trustScore.trust_score}%)`)
     }
     
-    if (eligibility.level === 'Explicit') {
+    if (eligibility === 'Explicit') {
       reasons.push('Explicit Africa eligibility confirmed')
-    } else if (eligibility.level === 'Restricted') {
+    } else if (eligibility === 'Restricted') {
       reasons.push('Location restrictions detected')
     }
     
@@ -66,15 +71,14 @@ export class IntelligenceScoreEngine {
     }
     
     return {
-      score: finalScore,
-      level,
-      trust_score: trustScore.score,
-      eligibility_level: eligibility.level,
-      eligibility_confidence: eligibility.confidence,
-      evidence_quality,
-      completeness,
-      reasons,
-      calculated_at: new Date().toISOString(),
+      intelligence_score: finalScore,
+      intelligence_breakdown: {
+        trust: trustScore.trust_score * this.WEIGHTS.trust,
+        eligibility: eligibilityScore * this.WEIGHTS.eligibility,
+        evidence_quality: evidenceQuality * this.WEIGHTS.evidence_quality,
+        completeness: completeness * this.WEIGHTS.completeness,
+      },
+      intelligence_reasons: reasons,
     }
   }
   
@@ -126,11 +130,11 @@ export class IntelligenceScoreEngine {
     const evidenceTypes = new Set(evidence.map(ev => ev.evidence_type))
     
     // Required types (70% of score)
-    const requiredFound = requiredTypes.filter(type => evidenceTypes.has(type)).length
+    const requiredFound = requiredTypes.filter(type => evidenceTypes.has(type as any)).length
     score += (requiredFound / requiredTypes.length) * 70
     
     // Optional types (30% of score)
-    const optionalFound = optionalTypes.filter(type => evidenceTypes.has(type)).length
+    const optionalFound = optionalTypes.filter(type => evidenceTypes.has(type as any)).length
     score += (optionalFound / optionalTypes.length) * 30
     
     return Math.round(score)

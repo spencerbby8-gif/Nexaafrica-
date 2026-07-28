@@ -71,20 +71,7 @@ export function JobCard({
           {excerpt}
         </p>
 
-        {/* Trust & Intelligence badges – shows comprehensive job quality metrics */}
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          {/* Intelligence Badge - shows trust, eligibility, and intelligence scores */}
-          {job.trust_score != null && job.africa_eligibility != null && job.intelligence_score != null && (
-            <IntelligenceBadge
-              trustScore={job.trust_score}
-              trustLevel={job.trust_score >= 80 ? 'high' : job.trust_score >= 60 ? 'medium' : job.trust_score >= 40 ? 'low' : 'very_low'}
-              eligibility={job.africa_eligibility}
-              eligibilityConfidence={job.africa_confidence || 0}
-              intelligenceScore={job.intelligence_score}
-              intelligenceLevel={job.intelligence_score >= 80 ? 'excellent' : job.intelligence_score >= 60 ? 'good' : job.intelligence_score >= 40 ? 'fair' : 'poor'}
-            />
-          )}
-          
           {/* Fallback: Legacy trust score display if intelligence scores not available */}
           {job.trust_score == null && (() => {
             try {

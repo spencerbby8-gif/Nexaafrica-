@@ -98,6 +98,22 @@ interface Row {
   employment_type: string; is_flagged: boolean | null; flagged_reason: string | null
 }
 
+function stripPunct(s: string): string { return norm(s).replace(/[\.,;:!?"'()$%&\-\u2013\u2014]/g, ' ').replace(/\s+/g, ' ').trim() }
+/** Hostile quote verdict: >=0.85 unique-word containment = real quote
+ *  (models adjust dashes/case/punct); below = absent from source = FAB. */
+function quoteVerdict(ev: string | null, truthPool: string): Verdict {
+  if (!ev) return 'SKIP'
+  const q = norm(ev)
+  if (q.length < 15) return 'SKIP'
+  if (truthPool.includes(q.slice(0, Math.min(q.length, 120)))) return 'TP'
+  const qw = new Set(stripPunct(q).split(' ').filter(w => w.length > 2))
+  const tw = new Set(stripPunct(truthPool).split(' ').filter(w => w.length > 2))
+  if (qw.size === 0) return 'SKIP'
+  let inter = 0
+  for (const w of qw) if (tw.has(w)) inter++
+  return inter / qw.size >= 0.85 ? 'TP' : 'FAB'
+}
+
 function checkField(field: Field, row: Row, T: string, Tco: string): Verdict {
   const truth = T + ' ' + norm(row.description_md || '')
   switch (field) {
@@ -120,10 +136,14 @@ function checkField(field: Field, row: Row, T: string, Tco: string): Verdict {
     }
     case 'remote': {
       const v = row.remote_eligibility
-      if (v === 'hybrid') return RX.hybrid.test(truth) ? 'TP' : 'FP'
-      if (v === 'fully_remote') return RX.remote.test(truth) || !RX.hybrid.test(truth) ? 'TP' : 'FP'
+      const hasPageTruth = T.length > 200 // only judge against a real fetched page
+      if (v === 'hybrid') return RX.hybrid.test(truth) ? 'TP' : (hasPageTruth ? 'FP' : 'SKIP')
+      if (v === 'fully_remote') {
+        if (hasPageTruth) return RX.remote.test(truth) ? 'TP' : 'FP'
+        return 'SKIP' // metadata-classified claim; no textual ground truth available
+      }
       if (v === 'onsite') return 'SKIP'
-      return RX.remote.test(truth) ? 'FN' : 'CU'
+      return hasPageTruth ? (RX.remote.test(truth) ? 'FN' : 'CU') : 'CU'
     }
     case 'visa': {
       const v = row.visa_sponsorship
@@ -147,29 +167,30 @@ function checkField(field: Field, row: Row, T: string, Tco: string): Verdict {
     }
     case 'quote_salary': case 'quote_africa': case 'quote_remote': {
       const ev = field === 'quote_salary' ? row.salary_evidence : field === 'quote_africa' ? row.africa_evidence : row.remote_evidence
-      if (!ev) return 'SKIP'
-      const q = norm(ev)
-      if (q.length < 15) return 'SKIP'
-      return truth.includes(q.slice(0, Math.min(q.length, 120))) ? 'TP' : 'FAB'
+      return quoteVerdict(ev, truth)
     }
     case 'quote_company': {
-      const ev = row.company_evidence
-      if (!ev) return 'SKIP'
-      const q = norm(ev)
-      if (q.length < 15) return 'SKIP'
-      return (truth + ' ' + Tco).includes(q.slice(0, Math.min(q.length, 120))) ? 'TP' : 'FAB'
+      return quoteVerdict(row.company_evidence, truth + ' ' + Tco)
     }
   }
 }
 
 // ─── Main ───────────────────────────────────────────────────────────
 async function main() {
-  console.log(`[audit] sampling ${LIMIT} most recent intelligence rows`)
-  const { data, error } = await sb
-    .from('job_ai_intelligence')
-    .select('job_id, model_version, africa_eligibility, africa_confidence, africa_evidence, remote_eligibility, remote_evidence, visa_sponsorship, salary_min, salary_max, salary_currency, salary_evidence, company_legitimacy, company_evidence, experience_level, required_skills, jobs!inner(apply_url, source, description_md, company, employment_type, is_flagged, flagged_reason, trust_score)')
-    .order('last_verified_at', { ascending: false })
-    .limit(LIMIT)
+  const AI_LIMIT = Number((process.argv.find(a => a.startsWith('--aiLimit=')) || '').split('=')[1]) || 300
+  const REGEX_LIMIT = Math.max(0, LIMIT - AI_LIMIT)
+  const COLS = 'job_id, model_version, africa_eligibility, africa_confidence, africa_evidence, remote_eligibility, remote_evidence, visa_sponsorship, salary_min, salary_max, salary_currency, salary_evidence, company_legitimacy, company_evidence, experience_level, required_skills, jobs!inner(apply_url, source, description_md, company, employment_type, is_flagged, flagged_reason, trust_score)'
+  console.log(`[audit] stratified sample: ${AI_LIMIT} AI rows + ${REGEX_LIMIT} regex rows`)
+  const [aiRes, rxRes] = await Promise.all([
+    sb.from('job_ai_intelligence').select(COLS)
+      .like('model_version', '%:%').not('model_version', 'like', 'regex%')
+      .order('last_verified_at', { ascending: false }).limit(AI_LIMIT),
+    sb.from('job_ai_intelligence').select(COLS)
+      .like('model_version', 'regex%')
+      .order('last_verified_at', { ascending: false }).limit(REGEX_LIMIT),
+  ])
+  const error = aiRes.error || rxRes.error
+  const data = [...(aiRes.data || []), ...(rxRes.data || [])]
   if (error) { console.error('sample error', error.message); process.exit(1) }
   const rows: Row[] = (data as any[]).map(r => ({
     ...r, apply_url: r.jobs.apply_url, source: r.jobs.source, description_md: r.jobs.description_md,

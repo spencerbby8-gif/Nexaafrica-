@@ -7,6 +7,82 @@ import type { JobIntelligence } from '@/lib/intelligence'
  * regardless of source.
  */
 
+// Placeholder/bad company names that should be rejected
+const BAD_COMPANY_NAMES = [
+  'name',
+  'company',
+  'company name',
+  'employer',
+  'organization',
+  'test',
+  'sample',
+  'example',
+  'demo',
+  'placeholder',
+  'unknown',
+  'n/a',
+  'na',
+  'none',
+  'null',
+  'undefined',
+  '-',
+  '--',
+  '---',
+]
+
+// Placeholder/bad titles that should be rejected
+const BAD_JOB_TITLES = [
+  'title',
+  'job title',
+  'position',
+  'role',
+  'test',
+  'sample',
+  'example',
+  'demo',
+  'placeholder',
+  'unknown',
+  'n/a',
+  'na',
+  'none',
+  'null',
+  'undefined',
+  '-',
+  '--',
+  '---',
+]
+
+/**
+ * Validate that a job has legitimate company and title data.
+ * Returns false if the job contains placeholder or obviously invalid values.
+ */
+export function validateJobData(company: string, title: string): boolean {
+  const normalizedCompany = company.trim().toLowerCase()
+  const normalizedTitle = title.trim().toLowerCase()
+  
+  // Reject if company is a placeholder
+  if (BAD_COMPANY_NAMES.includes(normalizedCompany)) {
+    return false
+  }
+  
+  // Reject if title is a placeholder
+  if (BAD_JOB_TITLES.includes(normalizedTitle)) {
+    return false
+  }
+  
+  // Reject if company or title is too short (likely invalid)
+  if (normalizedCompany.length < 2 || normalizedTitle.length < 3) {
+    return false
+  }
+  
+  // Reject if company is just numbers or special characters
+  if (/^[\d\s\W]+$/.test(normalizedCompany)) {
+    return false
+  }
+  
+  return true
+}
+
 const CATEGORY_RULES: Array<{ category: string; patterns: RegExp[] }> = [
   {
     category: 'engineering',

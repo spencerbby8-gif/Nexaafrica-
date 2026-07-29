@@ -1,13 +1,7 @@
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
-// @ts-ignore
-import ws from 'ws'
 
-if (typeof globalThis !== 'undefined' && !(globalThis as any).WebSocket) {
-  ;(globalThis as any).WebSocket = ws
-}
-if (typeof global !== 'undefined' && !(global as any).WebSocket) {
-  ;(global as any).WebSocket = ws
-}
+// [FIX #10] Removed WebSocket polyfill - service client only needs HTTP operations
+// in serverless functions. Realtime/WebSocket support is not used.
 
 export function createServiceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -17,12 +11,5 @@ export function createServiceClient() {
   }
   return createSupabaseClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
-    global: {
-      WebSocket: ws as any,
-      fetch: fetch as any,
-    },
-    realtime: {
-      transport: ws as any,
-    },
-  } as any)
+  })
 }

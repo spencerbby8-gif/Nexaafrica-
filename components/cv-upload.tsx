@@ -169,14 +169,65 @@ export function CvUpload({ next }: Props) {
     setStatus("uploading")
     setError(null)
 
+    console.log("[CV Upload] Stage 1: Starting upload", {
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type,
+    })
+
     try {
+      // [FIX] ALWAYS materialize file content into a buffer, then create a new Blob.
+      // This is critical for Android Google Drive files which are streaming proxies
+      // to content:// URIs. Even if arrayBuffer() succeeds, the original File object
+      // may fail when FormData tries to serialize it. By creating a new Blob from
+      // the materialized buffer, we ensure we're uploading actual bytes.
+      let uploadBlob: Blob
+      try {
+        console.log("[CV Upload] Stage 2: Materializing content via arrayBuffer()")
+        const ab = await file.arrayBuffer()
+        console.log("[CV Upload] Stage 2: arrayBuffer() succeeded", {
+          reportedSize: file.size,
+          actualSize: ab.byteLength,
+        })
+
+        if (ab.byteLength === 0) {
+          console.error("[CV Upload] Stage 2: arrayBuffer() returned 0 bytes")
+          setError({
+            title: "We couldn\u2019t read this PDF correctly.",
+            hint: "If you opened the file from cloud storage like Google Drive, download it to your device first, then upload that copy.",
+          })
+          setStatus("error")
+          return
+        }
+
+        // ALWAYS create a new Blob from the materialized buffer
+        // This breaks the streaming proxy reference
+        uploadBlob = new Blob([ab], { type: file.type || "application/pdf" })
+        console.log("[CV Upload] Stage 2: Created new Blob from buffer", {
+          blobSize: uploadBlob.size,
+          blobType: uploadBlob.type,
+        })
+      } catch (materializeErr) {
+        console.error("[CV Upload] Stage 2: arrayBuffer() threw", materializeErr)
+        setError({
+          title: "We couldn\u2019t read this PDF correctly.",
+          hint: "If you opened the file from cloud storage like Google Drive, download it to your device first, then upload that copy.",
+        })
+        setStatus("error")
+        return
+      }
+
+      console.log("[CV Upload] Stage 3: Creating FormData")
       const fd = new FormData()
-      fd.append("file", file)
+      // Append the materialized Blob, not the original File
+      fd.append("file", uploadBlob, file.name)
+      console.log("[CV Upload] Stage 3: FormData created with materialized Blob")
 
       // Move into parsing UI as soon as upload starts; the API call covers both.
       setStatus("parsing")
       startStepRotation()
 
+      console.log("[CV Upload] Stage 4: Calling fetch()")
       let res: Response
       try {
         res = await fetch("/api/profile/cv", {
@@ -185,7 +236,13 @@ export function CvUpload({ next }: Props) {
           credentials: "same-origin",
           headers: { Accept: "application/json" },
         })
+        console.log("[CV Upload] Stage 4: fetch() returned", {
+          status: res.status,
+          statusText: res.statusText,
+          ok: res.ok,
+        })
       } catch (networkErr) {
+        console.error("[CV Upload] Stage 4: fetch() threw", networkErr)
         stopStepRotation()
         setStatus("error")
         track({ name: "cv_upload_failed", props: { reason: "network" } })

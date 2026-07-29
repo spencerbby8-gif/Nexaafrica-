@@ -1,169 +1,407 @@
+/**
+ * ATS (Applicant Tracking System) Compatibility Scoring
+ * 
+ * Analyzes profile for ATS-friendly patterns and keyword optimization.
+ * Provides actionable suggestions to improve pass-through rates.
+ */
+
 import type { ParsedProfile } from "./types"
 
-export type AtsBreakdown = {
-  keywords: number // 0-25
-  clarity: number // 0-20
-  impact: number // 0-25
-  recruiterFit: number // 0-15
-  remoteReadiness: number // 0-15
+export interface ATSScore {
+  overall: number // 0-100
+  keywordDensity: { [key: string]: number }
+  issues: ATSIssue[]
+  suggestions: string[]
+  breakdown: {
+    formatting: number
+    keywords: number
+    completeness: number
+  }
 }
 
-export type AtsResult = {
-  score: number // 0-100
-  breakdown: AtsBreakdown
-  reasons: string[] // short human reasons for score
-  improvements: Array<{
-    type: "ats_keywords" | "clarity" | "impact" | "recruiter_fit" | "remote_ready" | "title_standardization"
-    field: "headline" | "summary" | "skills" | "experience"
-    before?: string
-    after: string
-    reason: string
-  }>
+export interface ATSIssue {
+  type: 'low_keyword_density' | 'unfriendly_format' | 'missing_section' | 'special_chars' | 'too_short'
+  severity: 'error' | 'warning' | 'info'
+  message: string
+  field?: string
 }
 
-const ACTION_VERBS = new Set([
-  "orchestrated","engineered","transformed","championed","delivered","elevated","streamlined",
-  "built","led","drove","owned","scaled","launched","designed","implemented","optimized",
-  "resolved","coordinated","managed","mentored","architected","automated","improved",
-])
-
-const REMOTE_KEYWORDS = ["remote","async","distributed","global","collaboration","slack","notion","jira","github","agile","scrum","ownership","documentation"]
-
-function scoreKeywords(parsed: ParsedProfile): { score: number; reasons: string[] } {
-  const text = `${parsed.headline} ${parsed.summary} ${parsed.skills.join(" ")} ${parsed.experience.map(e=>`${e.title} ${e.description||""}`).join(" ")}`.toLowerCase()
-  let hits = 0
-  for (const kw of REMOTE_KEYWORDS) if (text.includes(kw)) hits++
-  const score = Math.min(25, Math.round((hits / REMOTE_KEYWORDS.length) * 25 + (parsed.skills.length >= 10 ? 8 : 0)))
-  const reasons: string[] = []
-  if (hits >= 5) reasons.push(`Strong remote vocabulary (${hits} keywords)`)
-  if (parsed.skills.length >= 12) reasons.push(`${parsed.skills.length} skills detected — ATS loves breadth`)
-  return { score, reasons }
+// Common ATS keywords by role category
+const ROLE_KEYWORDS: { [key: string]: string[] } = {
+  'software engineer': [
+    'react', 'typescript', 'javascript', 'node', 'python', 'java', 'api', 'database',
+    'agile', 'git', 'testing', 'debugging', 'architecture', 'microservices', 'cloud',
+    'aws', 'azure', 'docker', 'kubernetes', 'ci/cd', 'sql', 'mongodb', 'postgresql'
+  ],
+  'product manager': [
+    'roadmap', 'stakeholder', 'user research', 'analytics', 'strategy', 'agile',
+    'prioritization', 'metrics', 'kpi', 'okr', 'user stories', 'backlog', 'sprint',
+    'cross-functional', 'go-to-market', 'product lifecycle', 'user experience'
+  ],
+  'designer': [
+    'figma', 'user experience', 'wireframe', 'prototype', 'design system', 'accessibility',
+    'user research', 'usability', 'interaction design', 'visual design', 'sketch',
+    'adobe', 'invision', 'user flows', 'information architecture', 'responsive design'
+  ],
+  'data scientist': [
+    'python', 'r', 'machine learning', 'statistics', 'sql', 'pandas', 'numpy',
+    'tensorflow', 'pytorch', 'data visualization', 'tableau', 'power bi', 'etl',
+    'data pipeline', 'predictive modeling', 'regression', 'classification', 'clustering'
+  ],
+  'marketing': [
+    'seo', 'sem', 'content marketing', 'social media', 'analytics', 'google analytics',
+    'campaign', 'conversion', 'funnel', 'email marketing', 'brand', 'copywriting',
+    'market research', 'customer acquisition', 'retention', 'roi', 'a/b testing'
+  ],
+  'sales': [
+    'b2b', 'b2c', 'saas', 'crm', 'salesforce', 'hubspot', 'pipeline', 'quota',
+    'revenue', 'account management', 'business development', 'negotiation',
+    'cold calling', 'lead generation', 'closing', 'customer success'
+  ],
+  'customer support': [
+    'customer service', 'ticketing', 'zendesk', 'intercom', 'sla', 'csat', 'nps',
+    'troubleshooting', 'escalation', 'knowledge base', 'chat', 'email support',
+    'phone support', 'customer satisfaction', 'retention', 'onboarding'
+  ],
+  'operations': [
+    'process improvement', 'workflow', 'automation', 'efficiency', 'logistics',
+    'supply chain', 'inventory', 'vendor management', 'budget', 'compliance',
+    'risk management', 'project management', 'stakeholder', 'cross-functional'
+  ],
+  'finance': [
+    'financial analysis', 'budgeting', 'forecasting', 'variance analysis', 'p&l',
+    'cash flow', 'excel', 'financial modeling', 'audit', 'compliance', 'gaap',
+    'ifrs', 'erp', 'sap', 'quickbooks', 'accounts payable', 'accounts receivable'
+  ],
+  'human resources': [
+    'recruitment', 'talent acquisition', 'onboarding', 'performance management',
+    'employee relations', 'hris', 'workday', 'bamboo hr', 'benefits administration',
+    'compensation', 'training', 'development', 'diversity', 'inclusion', 'compliance'
+  ]
 }
 
-function scoreClarity(parsed: ParsedProfile): { score: number; reasons: string[] } {
-  const summaryLen = parsed.summary.length
-  let score = 0
-  if (summaryLen >= 300 && summaryLen <= 600) score += 12
-  else if (summaryLen >= 150) score += 8
-  const avgWordsPerSentence = parsed.summary.split(/[.!?]/).filter(Boolean).length >0 ? summaryLen / parsed.summary.split(/[.!?]/).filter(Boolean).length : 0
-  if (avgWordsPerSentence >= 12 && avgWordsPerSentence <= 28) score += 8
-  const reasons: string[] = []
-  if (summaryLen >= 300) reasons.push("Summary length ideal for recruiters (300-600 chars)")
-  if (avgWordsPerSentence >= 12) reasons.push("Clear, readable sentences")
-  return { score: Math.min(20, score), reasons }
+// ATS-unfriendly patterns
+const UNFRIENDLY_PATTERNS = [
+  { pattern: /\|{2,}/, message: 'Multiple consecutive pipes (||)' },
+  { pattern: /[^\x00-\x7F]/, message: 'Non-ASCII characters (except in names)' },
+  { pattern: /\[.*\]\(.*\)/, message: 'Markdown links [text](url)' },
+  { pattern: /<[^>]+>/, message: 'HTML tags' },
+  { pattern: /\{[^}]+\}/, message: 'Curly braces (template syntax)' },
+]
+
+/**
+ * Detect role category from profile content
+ */
+function detectRoleCategory(profile: ParsedProfile): string | null {
+  const text = `${profile.headline} ${profile.summary} ${profile.skills.join(' ')} ${profile.experience.map(e => `${e.title} ${e.description}`).join(' ')}`.toLowerCase()
+  
+  // Simple keyword matching to detect role
+  const roleScores: { [key: string]: number } = {}
+  
+  for (const [role, keywords] of Object.entries(ROLE_KEYWORDS)) {
+    let score = 0
+    for (const keyword of keywords) {
+      if (text.includes(keyword)) {
+        score++
+      }
+    }
+    if (score > 0) {
+      roleScores[role] = score
+    }
+  }
+  
+  // Return role with highest score
+  const sortedRoles = Object.entries(roleScores).sort((a, b) => b[1] - a[1])
+  return sortedRoles.length > 0 ? sortedRoles[0][0] : null
 }
 
-function scoreImpact(parsed: ParsedProfile): { score: number; reasons: string[] } {
-  let verbHits = 0
-  const allDesc = parsed.experience.map(e=>e.description||"").join(" ").toLowerCase()
-  for (const v of ACTION_VERBS) if (allDesc.includes(v)) verbHits++
-  const score = Math.min(25, verbHits * 4 + (parsed.experience.length >=2 ? 5 : 0))
-  const reasons: string[] = []
-  if (verbHits >= 3) reasons.push(`${verbHits} strong action verbs found`)
-  if (parsed.experience.some(e=> (e.description||"").length > 80)) reasons.push("Experience shows ownership, not just duties")
-  return { score, reasons }
-}
-
-function scoreRecruiterFit(parsed: ParsedProfile): { score: number; reasons: string[] } {
-  let score = 0
-  if (parsed.headline.length >= 20 && parsed.headline.length <= 80) score += 5
-  if (parsed.skills.length >= 8) score += 5
-  if (parsed.experience.length >= 2) score += 5
-  const reasons: string[] = []
-  if (parsed.headline.includes("|") || parsed.headline.includes("•")) reasons.push("Headline has recruiter-friendly structure")
-  if (parsed.skills.length >= 8) reasons.push("Skills optimized for ATS parsing")
-  return { score: Math.min(15, score), reasons }
-}
-
-function scoreRemote(parsed: ParsedProfile): { score: number; reasons: string[] } {
-  const text = `${parsed.headline} ${parsed.summary}`.toLowerCase()
-  let score = 0
-  if (text.includes("remote")) score += 7
-  if (text.includes("global") || text.includes("distributed") || text.includes("async")) score += 5
-  if (parsed.skills.some(s=> /slack|notion|jira|github|zoom/i.test(s))) score += 3
-  const reasons: string[] = []
-  if (score >= 10) reasons.push("Positioned for global remote hiring")
-  return { score: Math.min(15, score), reasons }
-}
-
-function buildImprovements(parsed: ParsedProfile, raw?: string): AtsResult["improvements"] {
-  const imps: AtsResult["improvements"] = []
-  if (parsed.headline.length > 0) {
-    imps.push({
-      type: "recruiter_fit",
-      field: "headline",
-      after: parsed.headline,
-      reason: "Transformed dull title into brand statement with role | superpower | domain",
+/**
+ * Score ATS compatibility of a profile
+ */
+export function scoreATSCompatibility(
+  profile: ParsedProfile,
+  targetRole?: string
+): ATSScore {
+  const issues: ATSIssue[] = []
+  const suggestions: string[] = []
+  
+  // Detect role if not provided
+  const detectedRole = targetRole || detectRoleCategory(profile)
+  const targetKeywords = detectedRole ? ROLE_KEYWORDS[detectedRole] || [] : []
+  
+  // Combine all text for analysis
+  const text = `${profile.headline} ${profile.summary} ${profile.skills.join(' ')} ${profile.experience.map(e => e.description).join(' ')}`
+  const words = text.toLowerCase().split(/\s+/).filter(w => w.length > 0)
+  const wordCount = words.length
+  
+  // 1. Check for ATS-unfriendly patterns
+  let formattingScore = 100
+  for (const { pattern, message } of UNFRIENDLY_PATTERNS) {
+    if (pattern.test(text)) {
+      issues.push({
+        type: 'unfriendly_format',
+        severity: 'warning',
+        message: `ATS-unfriendly pattern detected: ${message}`,
+      })
+      formattingScore -= 10
+    }
+  }
+  
+  // 2. Keyword density analysis
+  const keywordDensity: { [key: string]: number } = {}
+  let keywordScore = 100
+  
+  for (const keyword of targetKeywords) {
+    const count = words.filter(w => w.includes(keyword.toLowerCase())).length
+    const density = wordCount > 0 ? (count / wordCount) * 100 : 0
+    keywordDensity[keyword] = density
+    
+    if (density < 0.5) {
+      issues.push({
+        type: 'low_keyword_density',
+        severity: 'info',
+        message: `Keyword "${keyword}" appears ${count} time${count !== 1 ? 's' : ''} (${density.toFixed(2)}% density)`,
+      })
+      suggestions.push(`Consider adding "${keyword}" to your profile for ${detectedRole} roles`)
+      keywordScore -= 2
+    } else if (density > 5) {
+      issues.push({
+        type: 'low_keyword_density',
+        severity: 'warning',
+        message: `Keyword "${keyword}" may be overused (${density.toFixed(2)}% density)`,
+      })
+      keywordScore -= 5
+    }
+  }
+  
+  // 3. Section completeness
+  let completenessScore = 100
+  
+  if (!profile.headline || profile.headline.length < 20) {
+    issues.push({
+      type: 'missing_section',
+      severity: 'error',
+      message: 'Headline is missing or too short (minimum 20 characters)',
+      field: 'headline'
     })
-  }
-  if (parsed.summary.length > 100) {
-    imps.push({
-      type: "clarity",
-      field: "summary",
-      after: parsed.summary.slice(0,120)+"...",
-      reason: "Rewrote summary from duty-list to story: who you are, how you work, why you stand out",
+    completenessScore -= 20
+  } else if (profile.headline.length > 80) {
+    issues.push({
+      type: 'too_short',
+      severity: 'warning',
+      message: `Headline is too long (${profile.headline.length} characters, maximum 80)`,
+      field: 'headline'
     })
+    completenessScore -= 5
   }
-  if (parsed.skills.length >= 8) {
-    imps.push({
-      type: "ats_keywords",
-      field: "skills",
-      after: `${parsed.skills.length} skills normalized`,
-      reason: "Deduplicated, Title-Cased tech, added remote-friendly keywords for ATS",
+  
+  if (!profile.summary || profile.summary.length < 200) {
+    issues.push({
+      type: 'missing_section',
+      severity: 'warning',
+      message: `Summary is too short (${profile.summary?.length || 0} characters, target 300-600)`,
+      field: 'summary'
     })
+    completenessScore -= 15
   }
-  for (let i=0;i<Math.min(2, parsed.experience.length);i++) {
-    const exp = parsed.experience[i]
-    imps.push({
-      type: "impact",
-      field: "experience",
-      after: `${exp.title} at ${exp.company}`,
-      reason: `Reframed from task to impact: owned → partnered → known for`,
+  
+  if (profile.skills.length < 8) {
+    issues.push({
+      type: 'missing_section',
+      severity: 'warning',
+      message: `Only ${profile.skills.length} skills listed (target: 12-24)`,
+      field: 'skills'
     })
+    completenessScore -= 10
+  } else if (profile.skills.length > 30) {
+    issues.push({
+      type: 'missing_section',
+      severity: 'info',
+      message: `${profile.skills.length} skills listed (consider focusing on top 15-20)`,
+      field: 'skills'
+    })
+    completenessScore -= 5
   }
-  imps.push({
-    type: "remote_ready",
-    field: "summary",
-    after: "Open to global remote",
-    reason: "Added remote readiness signals (async, ownership, global collaboration) that remote recruiters scan for",
-  })
-  return imps
-}
-
-export function calculateAtsScore(parsed: ParsedProfile, rawText?: string): AtsResult {
-  const kw = scoreKeywords(parsed)
-  const clarity = scoreClarity(parsed)
-  const impact = scoreImpact(parsed)
-  const fit = scoreRecruiterFit(parsed)
-  const remote = scoreRemote(parsed)
-
-  const breakdown: AtsBreakdown = {
-    keywords: kw.score,
-    clarity: clarity.score,
-    impact: impact.score,
-    recruiterFit: fit.score,
-    remoteReadiness: remote.score,
+  
+  if (profile.experience.length === 0) {
+    issues.push({
+      type: 'missing_section',
+      severity: 'error',
+      message: 'No experience listed',
+      field: 'experience'
+    })
+    completenessScore -= 30
+  } else if (profile.experience.length < 2) {
+    issues.push({
+      type: 'missing_section',
+      severity: 'warning',
+      message: `Only ${profile.experience.length} experience entr${profile.experience.length === 1 ? 'y' : 'ies'} listed`,
+      field: 'experience'
+    })
+    completenessScore -= 10
   }
-
-  const total = Math.min(100, kw.score + clarity.score + impact.score + fit.score + remote.score)
-  const reasons = [...kw.reasons, ...clarity.reasons, ...impact.reasons, ...fit.reasons, ...remote.reasons].slice(0,5)
-
-  if (total >= 85) reasons.unshift("God Tier • Top 10% for remote roles")
-  else if (total >= 70) reasons.unshift("Strong • Above average for ATS")
-  else reasons.unshift("Elevating • Add more detail to reach elite")
-
+  
+  // Check experience descriptions
+  for (let i = 0; i < profile.experience.length; i++) {
+    const exp = profile.experience[i]
+    if (!exp.description || exp.description.length < 100) {
+      issues.push({
+        type: 'too_short',
+        severity: 'warning',
+        message: `Experience #${i + 1} (${exp.title}) has short description (${exp.description?.length || 0} characters, target 200-400)`,
+        field: `experience[${i}]`
+      })
+      completenessScore -= 5
+    }
+  }
+  
+  // Calculate overall score
+  formattingScore = Math.max(0, formattingScore)
+  keywordScore = Math.max(0, keywordScore)
+  completenessScore = Math.max(0, completenessScore)
+  
+  const overall = Math.round(
+    formattingScore * 0.3 +
+    keywordScore * 0.3 +
+    completenessScore * 0.4
+  )
+  
   return {
-    score: total,
-    breakdown,
-    reasons,
-    improvements: buildImprovements(parsed, rawText),
+    overall,
+    keywordDensity,
+    issues,
+    suggestions,
+    breakdown: {
+      formatting: formattingScore,
+      keywords: keywordScore,
+      completeness: completenessScore
+    }
   }
 }
 
+/**
+ * Format ATS score for display
+ */
+export function formatATSScore(score: ATSScore): string {
+  const emoji = score.overall >= 80 ? '🟢' : score.overall >= 60 ? '🟡' : '🔴'
+  return `${emoji} ATS Score: ${score.overall}/100`
+}
+
+/**
+ * Legacy ATS result type for backward compatibility
+ */
+export interface AtsResult {
+  score: number
+  breakdown: {
+    keywords: number
+    clarity: number
+    impact: number
+    recruiterFit: number
+    remoteReadiness: number
+  }
+  reasons: string[]
+  improvements: Array<{ type: string; field: string; after: string; reason: string }>
+}
+
+/**
+ * Legacy calculateAtsScore function for backward compatibility
+ */
+export function calculateAtsScore(
+  profile: ParsedProfile,
+  rawText?: string
+): AtsResult {
+  const result = scoreATSCompatibility(profile)
+  
+  // Map new breakdown to old structure
+  // Old: keywords (25), clarity (20), impact (25), recruiterFit (15), remoteReadiness (15) = 100
+  // New: formatting (30), keywords (30), completeness (40) = 100
+  
+  const keywords = Math.round(result.breakdown.keywords * 0.25)
+  const clarity = Math.round(result.breakdown.formatting * 0.20)
+  const impact = Math.round(result.breakdown.completeness * 0.25)
+  const recruiterFit = Math.round((result.breakdown.keywords + result.breakdown.completeness) * 0.15 / 2)
+  const remoteReadiness = Math.round(result.breakdown.formatting * 0.15)
+  
+  // Generate reasons from suggestions
+  const reasons = result.suggestions.slice(0, 5)
+  
+  // Generate improvements list with proper structure
+  const improvements: Array<{ type: string; field: string; after: string; reason: string }> = []
+  
+  if (profile.headline && profile.headline.length > 0) {
+    improvements.push({
+      type: 'headline',
+      field: 'headline',
+      after: profile.headline.slice(0, 100),
+      reason: 'Crafted compelling headline with role + superpower formula'
+    })
+  }
+  
+  if (profile.summary && profile.summary.length >= 300) {
+    improvements.push({
+      type: 'summary',
+      field: 'summary',
+      after: profile.summary.slice(0, 200) + '...',
+      reason: 'Wrote rich 3-4 sentence summary with remote-readiness focus'
+    })
+  }
+  
+  if (profile.skills.length >= 12) {
+    improvements.push({
+      type: 'skills',
+      field: 'skills',
+      after: profile.skills.slice(0, 10).join(', ') + (profile.skills.length > 10 ? '...' : ''),
+      reason: `Extracted ${profile.skills.length} relevant skills (target: 12-24)`
+    })
+  }
+  
+  if (profile.experience.length > 0) {
+    const avgDescLength = profile.experience.reduce((sum, exp) => sum + (exp.description?.length || 0), 0) / profile.experience.length
+    if (avgDescLength >= 200) {
+      improvements.push({
+        type: 'experience',
+        field: 'experience',
+        after: `${profile.experience.length} roles with detailed descriptions`,
+        reason: 'Transformed experience into STAR-format achievements'
+      })
+    }
+  }
+  
+  // Add suggestions as improvements
+  for (const suggestion of result.suggestions.slice(0, 2)) {
+    improvements.push({
+      type: 'suggestion',
+      field: 'general',
+      after: suggestion,
+      reason: 'ATS optimization recommendation'
+    })
+  }
+  
+  return {
+    score: result.overall,
+    breakdown: {
+      keywords,
+      clarity,
+      impact,
+      recruiterFit,
+      remoteReadiness,
+    },
+    reasons,
+    improvements: improvements.slice(0, 6), // Top 6 improvements
+  }
+}
+
+/**
+ * Get ATS label and color for display
+ */
 export function getAtsLabel(score: number): { label: string; color: string } {
-  if (score >= 90) return { label: "God Tier • Elite", color: "text-yellow-400" }
-  if (score >= 80) return { label: "Excellent • Remote-ready", color: "text-green-400" }
-  if (score >= 65) return { label: "Strong • Competitive", color: "text-blue-400" }
-  if (score >= 45) return { label: "Growing • Foundation", color: "text-zinc-400" }
-  return { label: "Draft • Needs elevation", color: "text-zinc-500" }
+  if (score >= 80) {
+    return { label: 'Excellent', color: 'text-green-600' }
+  } else if (score >= 60) {
+    return { label: 'Good', color: 'text-yellow-600' }
+  } else if (score >= 40) {
+    return { label: 'Fair', color: 'text-orange-600' }
+  } else {
+    return { label: 'Needs Improvement', color: 'text-red-600' }
+  }
 }

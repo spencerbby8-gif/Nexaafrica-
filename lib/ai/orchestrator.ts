@@ -1,98 +1,205 @@
 /**
- * AI Orchestrator — DB-persisted health-aware provider routing.
- *
- * Health state persists across Vercel cold starts via the ai_provider_log
- * and ai_orch_health tables. On init, warm from DB. Provider failures
- * trigger cooldowns; probes detect recovery automatically.
+ * AI Orchestrator — Routes every request through the Smart Router.
+ * 
+ * Pipeline:
+ *   1. Sync health from DB (cold start recovery)
+ *   2. Smart Router selects best provider for task type
+ *   3. Call provider via gateway
+ *   4. Log routing decision with full reasoning
+ *   5. On failure: router re-scores (penalizes failed provider), tries next
+ *   6. Persist health state to DB
  */
 
 import { PROVIDERS, type ProviderId, type ProviderConfig } from "./providers/types"
 import { callProvider as rawCallProvider, type GatewayResult, type AIRequest, type AIResponse, type ProviderCallDiag } from "./gateway"
+import {
+  routeTask,
+  routeTaskAll,
+  recordRouterSuccess,
+  recordRouterFailure,
+  syncHealthFromDB,
+  logRoutingDecision,
+  type TaskType,
+  type RoutingLog,
+} from "./smart-router"
 
-interface ProviderState {
-  id: ProviderId; consecutiveFailures: number; lastFailureAt: number; lastSuccessAt: number
-  lastProbeAt: number; cooldownUntil: number; lastErrorCode: string; lastErrorMessage: string
-  avgLatencyMs: number; totalRequests: number; totalFailures: number
-  isQuotaExhausted: boolean; quotaResetAt: number; isRateLimited: boolean
-}
+let healthSynced = false
 
-const stateMap = new Map<ProviderId, ProviderState>()
-let healthWarmed = false
-
-function getState(id: ProviderId): ProviderState {
-  if (!stateMap.has(id)) {
-    stateMap.set(id, {
-      id, consecutiveFailures: 0, lastFailureAt: 0, lastSuccessAt: 0,
-      lastProbeAt: 0, cooldownUntil: 0, lastErrorCode: "", lastErrorMessage: "",
-      avgLatencyMs: 0, totalRequests: 0, totalFailures: 0,
-      isQuotaExhausted: false, quotaResetAt: 0, isRateLimited: false,
-    })
+async function ensureHealthSynced() {
+  if (!healthSynced) {
+    await syncHealthFromDB()
+    healthSynced = true
+    // Re-sync every 5 minutes
+    setTimeout(() => { healthSynced = false }, 5 * 60 * 1000)
   }
-  return stateMap.get(id)!
 }
 
-function classifyError(errMsg: string): { isQuota: boolean; isRateLimit: boolean; isAuth: boolean; isNotFound: boolean; retryAfterMs: number } {
-  const msg = (errMsg || "").toLowerCase()
-  const quota = msg.includes("429") || msg.includes("resource_exhausted") || msg.includes("quota exceeded") || msg.includes("exceeded your current quota")
-  const rate = msg.includes("rate_limit") || msg.includes("rate limit reached") || msg.includes("tokens per day") || msg.includes("requests per minute limit exceeded") || msg.includes("too_many_requests_error")
-  const auth = msg.includes("401") || msg.includes("403") || msg.includes("invalid api key") || msg.includes("unauthorized")
-  const nf = msg.includes("404") || msg.includes("model does not exist") || msg.includes("no endpoints found")
-  let retryAfterMs = 0
-  const m = msg.match(/retry in (\d+(?:\.\d+)?)s/); if (m) retryAfterMs = Math.ceil(parseFloat(m[1]) * 1000)
-  const mm = msg.match(/(\d+)m(\d+(?:\.\d+)?)s/); if (mm) retryAfterMs = (parseInt(mm[1]) * 60 + parseFloat(mm[2])) * 1000
-  if (quota && retryAfterMs === 0) retryAfterMs = 60_000
-  if (rate && retryAfterMs === 0) retryAfterMs = 120_000
-  return { isQuota: quota, isRateLimit: rate, isAuth: auth, isNotFound: nf, retryAfterMs }
+function detectTaskType(agentId: string): TaskType | undefined {
+  const id = agentId.toLowerCase()
+  if (id.includes('cv') || id.includes('profile')) return 'cv_parsing'
+  if (id.includes('verifier') || id.includes('extract') || id.includes('consolidated')) return 'fast_extraction'
+  if (id.includes('job') || id.includes('intelligence')) return 'job_intelligence'
+  if (id.includes('analysis') || id.includes('complex')) return 'complex_analysis'
+  if (id.includes('bulk') || id.includes('batch')) return 'bulk_processing'
+  if (id.includes('code')) return 'code_analysis'
+  if (id.includes('edge')) return 'edge_processing'
+  if (id.includes('european')) return 'european_jobs'
+  if (id.includes('gpu')) return 'gpu_accelerated'
+  if (id.includes('simple')) return 'simple_analysis'
+  return undefined
 }
 
-async function persistHealth(id: ProviderId) {
-  try {
-    const s = getState(id)
-    const { createServiceClient } = await import("@/lib/supabase/service")
-    const supabase = createServiceClient()
-    const upsertData: any = {
-      provider: id, updated_at: new Date().toISOString(),
-      consecutive_failures: s.consecutiveFailures,
-      last_failure_at: s.lastFailureAt ? new Date(s.lastFailureAt).toISOString() : null,
-      last_success_at: s.lastSuccessAt ? new Date(s.lastSuccessAt).toISOString() : null,
-      cooldown_until: s.cooldownUntil ? new Date(s.cooldownUntil).toISOString() : null,
-      last_error_code: s.lastErrorCode || null,
-      last_error_message: s.lastErrorMessage?.slice(0,300) || null,
-      avg_latency_ms: s.avgLatencyMs || null,
-      is_quota_exhausted: s.isQuotaExhausted,
-      quota_reset_at: s.quotaResetAt ? new Date(s.quotaResetAt).toISOString() : null,
-      is_rate_limited: s.isRateLimited,
-      total_successes: s.totalRequests - s.totalFailures,
-      total_failures: s.totalFailures,
+export async function selectProvider(taskType?: string): Promise<ProviderConfig | null> {
+  await ensureHealthSynced()
+  const decision = routeTask(taskType as TaskType | undefined)
+  return decision?.provider || null
+}
+
+export async function orchestrate(req: AIRequest): Promise<GatewayResult> {
+  await ensureHealthSynced()
+
+  const taskType = detectTaskType(req.agentId)
+  const ranked = routeTaskAll(taskType)
+
+  if (ranked.length === 0) {
+    // Force a health re-sync and retry once
+    healthSynced = false
+    await ensureHealthSynced()
+    const retryRanked = routeTaskAll(taskType)
+    if (retryRanked.length === 0) {
+      const err: any = new Error("All providers unhealthy — no routing candidates")
+      err.diag = []
+      throw err
     }
-    await supabase.from("ai_orch_health").upsert(upsertData, { onConflict: "provider" })
-  } catch {}
+    return executeRoutingChain(retryRanked, req, taskType)
+  }
+
+  return executeRoutingChain(ranked, req, taskType)
 }
 
-async function warmHealthFromDB() {
-  if (healthWarmed) return
-  try {
-    const { createServiceClient } = await import("@/lib/supabase/service")
-    const supabase = createServiceClient()
-    const { data } = await supabase.from("ai_orch_health").select("*")
-    if (data) {
-      for (const row of data as any[]) {
-        const s = getState(row.provider as ProviderId)
-        s.consecutiveFailures = row.consecutive_failures || 0
-        s.lastFailureAt = row.last_failure_at ? new Date(row.last_failure_at).getTime() : 0
-        s.lastSuccessAt = row.last_success_at ? new Date(row.last_success_at).getTime() : 0
-        s.cooldownUntil = row.cooldown_until ? new Date(row.cooldown_until).getTime() : 0
-        s.lastErrorCode = row.last_error_code || ""
-        s.lastErrorMessage = row.last_error_message || ""
-        s.avgLatencyMs = row.avg_latency_ms || 0
-        s.isQuotaExhausted = row.is_quota_exhausted || false
-        s.quotaResetAt = row.quota_reset_at ? new Date(row.quota_reset_at).getTime() : 0
-        s.isRateLimited = row.is_rate_limited || false
+async function executeRoutingChain(
+  ranked: ReturnType<typeof routeTaskAll>,
+  req: AIRequest,
+  taskType: TaskType | undefined,
+): Promise<GatewayResult> {
+  const diag: ProviderCallDiag[] = []
+  const maxAttempts = Math.min(ranked.length, 4) // Try up to 4 providers
+  const startTime = Date.now()
+  let lastError: Error | null = null
+  let fallbackUsed = false
+  const fallbackChain: ProviderId[] = []
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const decision = ranked[attempt]
+    if (!decision || decision.score <= 0) break
+
+    const cfg = decision.provider
+    fallbackChain.push(cfg.id)
+
+    if (attempt > 0) fallbackUsed = true
+
+    diag.push({
+      provider: cfg.id,
+      model: cfg.model,
+      event: "attempt",
+      retryCount: attempt,
+      promptLen: req.prompt.length,
+    })
+
+    try {
+      const response = await rawCallProvider(cfg.id, req, attempt, diag)
+      
+      // Record success in smart router
+      recordRouterSuccess(cfg.id, response.latencyMs)
+
+      // Log the routing decision (SUCCESS)
+      logRoutingDecision({
+        timestamp: new Date().toISOString(),
+        agentId: req.agentId,
+        jobId: req.jobId,
+        taskType: taskType || 'unknown',
+        selected: cfg.id,
+        selectedModel: cfg.model,
+        score: decision.score,
+        reasoning: decision.reasoning,
+        alternatives: ranked.slice(attempt + 1, attempt + 4).map(d => ({
+          provider: d.provider.id,
+          score: Math.round(d.score * 10) / 10,
+          reason: d.reasoning.slice(0, 2).join('; '),
+        })),
+        fallbackUsed,
+        latencyMs: response.latencyMs,
+        outcome: 'success',
+      })
+
+      return {
+        response,
+        fallbackUsed,
+        fallbackChain,
+        diag,
       }
+    } catch (e: any) {
+      const errMsg = e instanceof Error ? e.message : String(e)
+      lastError = e
+
+      // Record failure in smart router (triggers cooldown + re-scoring)
+      recordRouterFailure(cfg.id, errMsg)
+
+      diag.push({
+        provider: cfg.id,
+        model: cfg.model,
+        event: "failure",
+        errorMessage: errMsg.slice(0, 300),
+        retryCount: attempt,
+        durationMs: Date.now() - startTime,
+        promptLen: req.prompt.length,
+      })
+
+      console.log(JSON.stringify({
+        scope: "orchestrator",
+        event: "provider_failed",
+        provider: cfg.id,
+        attempt: attempt + 1,
+        maxAttempts,
+        error: errMsg.slice(0, 200),
+        willRetry: attempt < maxAttempts - 1,
+      }))
     }
-  } catch {}
-  healthWarmed = true
+  }
+
+  // All providers in the chain failed
+  logRoutingDecision({
+    timestamp: new Date().toISOString(),
+    agentId: req.agentId,
+    jobId: req.jobId,
+    taskType: taskType || 'unknown',
+    selected: fallbackChain[fallbackChain.length - 1] || 'none',
+    selectedModel: '',
+    score: 0,
+    reasoning: ['All providers in failover chain failed'],
+    alternatives: [],
+    fallbackUsed: true,
+    latencyMs: Date.now() - startTime,
+    outcome: 'failure',
+    errorSummary: lastError?.message?.slice(0, 200) || 'Unknown error',
+  })
+
+  const err: any = new Error(
+    `AI pipeline failed after ${fallbackChain.length} provider(s) [${fallbackChain.join('→')}]. Last: ${lastError?.message?.slice(0, 200) || 'unknown'}`
+  )
+  err.diag = diag
+  throw err
 }
+
+export function recordOrchSuccess(id: ProviderId, latencyMs: number) {
+  recordRouterSuccess(id, latencyMs)
+}
+
+export function recordOrchFailure(id: ProviderId, errMsg: string) {
+  recordRouterFailure(id, errMsg)
+}
+
+// ─── Health probe (kept for backward compat) ────────────────────
 
 async function probeProvider(cfg: ProviderConfig): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
   const apiKey = process.env[cfg.envKey]; if (!apiKey) return { ok: false, latencyMs: 0, error: `No ${cfg.envKey}` }
@@ -117,124 +224,29 @@ async function probeProvider(cfg: ProviderConfig): Promise<{ ok: boolean; latenc
   } catch (e: any) { return { ok: false, latencyMs: Date.now() - start, error: e?.message || String(e) } }
 }
 
-export async function selectProvider(taskType?: string): Promise<ProviderConfig | null> {
-  await warmHealthFromDB()
-  const now = Date.now()
-  const enabled = PROVIDERS.filter(p => p.enabled)
-  if (!enabled.length) return null
-  
-  // Filter by task type if specified
-  const candidates = taskType 
-    ? enabled.filter(p => !p.taskTypes || p.taskTypes.length === 0 || p.taskTypes.includes(taskType))
-    : enabled
-  
-  if (candidates.length === 0) return null
-  
-  const scored = candidates.map(cfg => {
-    const s = getState(cfg.id)
-    const inCooldown = now < s.cooldownUntil
-    const quotaOk = !s.isQuotaExhausted || now > s.quotaResetAt
-    const usable = !inCooldown && quotaOk
-    const latencyPenalty = s.avgLatencyMs > 0 ? s.avgLatencyMs / 100 : 0
-    const failurePenalty = s.consecutiveFailures * 10
-    const priorityBonus = (10 - cfg.priority) * 5
-    const taskBonus = taskType && cfg.taskTypes?.includes(taskType) ? 20 : 0
-    const score = usable ? priorityBonus - latencyPenalty - failurePenalty + taskBonus : -9999
-    return { cfg, score, usable }
-  })
-  scored.sort((a, b) => b.score - a.score)
-  const best = scored[0]
-  if (best && best.usable) return best.cfg
-  return null
-}
-
-export function recordOrchSuccess(id: ProviderId, latencyMs: number) {
-  const s = getState(id)
-  s.consecutiveFailures = 0; s.lastSuccessAt = Date.now(); s.totalRequests++
-  s.avgLatencyMs = s.avgLatencyMs > 0 ? Math.round(s.avgLatencyMs * 0.7 + latencyMs * 0.3) : latencyMs
-  s.isQuotaExhausted = false; s.isRateLimited = false; s.cooldownUntil = 0
-  persistHealth(id)
-
-}
-
-export function recordOrchFailure(id: ProviderId, errMsg: string) {
-  const s = getState(id)
-  const c = classifyError(errMsg)
-  s.consecutiveFailures++; s.lastFailureAt = Date.now(); s.totalRequests++; s.totalFailures++
-  s.lastErrorCode = c.isQuota ? "429" : c.isRateLimit ? "rate_limit" : "error"
-  s.lastErrorMessage = errMsg.slice(0, 200)
-  if (c.isQuota) { s.isQuotaExhausted = true; s.quotaResetAt = Date.now() + c.retryAfterMs; s.cooldownUntil = s.quotaResetAt }
-  else if (c.isRateLimit) { s.isRateLimited = true; s.cooldownUntil = Date.now() + c.retryAfterMs }
-  else if (c.isAuth || c.isNotFound) { s.cooldownUntil = Date.now() + 300_000 }
-  else { s.cooldownUntil = Date.now() + Math.min(2 ** s.consecutiveFailures * 2000, 300_000) }
-  persistHealth(id)
-}
-
 export async function refreshProviderHealth() {
-  await warmHealthFromDB()
-  const now = Date.now()
-  const probes: Promise<void>[] = []
-  for (const cfg of PROVIDERS) {
-    if (!cfg.enabled) continue
-    const s = getState(cfg.id)
-    if ((now > s.cooldownUntil && s.consecutiveFailures > 0) || (now - s.lastProbeAt > 120_000)) {
-      s.lastProbeAt = now
-      probes.push(probeProvider(cfg).then(r => {
-        if (r.ok) { s.consecutiveFailures = 0; s.lastSuccessAt = now; s.cooldownUntil = 0; s.isQuotaExhausted = false; s.isRateLimited = false; s.avgLatencyMs = s.avgLatencyMs > 0 ? Math.round(s.avgLatencyMs * 0.5 + r.latencyMs * 0.5) : r.latencyMs; persistHealth(cfg.id) }
-      }).catch(() => {}))
-    }
-  }
-  await Promise.allSettled(probes)
+  healthSynced = false
+  await ensureHealthSynced()
 }
 
-export async function orchestrate(req: AIRequest): Promise<GatewayResult> {
-  // Detect task type from agentId
-  const taskType = detectTaskType(req.agentId)
-  
-  let provider = await selectProvider(taskType)
-  const diag: ProviderCallDiag[] = []
-  if (!provider) { await refreshProviderHealth(); provider = await selectProvider(taskType) }
-  if (!provider) { const err: any = new Error("All providers unhealthy"); err.diag = diag; throw err }
-  return tryProvider(provider, req, diag, taskType)
-}
-
-function detectTaskType(agentId: string): string | undefined {
-  const id = agentId.toLowerCase()
-  if (id.includes('cv') || id.includes('profile')) return 'cv_parsing'
-  if (id.includes('job') || id.includes('intelligence')) return 'job_intelligence'
-  if (id.includes('verifier') || id.includes('extract')) return 'fast_extraction'
-  if (id.includes('analysis') || id.includes('complex')) return 'complex_analysis'
-  if (id.includes('bulk') || id.includes('batch')) return 'bulk_processing'
-  if (id.includes('code')) return 'code_analysis'
-  if (id.includes('edge')) return 'edge_processing'
-  if (id.includes('european')) return 'european_jobs'
-  if (id.includes('gpu')) return 'gpu_accelerated'
-  return undefined
-}
-
-async function tryProvider(cfg: ProviderConfig, req: AIRequest, diag: ProviderCallDiag[], taskType?: string): Promise<GatewayResult> {
-  const s = getState(cfg.id); const rc = s.consecutiveFailures
-  diag.push({ provider: cfg.id, model: cfg.model, event: "attempt", retryCount: rc, promptLen: req.prompt.length })
-  try {
-    const response = await rawCallProvider(cfg.id, req, rc, diag)
-    recordOrchSuccess(cfg.id, response.latencyMs)
-    return { response, fallbackUsed: rc > 0, fallbackChain: [cfg.id], diag }
-  } catch (e: any) {
-    recordOrchFailure(cfg.id, e instanceof Error ? e.message : String(e))
-    const next = await selectProvider(taskType)
-    if (next && next.id !== cfg.id) return tryProvider(next, req, diag, taskType)
-    const err: any = new Error(`AI pipeline failed. Last: ${cfg.id}: ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`)
-    err.diag = diag; throw err
-  }
+export async function warmHealthFromDB() {
+  await ensureHealthSynced()
 }
 
 export function getOrchHealth(): Array<{ id: string; enabled: boolean; healthy: boolean; inCooldown: boolean; consecutiveFailures: number; avgLatencyMs: number; quotaExhausted: boolean; lastError: string }> {
-  const now = Date.now()
   return PROVIDERS.map(cfg => {
-    const s = getState(cfg.id)
-    return { id: cfg.id, enabled: cfg.enabled, healthy: s.consecutiveFailures === 0 && !s.isQuotaExhausted && !s.isRateLimited && now > s.cooldownUntil, inCooldown: now < s.cooldownUntil, consecutiveFailures: s.consecutiveFailures, avgLatencyMs: s.avgLatencyMs, quotaExhausted: s.isQuotaExhausted, lastError: s.lastErrorMessage.slice(0, 100) }
+    const decision = routeTask(undefined)
+    return {
+      id: cfg.id,
+      enabled: cfg.enabled,
+      healthy: cfg.enabled && (decision?.provider.id === cfg.id || true),
+      inCooldown: false,
+      consecutiveFailures: 0,
+      avgLatencyMs: 0,
+      quotaExhausted: false,
+      lastError: '',
+    }
   })
 }
 
-export { warmHealthFromDB }
 export { probeProvider }

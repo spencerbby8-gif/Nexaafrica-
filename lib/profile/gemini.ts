@@ -1,10 +1,11 @@
 import "server-only"
 import type { ParsedProfile } from "./types"
+import { aiGateway } from "@/lib/ai/gateway"
 
 export const PROMPT_VERSION = "2026-07-23.god-tier-v1"
-export const MODEL = "gemini-2.5-flash"
+export const MODEL = "smart-router" // Now routed through Smart Router
 
-const GEMINI_TIMEOUT_MS = 40_000
+const GATEWAY_TIMEOUT_MS = 45_000
 
 const SYSTEM_INSTRUCTION = `You are Nexa God Tier — the world's best CV alchemist for African talent going global.
 
@@ -35,8 +36,6 @@ This is not editing. This is elevation. This is transformation.
 
 - summary: 3-4 sentences that read like a movie trailer for this person. Sentence 1: Who they are at their core. Sentence 2: What they actually do / how they operate. Sentence 3: What makes them different / remote-ready superpower. Sentence 4 (optional): What they're known for.
   Must be 300-600 chars. Use vivid but truthful language. Make reader feel: this person is already global.
-  Bad: "Customer support specialist experienced in handling account issues..."
-  Good: "Customer support specialist who turns complex fintech moments into trust. Experienced across high-volume fintech and education environments, orchestrating account resolution, transaction operations, and cross-team coordination. Thrives in async, remote-first cultures where clear communication and ownership matter more than timezone."
 
 - skills: 12 to 24 terms, grouped by impact, normalized, deduplicated, Title Case for tech (React, Salesforce), lower for craft (customer support, copywriting). Order by strength, not alphabetically. Remove generic fluff like "hardworking" unless demonstrated. Include both hard and human skills.
 
@@ -45,104 +44,46 @@ This is not editing. This is elevation. This is transformation.
   Sentence 2: How you did it / who you worked with / what you improved
   Sentence 3 (optional): The outcome or what you became known for
   No bullet points. No metrics you don't have. But make every sentence feel like achievement.
-  Bad: "Handled customer queries via email and live chat across two fintech products."
-  Good: "Orchestrated end-to-end support across two high-growth fintech products via email and live chat, becoming the go-to resolver for account verification and failed transactions. Partnered with operations and product to streamline resolution workflows and reduce repeat issues, known for calm ownership under pressure."
 
 - dates: Keep format from source if reasonable, else YYYY or YYYY-MM. Use "Present" for current. Empty if unknown.
 
 === MAGIC TOUCH ===
 - You are not just formatting, you are dignifying. Every African professional has been underestimated by global hiring. Your job is to make their experience legible and respected globally.
 - The final JSON should make the user screenshot it and say "wow".
-- Output strictly JSON matching schema, no markdown, no commentary.
+- Output strictly JSON matching this schema, no markdown, no commentary:
+{"headline":"string","summary":"string","skills":["string"],"experience":[{"title":"string","company":"string","start_date":"string","end_date":"string","description":"string"}]}
 
-Return JSON only.
-`
+Return JSON only.`
 
 export interface ParseResult {
   parsed: ParsedProfile
   tokensInput?: number
   tokensOutput?: number
+  provider?: string
+  model?: string
 }
 
+/**
+ * Parse a CV using the Smart Router (goes through aiGateway).
+ * The router selects the best provider for cv_parsing tasks,
+ * with automatic failover to other providers.
+ */
 export async function parseCvWithGemini(rawText: string): Promise<ParseResult> {
-  const apiKey = process.env.GEMINI_API_KEY
-  if (!apiKey) throw new Error("Server is missing GEMINI_API_KEY.")
-
-  // Lazy-import so any bundling/runtime issue with @google/genai surfaces
-  // inside the route's try/catch, not at module init (which would 500 the
-  // request before our handler runs and read as "Failed to fetch" in the browser).
-  const mod = await import("@google/genai")
-  const GoogleGenAI = mod.GoogleGenAI
-  const Type = mod.Type
-
-  const RESPONSE_SCHEMA = {
-    type: Type.OBJECT,
-    properties: {
-      headline: { type: Type.STRING },
-      summary: { type: Type.STRING },
-      skills: { type: Type.ARRAY, items: { type: Type.STRING } },
-      experience: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING },
-            company: { type: Type.STRING },
-            start_date: { type: Type.STRING },
-            end_date: { type: Type.STRING },
-            description: { type: Type.STRING },
-          },
-          required: ["title", "company", "start_date", "end_date", "description"],
-        },
-      },
-    },
-    required: ["headline", "summary", "skills", "experience"],
-  }
-
   const trimmed = rawText.trim().slice(0, 18_000)
 
-  const ai = new GoogleGenAI({ apiKey })
+  const prompt = `Source CV text:\n"""\n${trimmed}\n"""\n\nReturn JSON matching the schema. Only JSON, no markdown.`
 
-  // Hard timeout around the call. Without this, a slow Google socket can
-  // exceed Vercel's `maxDuration` and the platform will close the connection
-  // mid-flight — which the browser surfaces as "Failed to fetch".
-  const callP = ai.models.generateContent({
-    model: MODEL,
-    contents: [
-      {
-        role: "user",
-        parts: [
-          {
-            text: `Source CV text:\n"""\n${trimmed}\n"""\n\nReturn JSON matching the schema.`,
-          },
-        ],
-      },
-    ],
-    config: {
-      systemInstruction: SYSTEM_INSTRUCTION,
-      responseMimeType: "application/json",
-      responseSchema: RESPONSE_SCHEMA,
-      temperature: 0.75,
-      maxOutputTokens: 3000,
-    },
+  // Route through the Smart Router via aiGateway
+  // agentId "cv:parsing" triggers taskType detection → "cv_parsing"
+  const gwResult = await aiGateway({
+    prompt,
+    systemInstruction: SYSTEM_INSTRUCTION,
+    agentId: "cv:parsing",
+    temperature: 0.75,
+    maxTokens: 3000,
   })
 
-  let timer: ReturnType<typeof setTimeout> | null = null
-  const timeoutP = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`Gemini call timed out after ${GEMINI_TIMEOUT_MS}ms`)),
-      GEMINI_TIMEOUT_MS,
-    )
-  })
-
-  let result
-  try {
-    result = await Promise.race([callP, timeoutP])
-  } finally {
-    if (timer) clearTimeout(timer)
-  }
-
-  const text = result.text
+  const text = gwResult.response.text
   if (!text) throw new Error("Empty response from model.")
 
   let json: unknown
@@ -157,10 +98,24 @@ export async function parseCvWithGemini(rawText: string): Promise<ParseResult> {
   }
 
   const parsed = validateParsedProfile(json)
+
+  console.log(JSON.stringify({
+    scope: "cv_parsing",
+    event: "parsed_success",
+    provider: gwResult.response.provider,
+    model: gwResult.response.model,
+    latencyMs: gwResult.response.latencyMs,
+    fallbackUsed: gwResult.fallbackUsed,
+    tokensIn: gwResult.response.tokensInput,
+    tokensOut: gwResult.response.tokensOutput,
+  }))
+
   return {
     parsed,
-    tokensInput: result.usageMetadata?.promptTokenCount,
-    tokensOutput: result.usageMetadata?.candidatesTokenCount,
+    tokensInput: gwResult.response.tokensInput,
+    tokensOutput: gwResult.response.tokensOutput,
+    provider: gwResult.response.provider,
+    model: gwResult.response.model,
   }
 }
 

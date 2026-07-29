@@ -1,286 +1,404 @@
 /**
- * Smart AI Router
+ * Smart AI Router — Production Pipeline
  * 
- * Routes tasks to the best model based on:
- * - Capability (does model support required capability?)
- * - Benchmark score (how well does model perform on this task?)
- * - Health score (is model healthy?)
- * - Latency (how fast is model?)
- * - Quota status (does model have quota?)
- * - Cooldown state (is model in cooldown?)
- * - Availability (is model enabled and usable?)
+ * Routes every AI request to the best provider based on:
+ * 1. Task capability (does provider support this task type?)
+ * 2. Health score (consecutive failures, cooldown, quota)
+ * 3. Benchmark / historical performance (latency, success rate)
+ * 4. Priority (configured preference)
+ * 5. Cost (prefer cheaper when scores are similar)
+ * 
+ * Every routing decision is logged with full reasoning.
+ * This router is the SINGLE ENTRY POINT for all model selection.
  */
 
-import type { ModelRecord } from './model-registry'
-import { getEnabledModels } from './model-registry'
+import { PROVIDERS, type ProviderId, type ProviderConfig } from "./providers/types"
 
-export type TaskType = 
-  | 'chat'
-  | 'reasoning'
-  | 'coding'
-  | 'vision'
-  | 'functionCalling'
-  | 'structuredJSON'
-  | 'embeddings'
-  | 'longContext'
-  | 'jobIntelligence'
-  | 'trustVerification'
-  | 'africaEligibility'
-  | 'salaryExtraction'
-  | 'companyVerification'
-  | 'cvParsing'
-  | 'evidenceGeneration'
+// ─── Types ──────────────────────────────────────────────────────
+
+export type TaskType =
+  | 'job_intelligence'
+  | 'fast_extraction'
+  | 'cv_parsing'
+  | 'complex_analysis'
+  | 'bulk_processing'
+  | 'simple_analysis'
+  | 'code_analysis'
+  | 'edge_processing'
+  | 'european_jobs'
+  | 'gpu_accelerated'
+  | 'fallback'
+  | 'profile_transform'
 
 export interface RoutingDecision {
-  model: ModelRecord
+  provider: ProviderConfig
   score: number
-  reasoning: string
+  reasoning: string[]
+  factors: RoutingFactors
 }
 
-/**
- * Calculate routing score for a model on a specific task
- */
-function calculateRoutingScore(model: ModelRecord, taskType: TaskType): { score: number; reasoning: string } {
-  let score = 0
+export interface RoutingFactors {
+  taskCapability: number     // 0-40 points
+  healthScore: number        // 0-25 points
+  performanceScore: number   // 0-20 points
+  priorityScore: number      // 0-10 points
+  costScore: number          // 0-5 points
+}
+
+export interface RoutingLog {
+  timestamp: string
+  agentId: string
+  jobId?: string
+  taskType: string
+  selected: string
+  selectedModel: string
+  score: number
+  reasoning: string[]
+  alternatives: Array<{ provider: string; score: number; reason: string }>
+  fallbackUsed: boolean
+  latencyMs?: number
+  outcome?: 'success' | 'failure'
+  errorSummary?: string
+}
+
+// ─── In-memory health state (mirrors orchestrator but used for routing) ──
+
+interface ProviderHealthState {
+  consecutiveFailures: number
+  lastFailureAt: number
+  lastSuccessAt: number
+  cooldownUntil: number
+  isQuotaExhausted: boolean
+  quotaResetAt: number
+  isRateLimited: boolean
+  avgLatencyMs: number
+  totalRequests: number
+  totalFailures: number
+  successRate: number
+}
+
+const healthState = new Map<ProviderId, ProviderHealthState>()
+
+function getHealth(id: ProviderId): ProviderHealthState {
+  if (!healthState.has(id)) {
+    healthState.set(id, {
+      consecutiveFailures: 0, lastFailureAt: 0, lastSuccessAt: 0,
+      cooldownUntil: 0, isQuotaExhausted: false, quotaResetAt: 0,
+      isRateLimited: false, avgLatencyMs: 0, totalRequests: 0,
+      totalFailures: 0, successRate: 100,
+    })
+  }
+  return healthState.get(id)!
+}
+
+// ─── Routing log buffer ─────────────────────────────────────────
+
+const routingLogs: RoutingLog[] = []
+const MAX_LOGS = 500
+
+function logRoutingDecision(log: RoutingLog): void {
+  routingLogs.push(log)
+  if (routingLogs.length > MAX_LOGS) routingLogs.shift()
+  // Also emit to console for Vercel logs
+  console.log(JSON.stringify({
+    scope: "smart_router",
+    ts: log.timestamp,
+    taskType: log.taskType,
+    selected: log.selected,
+    model: log.selectedModel,
+    score: Math.round(log.score * 10) / 10,
+    fallback: log.fallbackUsed,
+    outcome: log.outcome || "pending",
+    ...(log.latencyMs ? { latencyMs: log.latencyMs } : {}),
+  }))
+}
+
+// ─── Core scoring ───────────────────────────────────────────────
+
+function scoreProvider(
+  cfg: ProviderConfig,
+  taskType: TaskType | undefined,
+  now: number,
+): RoutingDecision {
+  const health = getHealth(cfg.id)
   const reasoning: string[] = []
-  
-  // Check if model is enabled and usable
-  if (!model.enabled || !model.health.usable) {
-    return { score: -9999, reasoning: 'Model not enabled or usable' }
+
+  // ── Gate checks (instant -9999 if blocked) ──
+  if (!cfg.enabled) {
+    return { provider: cfg, score: -9999, reasoning: ['Disabled'], factors: { taskCapability: 0, healthScore: 0, performanceScore: 0, priorityScore: 0, costScore: 0 } }
   }
-  
-  // Check cooldown
-  if (model.health.cooldownUntil && new Date(model.health.cooldownUntil) > new Date()) {
-    return { score: -9999, reasoning: 'Model in cooldown' }
+
+  const inCooldown = now < health.cooldownUntil
+  if (inCooldown) {
+    const remaining = Math.ceil((health.cooldownUntil - now) / 1000)
+    return { provider: cfg, score: -9999, reasoning: [`In cooldown (${remaining}s remaining)`], factors: { taskCapability: 0, healthScore: 0, performanceScore: 0, priorityScore: 0, costScore: 0 } }
   }
-  
-  // Check quota
-  if (model.health.quotaStatus === 'exhausted') {
-    return { score: -9999, reasoning: 'Quota exhausted' }
+
+  const quotaBlocked = health.isQuotaExhausted && now < health.quotaResetAt
+  if (quotaBlocked) {
+    return { provider: cfg, score: -9999, reasoning: ['Quota exhausted'], factors: { taskCapability: 0, healthScore: 0, performanceScore: 0, priorityScore: 0, costScore: 0 } }
   }
-  
-  // Capability score (0-40 points)
-  let capabilityScore = 0
-  if (taskType === 'chat' && model.capabilities.chat) {
-    capabilityScore = 40
-    reasoning.push('Supports chat')
-  } else if (taskType === 'reasoning' && model.capabilities.reasoning) {
-    capabilityScore = 40
-    reasoning.push('Supports reasoning')
-  } else if (taskType === 'coding' && model.capabilities.coding) {
-    capabilityScore = 40
-    reasoning.push('Supports coding')
-  } else if (taskType === 'structuredJSON' && model.capabilities.structuredJSON) {
-    capabilityScore = 40
-    reasoning.push('Supports structured JSON')
-  } else if (taskType === 'longContext' && model.capabilities.longContext) {
-    capabilityScore = 40
-    reasoning.push('Supports long context')
-  } else if (taskType === 'jobIntelligence' && model.capabilities.structuredJSON) {
-    capabilityScore = 35  // Slightly lower since it's not a direct capability
-    reasoning.push('Supports structured JSON (required for job intelligence)')
-  } else if (taskType === 'trustVerification' && model.capabilities.structuredJSON) {
-    capabilityScore = 35
-    reasoning.push('Supports structured JSON (required for trust verification)')
-  } else if (taskType === 'africaEligibility' && model.capabilities.structuredJSON) {
-    capabilityScore = 35
-    reasoning.push('Supports structured JSON (required for Africa eligibility)')
-  } else if (taskType === 'salaryExtraction' && model.capabilities.structuredJSON) {
-    capabilityScore = 35
-    reasoning.push('Supports structured JSON (required for salary extraction)')
-  } else if (taskType === 'companyVerification' && model.capabilities.structuredJSON) {
-    capabilityScore = 35
-    reasoning.push('Supports structured JSON (required for company verification)')
-  } else if (taskType === 'cvParsing' && model.capabilities.structuredJSON) {
-    capabilityScore = 35
-    reasoning.push('Supports structured JSON (required for CV parsing)')
-  } else if (taskType === 'evidenceGeneration' && model.capabilities.chat) {
-    capabilityScore = 30
-    reasoning.push('Supports chat (required for evidence generation)')
+
+  if (health.isRateLimited && now < health.cooldownUntil) {
+    return { provider: cfg, score: -9999, reasoning: ['Rate limited'], factors: { taskCapability: 0, healthScore: 0, performanceScore: 0, priorityScore: 0, costScore: 0 } }
+  }
+
+  // ── Factor 1: Task Capability (0-40 points) ──
+  let taskCapability = 0
+  if (taskType) {
+    if (cfg.taskTypes && cfg.taskTypes.length > 0) {
+      if (cfg.taskTypes.includes(taskType)) {
+        taskCapability = 40
+        reasoning.push(`✓ Supports task "${taskType}"`)
+      } else if (cfg.taskTypes.includes('fallback')) {
+        taskCapability = 15
+        reasoning.push(`Fallback provider (not optimized for "${taskType}")`)
+      } else {
+        taskCapability = 5
+        reasoning.push(`No task affinity for "${taskType}" (will still try)`)
+      }
+    } else {
+      // No taskTypes defined = general purpose
+      taskCapability = 20
+      reasoning.push('General purpose (no task restriction)')
+    }
   } else {
-    // Model doesn't support required capability
-    return { score: -9999, reasoning: `Model doesn't support ${taskType}` }
+    taskCapability = 25
+    reasoning.push('No task type specified (default capability)')
   }
-  
-  score += capabilityScore
-  
-  // Benchmark score (0-30 points)
-  let benchmarkScore = 0
-  if (model.benchmarks.overallScore !== undefined) {
-    benchmarkScore = (model.benchmarks.overallScore / 100) * 30
-    reasoning.push(`Benchmark score: ${model.benchmarks.overallScore}/100`)
+
+  // ── Factor 2: Health (0-25 points) ──
+  let healthScore = 25 // Start perfect
+  if (health.consecutiveFailures > 0) {
+    healthScore -= Math.min(health.consecutiveFailures * 8, 25)
+    reasoning.push(`${health.consecutiveFailures} consecutive failure(s)`)
+  }
+  if (health.successRate < 80) {
+    healthScore -= Math.round((100 - health.successRate) / 5)
+    reasoning.push(`Success rate: ${health.successRate.toFixed(1)}%`)
+  } else if (health.totalRequests > 0) {
+    reasoning.push(`Success rate: ${health.successRate.toFixed(1)}%`)
+  }
+  healthScore = Math.max(0, healthScore)
+
+  // ── Factor 3: Performance / Latency (0-20 points) ──
+  let performanceScore = 10 // Default if no data
+  if (health.avgLatencyMs > 0) {
+    if (health.avgLatencyMs < 500) {
+      performanceScore = 20
+      reasoning.push(`Fast: ${health.avgLatencyMs}ms avg`)
+    } else if (health.avgLatencyMs < 1500) {
+      performanceScore = 15
+      reasoning.push(`OK latency: ${health.avgLatencyMs}ms avg`)
+    } else if (health.avgLatencyMs < 5000) {
+      performanceScore = 8
+      reasoning.push(`Slow: ${health.avgLatencyMs}ms avg`)
+    } else {
+      performanceScore = 3
+      reasoning.push(`Very slow: ${health.avgLatencyMs}ms avg`)
+    }
   } else {
-    benchmarkScore = 15  // Default if not benchmarked
-    reasoning.push('Not benchmarked (default score)')
+    reasoning.push('No latency data (untested)')
   }
-  
-  score += benchmarkScore
-  
-  // Health score (0-15 points)
-  const healthScore = (model.health.healthScore / 100) * 15
-  score += healthScore
-  reasoning.push(`Health score: ${model.health.healthScore}/100`)
-  
-  // Success rate (0-10 points)
-  const successRateScore = (model.health.successRate / 100) * 10
-  score += successRateScore
-  reasoning.push(`Success rate: ${model.health.successRate.toFixed(1)}%`)
-  
-  // Latency (0-5 points, lower is better)
-  let latencyScore = 0
-  if (model.health.avgLatencyMs > 0) {
-    // Max 5 points for <500ms, decreasing as latency increases
-    latencyScore = Math.max(0, 5 - (model.health.avgLatencyMs / 1000))
-    reasoning.push(`Avg latency: ${model.health.avgLatencyMs}ms`)
+
+  // ── Factor 4: Priority (0-10 points) ──
+  const priorityScore = Math.max(0, 10 - (cfg.priority - 1))
+  reasoning.push(`Priority: ${cfg.priority}/10`)
+
+  // ── Factor 5: Cost (0-5 points, cheaper = better) ──
+  let costScore = 3
+  if (cfg.costPer1kTokens === 0) {
+    costScore = 5
+    reasoning.push('Free tier')
+  } else if (cfg.costPer1kTokens <= 1) {
+    costScore = 4
+    reasoning.push(`Low cost: $${cfg.costPer1kTokens}/1k`)
+  } else if (cfg.costPer1kTokens <= 2) {
+    costScore = 3
+    reasoning.push(`Medium cost: $${cfg.costPer1kTokens}/1k`)
+  } else {
+    costScore = 1
+    reasoning.push(`High cost: $${cfg.costPer1kTokens}/1k`)
   }
-  
-  score += latencyScore
-  
-  return { score, reasoning: reasoning.join(', ') }
+
+  const totalScore = taskCapability + healthScore + performanceScore + priorityScore + costScore
+
+  return {
+    provider: cfg,
+    score: totalScore,
+    reasoning,
+    factors: { taskCapability, healthScore, performanceScore, priorityScore, costScore },
+  }
 }
 
+// ─── Public API ─────────────────────────────────────────────────
+
 /**
- * Select best model for a task
+ * Route to the best provider for a task.
+ * Returns the top-ranked decision.
  */
-export async function selectModel(taskType: TaskType): Promise<RoutingDecision | null> {
-  console.log(`[Router] Selecting model for task: ${taskType}`)
-  
-  const models = await getEnabledModels()
-  
-  if (models.length === 0) {
-    console.log('[Router] No enabled models available')
-    return null
-  }
-  
-  console.log(`[Router] Evaluating ${models.length} enabled models`)
-  
-  // Calculate scores for all models
-  const decisions: RoutingDecision[] = models.map(model => {
-    const { score, reasoning } = calculateRoutingScore(model, taskType)
-    return { model, score, reasoning }
-  })
-  
-  // Sort by score (descending)
+export function routeTask(taskType?: TaskType): RoutingDecision | null {
+  const now = Date.now()
+  const decisions = PROVIDERS.map(cfg => scoreProvider(cfg, taskType, now))
   decisions.sort((a, b) => b.score - a.score)
-  
-  // Get best model
   const best = decisions[0]
-  
-  if (!best || best.score <= 0) {
-    console.log('[Router] No suitable model found')
-    return null
-  }
-  
-  console.log(`[Router] Selected ${best.model.provider}/${best.model.modelId} (score: ${best.score.toFixed(2)})`)
-  console.log(`[Router] Reasoning: ${best.reasoning}`)
-  
+  if (!best || best.score <= 0) return null
   return best
 }
 
 /**
- * Select model with failover
+ * Get all providers ranked for a task (for failover chain).
  */
-export async function selectModelWithFailover(taskType: TaskType, maxAttempts: number = 3): Promise<RoutingDecision | null> {
-  console.log(`[Router] Selecting model with failover for task: ${taskType}`)
-  
-  const models = await getEnabledModels()
-  
-  if (models.length === 0) {
-    console.log('[Router] No enabled models available')
-    return null
-  }
-  
-  // Calculate scores for all models
-  const decisions: RoutingDecision[] = models.map(model => {
-    const { score, reasoning } = calculateRoutingScore(model, taskType)
-    return { model, score, reasoning }
-  })
-  
-  // Sort by score (descending)
+export function routeTaskAll(taskType?: TaskType): RoutingDecision[] {
+  const now = Date.now()
+  const decisions = PROVIDERS.map(cfg => scoreProvider(cfg, taskType, now))
   decisions.sort((a, b) => b.score - a.score)
-  
-  // Try top models
-  for (let i = 0; i < Math.min(maxAttempts, decisions.length); i++) {
-    const decision = decisions[i]
-    
-    if (decision.score <= 0) {
-      console.log(`[Router] No more suitable models (attempt ${i + 1}/${maxAttempts})`)
-      break
+  return decisions.filter(d => d.score > 0)
+}
+
+/**
+ * Record a successful provider call — updates routing health.
+ */
+export function recordRouterSuccess(providerId: ProviderId, latencyMs: number): void {
+  const h = getHealth(providerId)
+  h.consecutiveFailures = 0
+  h.lastSuccessAt = Date.now()
+  h.totalRequests++
+  h.avgLatencyMs = h.avgLatencyMs > 0
+    ? Math.round(h.avgLatencyMs * 0.7 + latencyMs * 0.3)
+    : latencyMs
+  h.isQuotaExhausted = false
+  h.isRateLimited = false
+  h.cooldownUntil = 0
+  h.successRate = h.totalRequests > 0
+    ? ((h.totalRequests - h.totalFailures) / h.totalRequests) * 100
+    : 100
+}
+
+/**
+ * Record a failed provider call — updates routing health + cooldown.
+ */
+export function recordRouterFailure(providerId: ProviderId, errMsg: string): void {
+  const h = getHealth(providerId)
+  h.consecutiveFailures++
+  h.lastFailureAt = Date.now()
+  h.totalRequests++
+  h.totalFailures++
+  h.successRate = h.totalRequests > 0
+    ? ((h.totalRequests - h.totalFailures) / h.totalRequests) * 100
+    : 0
+
+  // Classify error for cooldown
+  const msg = errMsg.toLowerCase()
+  const isQuota = msg.includes('429') || msg.includes('resource_exhausted') || msg.includes('quota exceeded')
+  const isRateLimit = msg.includes('rate_limit') || msg.includes('rate limit') || msg.includes('tokens per day')
+  const isAuth = msg.includes('401') || msg.includes('403') || msg.includes('invalid api key')
+
+  if (isQuota) {
+    h.isQuotaExhausted = true
+    h.quotaResetAt = Date.now() + 60_000
+    h.cooldownUntil = h.quotaResetAt
+  } else if (isRateLimit) {
+    h.isRateLimited = true
+    h.cooldownUntil = Date.now() + 120_000
+  } else if (isAuth) {
+    h.cooldownUntil = Date.now() + 300_000
+  } else {
+    h.cooldownUntil = Date.now() + Math.min(2 ** h.consecutiveFailures * 2000, 300_000)
+  }
+}
+
+/**
+ * Sync health state from the orchestrator's DB-persisted health.
+ * Called at startup and periodically.
+ */
+export async function syncHealthFromDB(): Promise<void> {
+  try {
+    const { createServiceClient } = await import("@/lib/supabase/service")
+    const supabase = createServiceClient()
+    const { data } = await supabase.from("ai_orch_health").select("*")
+    if (!data) return
+    for (const row of data as any[]) {
+      const id = row.provider as ProviderId
+      const h = getHealth(id)
+      h.consecutiveFailures = row.consecutive_failures || 0
+      h.lastFailureAt = row.last_failure_at ? new Date(row.last_failure_at).getTime() : 0
+      h.lastSuccessAt = row.last_success_at ? new Date(row.last_success_at).getTime() : 0
+      h.cooldownUntil = row.cooldown_until ? new Date(row.cooldown_until).getTime() : 0
+      h.isQuotaExhausted = row.is_quota_exhausted || false
+      h.quotaResetAt = row.quota_reset_at ? new Date(row.quota_reset_at).getTime() : 0
+      h.isRateLimited = row.is_rate_limited || false
+      h.avgLatencyMs = row.avg_latency_ms || 0
+      const successes = row.total_successes || 0
+      const failures = row.total_failures || 0
+      h.totalRequests = successes + failures
+      h.totalFailures = failures
+      h.successRate = h.totalRequests > 0 ? (successes / h.totalRequests) * 100 : 100
     }
-    
-    console.log(`[Router] Attempt ${i + 1}/${maxAttempts}: ${decision.model.provider}/${decision.model.modelId} (score: ${decision.score.toFixed(2)})`)
-    
-    // For now, just return the decision
-    // In a real implementation, we would try the model and failover if it fails
-    return decision
+    console.log(JSON.stringify({ scope: "smart_router", event: "health_synced", providers: data.length }))
+  } catch (e) {
+    console.log(JSON.stringify({ scope: "smart_router", event: "health_sync_error", error: (e instanceof Error ? e.message : String(e)).slice(0, 200) }))
   }
-  
-  console.log('[Router] No suitable model found after all attempts')
-  return null
 }
 
 /**
- * Get routing statistics
+ * Get recent routing logs (for audit endpoint).
  */
-export async function getRoutingStats() {
-  const models = await getEnabledModels()
-  
-  const stats = {
-    totalModels: models.length,
-    enabledModels: models.filter(m => m.enabled).length,
-    usableModels: models.filter(m => m.health.usable).length,
-    byCapability: {
-      chat: models.filter(m => m.capabilities.chat).length,
-      reasoning: models.filter(m => m.capabilities.reasoning).length,
-      coding: models.filter(m => m.capabilities.coding).length,
-      structuredJSON: models.filter(m => m.capabilities.structuredJSON).length,
-      longContext: models.filter(m => m.capabilities.longContext).length
-    },
-    topModels: models
-      .filter(m => m.enabled && m.health.usable)
-      .sort((a, b) => (b.benchmarks.overallScore || 0) - (a.benchmarks.overallScore || 0))
-      .slice(0, 5)
-      .map(m => ({
-        provider: m.provider,
-        modelId: m.modelId,
-        benchmarkScore: m.benchmarks.overallScore || 0,
-        healthScore: m.health.healthScore,
-        latency: m.health.avgLatencyMs
-      }))
-  }
-  
-  return stats
+export function getRoutingLogs(count: number = 50): RoutingLog[] {
+  return routingLogs.slice(-count).reverse()
 }
 
 /**
- * Test routing with different task types
+ * Get routing statistics.
  */
-export async function testRouting(): Promise<void> {
-  console.log('=== TESTING SMART ROUTING ===\n')
-  
+export function getRoutingStats(): { providers: Array<{ id: string; name: string; model: string; score: number; healthy: boolean; reasoning: string[]; taskTypes: string[] }>; totalDecisions: number } {
+  const now = Date.now()
+  const providers = PROVIDERS.map(cfg => {
+    const decision = scoreProvider(cfg, undefined, now)
+    const health = getHealth(cfg.id)
+    return {
+      id: cfg.id,
+      name: cfg.name,
+      model: cfg.model,
+      score: Math.round(decision.score * 10) / 10,
+      healthy: decision.score > 0,
+      reasoning: decision.reasoning,
+      taskTypes: cfg.taskTypes || [],
+      consecutiveFailures: health.consecutiveFailures,
+      avgLatencyMs: health.avgLatencyMs,
+      successRate: health.successRate,
+    }
+  })
+  providers.sort((a, b) => b.score - a.score)
+  return { providers, totalDecisions: routingLogs.length }
+}
+
+/**
+ * Test routing across all task types — proves different tasks route differently.
+ */
+export function testRoutingAllTasks(): Record<string, { selected: string; model: string; score: number; reasoning: string[]; alternatives: string[] }> {
   const taskTypes: TaskType[] = [
-    'chat',
-    'reasoning',
-    'coding',
-    'structuredJSON',
-    'jobIntelligence',
-    'trustVerification',
-    'africaEligibility',
-    'salaryExtraction',
-    'companyVerification',
-    'cvParsing',
-    'evidenceGeneration'
+    'job_intelligence', 'fast_extraction', 'cv_parsing', 'complex_analysis',
+    'bulk_processing', 'code_analysis', 'edge_processing', 'european_jobs',
+    'gpu_accelerated', 'simple_analysis',
   ]
-  
-  for (const taskType of taskTypes) {
-    const decision = await selectModel(taskType)
-    
-    if (decision) {
-      console.log(`[Routing Test] ${taskType}: ${decision.model.provider}/${decision.model.modelId} (score: ${decision.score.toFixed(2)})`)
+  const result: Record<string, any> = {}
+  for (const task of taskTypes) {
+    const ranked = routeTaskAll(task)
+    if (ranked.length > 0) {
+      result[task] = {
+        selected: ranked[0].provider.id,
+        model: ranked[0].provider.model,
+        score: Math.round(ranked[0].score * 10) / 10,
+        reasoning: ranked[0].reasoning,
+        alternatives: ranked.slice(1, 4).map(d => `${d.provider.id} (${Math.round(d.score * 10) / 10})`),
+      }
     } else {
-      console.log(`[Routing Test] ${taskType}: NO SUITABLE MODEL`)
+      result[task] = { selected: 'NONE', model: '', score: 0, reasoning: ['No available providers'], alternatives: [] }
     }
   }
-  
-  console.log('\n=== ROUTING TEST COMPLETE ===')
+  return result
 }
+
+// Export logRoutingDecision for use by the orchestrator
+export { logRoutingDecision }

@@ -7,14 +7,6 @@
     {
       "path": "/api/ai/process?batch=150",
       "schedule": "0 5 * * *"
-    },
-    {
-      "path": "/api/ai/process?batch=150",
-      "schedule": "0 17 * * *"
-    },
-    {
-      "path": "/api/jobs/deactivate-stale",
-      "schedule": "0 6 * * *"
     }
   ]
 }

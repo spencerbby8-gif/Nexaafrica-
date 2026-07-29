@@ -164,6 +164,7 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
   // Always show something, even when AI missing, using job fallbacks
   const hasAI = !!intelligence
   const state = intelligenceState(intelligence, (job as any)?._queueStatus)
+  const degraded = hasAI && state.status === 'degraded' // regex/legacy fallback rows — not real AI output
   const africa = africaFitLabel(intelligence?.africa_eligibility, job?.eligibility)
   const remote = remoteLabel(intelligence?.remote_eligibility, job?.is_remote)
   const salary = salaryTruthLabel(intelligence, job || null)
@@ -173,9 +174,9 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
   const isHigh = overall >= 70
   const requiredSkills = (intelligence?.required_skills || job?.tags || []).slice(0, 4)
 
-  if (!hasAI) {
+  if (!hasAI || degraded) {
     const badgeColor = state.status === 'failed' ? 'border-red-500/20 bg-red-500/10 text-red-600' : 'border-amber-500/20 bg-amber-500/10 text-amber-600'
-    const msg = state.status === 'failed' ? 'Intelligence unavailable — processing failed' : 'Intelligence pending — our verifier is checking this role'
+    const msg = state.status === 'failed' ? 'Intelligence unavailable — processing failed' : degraded ? 'AI verification pending — showing feed data only' : 'Intelligence pending — our verifier is checking this role'
     return (
       <div className="mt-2.5 rounded-md border border-border/60 bg-secondary/30 px-2.5 py-2.5">
         <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
@@ -266,7 +267,7 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons }
         <h2 className="text-sm font-semibold tracking-tight text-foreground flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-accent" aria-hidden />Opportunity Intelligence</h2>
         <div className="flex items-center gap-2">
           <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${overallConf >= 70 ? 'border-green-500/20 bg-green-500/10 text-green-700 dark:text-green-300' : overallConf >= 40 ? 'border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'border-border bg-secondary text-muted-foreground'}`}>
-            {hasAI ? `${overallConf}% overall confidence` : 'Pending – using feed fallback'}
+            {(hasAI && overallConf > 0) ? `${overallConf}% overall confidence` : 'Pending – using feed fallback'}
           </span>
           {intelligence?.last_verified_at && <span className="text-[11px] text-muted-foreground">Verified {new Date(intelligence.last_verified_at).toLocaleDateString()}</span>}
         </div>

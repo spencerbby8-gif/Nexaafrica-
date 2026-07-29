@@ -290,11 +290,17 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
       if (data && data.length > 0) {
         result.inserted += 1
         try {
-          await supabase.from('ai_processing_queue').insert({
-            job_id: data[0].id,
-            status: 'pending',
-            priority: existing ? 0 : 10,
-          })
+          // ignoreDuplicates: a job sighted again must not duplicate its
+          // queue row (unique(job_id) was throwing and being swallowed).
+          // Failed rows that are re-sighted get one automatic retry.
+          await supabase.from('ai_processing_queue').upsert(
+            { job_id: data[0].id, status: 'pending', priority: existing ? 0 : 10 },
+            { onConflict: 'job_id', ignoreDuplicates: true },
+          )
+          await supabase.from('ai_processing_queue')
+            .update({ status: 'pending', error: null })
+            .eq('job_id', data[0].id)
+            .eq('status', 'failed')
         } catch {}
       }
       else result.skipped += 1
@@ -568,11 +574,17 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
       if (data && data.length > 0) {
         result.inserted += 1
         try {
-          await supabase.from('ai_processing_queue').insert({
-            job_id: data[0].id,
-            status: 'pending',
-            priority: existing ? 0 : 10,
-          })
+          // ignoreDuplicates: a job sighted again must not duplicate its
+          // queue row (unique(job_id) was throwing and being swallowed).
+          // Failed rows that are re-sighted get one automatic retry.
+          await supabase.from('ai_processing_queue').upsert(
+            { job_id: data[0].id, status: 'pending', priority: existing ? 0 : 10 },
+            { onConflict: 'job_id', ignoreDuplicates: true },
+          )
+          await supabase.from('ai_processing_queue')
+            .update({ status: 'pending', error: null })
+            .eq('job_id', data[0].id)
+            .eq('status', 'failed')
         } catch {}
       }
       else result.skipped += 1

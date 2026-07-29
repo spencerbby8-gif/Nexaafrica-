@@ -305,21 +305,21 @@ async function triggerSecondOpinionIfNeeded(
       const r = result.reconciled
       const updateRow: Record<string, unknown> = {}
       if (r.africa_eligibility && r.africa_eligibility !== "unknown") updateRow.africa_eligibility = r.africa_eligibility
-      if (r.africa_confidence && r.africa_confidence > 0) updateRow.africa_confidence = Math.round(r.africa_confidence)
+      if (r.africa_confidence && r.africa_confidence > 0) updateRow.africa_confidence = clamp100(r.africa_confidence)
       if (r.africa_evidence) updateRow.africa_evidence = r.africa_evidence
       if (r.remote_eligibility && r.remote_eligibility !== "unknown") updateRow.remote_eligibility = r.remote_eligibility
-      if (r.remote_confidence && r.remote_confidence > 0) updateRow.remote_confidence = Math.round(r.remote_confidence)
+      if (r.remote_confidence && r.remote_confidence > 0) updateRow.remote_confidence = clamp100(r.remote_confidence)
       if (r.remote_evidence) updateRow.remote_evidence = r.remote_evidence
       if (r.salary_transparency && r.salary_transparency !== "unknown") updateRow.salary_transparency = r.salary_transparency
-      if (r.salary_confidence && r.salary_confidence > 0) updateRow.salary_confidence = Math.round(r.salary_confidence)
+      if (r.salary_confidence && r.salary_confidence > 0) updateRow.salary_confidence = clamp100(r.salary_confidence)
       if (r.salary_evidence) updateRow.salary_evidence = r.salary_evidence
       if (r.company_legitimacy && r.company_legitimacy !== "unknown") updateRow.company_legitimacy = r.company_legitimacy
-      if (r.company_confidence && r.company_confidence > 0) updateRow.company_confidence = Math.round(r.company_confidence)
+      if (r.company_confidence && r.company_confidence > 0) updateRow.company_confidence = clamp100(r.company_confidence)
       if (r.company_evidence) updateRow.company_evidence = r.company_evidence
       if (r.experience_level && r.experience_level !== "unknown") updateRow.experience_level = r.experience_level
-      if (r.experience_confidence && r.experience_confidence > 0) updateRow.experience_confidence = Math.round(r.experience_confidence)
+      if (r.experience_confidence && r.experience_confidence > 0) updateRow.experience_confidence = clamp100(r.experience_confidence)
       if (r.job_quality && r.job_quality !== "unknown") updateRow.job_quality = r.job_quality
-      if (r.job_quality_confidence && r.job_quality_confidence > 0) updateRow.job_quality_confidence = Math.round(r.job_quality_confidence)
+      if (r.job_quality_confidence && r.job_quality_confidence > 0) updateRow.job_quality_confidence = clamp100(r.job_quality_confidence)
       if (r.job_quality_evidence) updateRow.job_quality_evidence = r.job_quality_evidence
       if (Array.isArray(r.required_skills) && r.required_skills.length > 0) updateRow.required_skills = r.required_skills
       if (Array.isArray(r.transferable_skills) && r.transferable_skills.length > 0) updateRow.transferable_skills = r.transferable_skills
@@ -340,6 +340,40 @@ async function triggerSecondOpinionIfNeeded(
       error:(e instanceof Error?e.message:String(e)).slice(0,200) }))
   }
 }
+
+// ── [UPLOAD SAFETY] Normalization at the upsert boundary ─────────────
+// Verified production failures (ai_processing_queue.error):
+//   1) invalid input syntax for type integer: "30.97"  (float from AI)
+//   2) check-constraint violation on job_ai_intelligence (out-of-range
+//      confidence / invalid enum emitted by a model)
+// AI output is untrusted input: round, clamp, whitelist, or drop — never
+// pass through, never invent replacements.
+const asInt = (v: unknown): number | null => {
+  if (v === null || v === undefined) return null
+  const n = typeof v === "number" ? v : Number(v)
+  return Number.isFinite(n) ? Math.round(n) : null
+}
+const clamp100 = (v: unknown): number | null => {
+  const n = asInt(v)
+  if (n === null) return null
+  return Math.max(0, Math.min(100, n))
+}
+const asEnum = <T extends string>(v: unknown, allowed: readonly T[]): T =>
+  (allowed as readonly unknown[]).includes(v) ? (v as T) : ("unknown" as T)
+const asStringOrNull = (v: unknown): string | null =>
+  typeof v === "string" && v.length > 0 ? v : null
+const asStringArray = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0) : []
+
+const AFRICA_ENUM = ["explicit", "likely", "restricted", "unknown"] as const
+const REMOTE_ENUM = ["fully_remote", "hybrid", "onsite", "unknown"] as const
+const VISA_ENUM = ["available", "not_available", "unknown", "conditional"] as const
+const TRANSPARENCY_ENUM = ["disclosed", "estimated", "undisclosed", "unknown"] as const
+const LEGITIMACY_ENUM = ["verified", "likely_legit", "unknown", "suspicious"] as const
+const QUALITY_ENUM = ["high", "medium", "low", "unknown"] as const
+const EXPERIENCE_ENUM = ["entry", "mid", "senior", "executive", "unknown"] as const
+const DIFFICULTY_ENUM = ["easy", "medium", "hard", "unknown"] as const
+const URGENCY_ENUM = ["high", "medium", "low", "unknown"] as const
 
 export async function processAIQueue(batchSize = 100) {
   const { createServiceClient } = await import("@/lib/supabase/service")
@@ -377,15 +411,35 @@ export async function processAIQueue(batchSize = 100) {
   let failed = 0
 
   const loopStart = Date.now()
-  for (const item of queueItems) {
-    if (Date.now() - loopStart > 240000) break // stop before serverless maxDuration to avoid stuck processing rows
+
+  // ── [THROUGHPUT] Bounded worker pool ────────────────────────────────
+  // Root cause of the 94% backlog: jobs were processed strictly
+  // sequentially (~15-25 jobs per 300s invocation, ~36 jobs/day).
+  // Each job is I/O-bound (page fetch + one provider call), so bounded
+  // concurrency multiplies throughput. Provider pressure stays governed
+  // by the Smart Router's quota/cooldown gates.
+  const concurrency = Math.max(1, Math.min(10, Number(process.env.AI_QUEUE_CONCURRENCY) || 5))
+  let cursor = 0
+  let skippedClaim = 0
+
+  async function processOne(item: { id: string; job_id: string; attempts: number; max_attempts: number }): Promise<void> {
+    // Atomic claim: the conditional UPDATE only succeeds while the row is
+    // still pending, so chained invocations or an overlapping cron can
+    // never double-process the same job.
+    const { data: claimed } = await supabase
+      .from("ai_processing_queue")
+      .update({ status: "processing", started_at: new Date().toISOString(), attempts: item.attempts + 1 })
+      .eq("id", item.id)
+      .eq("status", "pending")
+      .select("id")
+    if (!claimed || claimed.length === 0) { skippedClaim++; return }
+
     try {
-      await supabase.from("ai_processing_queue").update({ status: "processing", started_at: new Date().toISOString(), attempts: item.attempts + 1 }).eq("id", item.id)
       const { data: job } = await supabase.from("jobs").select("*").eq("id", item.job_id).maybeSingle()
       if (!job) {
         await supabase.from("ai_processing_queue").update({ status: "failed", error: "Job not found", completed_at: new Date().toISOString() }).eq("id", item.id)
         failed++
-        continue
+        return
       }
       const aiResult = await enrichJobWithAI(job as any)
       const intelligence = aiResult.intelligence
@@ -398,7 +452,7 @@ export async function processAIQueue(batchSize = 100) {
         if (existing) {
           const jobId8 = (job as any).id?.slice(0,8) || ''
           const existingIsMisleading = existing.model_version === "gemini-2.5-flash-v1" || existing.model_version === "rule-based-v1-fast" || existing.model_version === "template-removed-2026";
-          const existingIsReal = !existingIsMisleading && existing.model_version && !existing.model_version.includes("failed-no-evidence") && (existing.model_version.includes("gemini") || existing.model_version.includes("groq") || existing.model_version.includes("cerebras") || existing.model_version.includes("openrouter"))
+          const existingIsReal = !existingIsMisleading && existing.model_version && !existing.model_version.includes("failed-no-evidence") && (existing.model_version.includes("gemini") || existing.model_version.includes("groq") || existing.model_version.includes("cerebras") || existing.model_version.includes("openrouter") || existing.model_version.includes("cloudflare") || existing.model_version.includes("mistral") || existing.model_version.includes("nvidia") || existing.model_version.includes("github") || existing.model_version.includes("huggingface"))
           const newIsFailed = intelligence.modelVersion.includes("failed-no-evidence") || intelligence.modelVersion.includes("no-ai-providers")
 
           if (existingIsReal && newIsFailed) {
@@ -417,10 +471,8 @@ export async function processAIQueue(batchSize = 100) {
       // ── [FIX #1] If all providers failed and no existing record, retry instead of completing ──
       const allProvidersFailed = intelligence.modelVersion.includes("no-ai-providers") || intelligence.modelVersion.includes("failed-no-evidence")
       if (allProvidersFailed && !skipUpsert) {
-        // Check if there's an existing record
         const { data: existingCheck } = await supabase.from("job_ai_intelligence").select("id").eq("job_id", job.id).maybeSingle()
         if (!existingCheck) {
-          // No existing record and all providers failed — mark as pending for retry, not completed
           const attempts = item.attempts + 1
           const retryStatus = attempts >= item.max_attempts ? "failed" : "pending"
           await supabase.from("ai_processing_queue").update({
@@ -428,53 +480,58 @@ export async function processAIQueue(batchSize = 100) {
             error: `All AI providers failed (${intelligence.modelVersion}). Will retry.`,
             completed_at: retryStatus === "failed" ? new Date().toISOString() : null,
           }).eq("id", item.id)
-          if (retryStatus === "failed") failed++
-          else failed++ // count as failed for this batch but will retry next time
-          continue
+          failed++ // count as failed for this batch; will retry or stay failed
+          return
         }
       }
 
       // ── Main upsert (skipped if protection fired) ─────────────────────
       if (!skipUpsert) {
+        const salaryMinRaw = asInt(intelligence.salary.value.min)
+        let salaryMin = salaryMinRaw
+        let salaryMax = asInt(intelligence.salary.value.max)
+        if (salaryMin !== null && salaryMax !== null && salaryMax < salaryMin) {
+          const tmp = salaryMin; salaryMin = salaryMax; salaryMax = tmp
+        }
         const { error: upsertErr } = await supabase.from("job_ai_intelligence").upsert({
           job_id: job.id,
           version: intelligence.version,
           model_version: intelligence.modelVersion,
-          africa_eligibility: intelligence.africa.value,
-          africa_confidence: Math.round(intelligence.africa.confidence),
+          africa_eligibility: asEnum(intelligence.africa.value, AFRICA_ENUM),
+          africa_confidence: clamp100(intelligence.africa.confidence),
           africa_evidence: intelligence.africa.evidence[0]?.text || null,
-          africa_source_urls: intelligence.africa.sourceUrls,
-          country_restrictions: intelligence.africa.countryRestrictions,
-          visa_sponsorship: intelligence.visa.value,
-          visa_confidence: Math.round(intelligence.visa.confidence),
+          africa_source_urls: asStringArray(intelligence.africa.sourceUrls),
+          country_restrictions: asStringArray(intelligence.africa.countryRestrictions),
+          visa_sponsorship: asEnum(intelligence.visa.value, VISA_ENUM),
+          visa_confidence: clamp100(intelligence.visa.confidence),
           visa_evidence: intelligence.visa.evidence?.[0]?.text ?? null,
           timezone_requirements: intelligence.remote.timezoneRequirements || null,
-          timezone_confidence: Math.round(intelligence.remote.confidence),
-          remote_eligibility: intelligence.remote.value,
-          remote_confidence: Math.round(intelligence.remote.confidence),
+          timezone_confidence: clamp100(intelligence.remote.confidence),
+          remote_eligibility: asEnum(intelligence.remote.value, REMOTE_ENUM),
+          remote_confidence: clamp100(intelligence.remote.confidence),
           remote_evidence: intelligence.remote.evidence?.[0]?.text ?? null,
-          required_skills: intelligence.skills.required.value,
-          transferable_skills: intelligence.skills.transferable.value,
-          missing_skills: intelligence.skills.missing.value,
-          experience_level: intelligence.experience.value,
-          experience_confidence: Math.round(intelligence.experience.confidence),
-          salary_min: intelligence.salary.value.min,
-          salary_max: intelligence.salary.value.max,
-          salary_currency: intelligence.salary.value.currency,
-          salary_period: intelligence.salary.value.period,
-          salary_is_estimated: intelligence.salary.value.isEstimated,
-          salary_transparency: intelligence.salary.value.transparency,
+          required_skills: asStringArray(intelligence.skills.required.value),
+          transferable_skills: asStringArray(intelligence.skills.transferable.value),
+          missing_skills: asStringArray(intelligence.skills.missing.value),
+          experience_level: asEnum(intelligence.experience.value, EXPERIENCE_ENUM),
+          experience_confidence: clamp100(intelligence.experience.confidence),
+          salary_min: salaryMin,
+          salary_max: salaryMax,
+          salary_currency: asStringOrNull(intelligence.salary.value.currency),
+          salary_period: asStringOrNull(intelligence.salary.value.period),
+          salary_is_estimated: intelligence.salary.value.isEstimated === true,
+          salary_transparency: asEnum(intelligence.salary.value.transparency, TRANSPARENCY_ENUM),
           salary_evidence: intelligence.salary.evidence?.[0]?.text ?? null,
-          salary_confidence: Math.round(intelligence.salary.confidence),
-          company_legitimacy: intelligence.company.value,
-          company_confidence: Math.round(intelligence.company.confidence),
+          salary_confidence: clamp100(intelligence.salary.confidence),
+          company_legitimacy: asEnum(intelligence.company.value, LEGITIMACY_ENUM),
+          company_confidence: clamp100(intelligence.company.confidence),
           company_evidence: intelligence.company.evidence?.[0]?.text ?? null,
-          job_quality: intelligence.quality.value,
-          job_quality_confidence: Math.round(intelligence.quality.confidence),
+          job_quality: asEnum(intelligence.quality.value, QUALITY_ENUM),
+          job_quality_confidence: clamp100(intelligence.quality.confidence),
           job_quality_evidence: intelligence.quality.evidence?.[0]?.text ?? null,
-          application_difficulty: intelligence.applicationDifficulty.value,
-          hiring_urgency: intelligence.hiringUrgency.value,
-          overall_confidence: Math.round(intelligence.overallConfidence),
+          application_difficulty: asEnum(intelligence.applicationDifficulty.value, DIFFICULTY_ENUM),
+          hiring_urgency: asEnum(intelligence.hiringUrgency.value, URGENCY_ENUM),
+          overall_confidence: clamp100(intelligence.overallConfidence),
           evidence_urls: Array.from(new Set<string>([
             ...(intelligence.africa.sourceUrls || []),
             ...(intelligence.company.sourceUrls || []),
@@ -489,7 +546,7 @@ export async function processAIQueue(batchSize = 100) {
             code: (upsertErr as any).code, message: upsertErr.message?.slice(0,200), details: (upsertErr as any).details?.slice(0,200) }))
           await supabase.from("ai_processing_queue").update({ status: "failed", error: `JAI upsert: ${upsertErr.message?.slice(0,300)}`, completed_at: new Date().toISOString() }).eq("id", item.id)
           failed++
-          continue
+          return
         }
       }
 
@@ -516,8 +573,17 @@ export async function processAIQueue(batchSize = 100) {
     }
   }
 
-  // Log final stats
-  console.log(JSON.stringify({ scope: "ai_engine", event: "queue_done", processed, failed, elapsedMs: Date.now() - loopStart }))
+  const workers = Array.from({ length: Math.min(concurrency, queueItems.length) }, async () => {
+    while (Date.now() - loopStart < 240000) {
+      const item = queueItems[cursor++]
+      if (!item) break
+      await processOne(item)
+    }
+  })
+  await Promise.all(workers)
 
-  return { processed, failed }
+  // Log final stats
+  console.log(JSON.stringify({ scope: "ai_engine", event: "queue_done", processed, failed, skippedClaim, concurrency, elapsedMs: Date.now() - loopStart }))
+
+  return { processed, failed, skippedClaim }
 }

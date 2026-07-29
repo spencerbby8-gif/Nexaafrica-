@@ -62,7 +62,9 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
     if (providerId.startsWith('gemini')) {
       const { GoogleGenAI } = await import("@google/genai")
       const ai = new GoogleGenAI({ apiKey })
-      const result = await ai.models.generateContent({
+      const geminiTimeoutMs = cfg.timeoutMs ?? 15000
+      const result = await Promise.race([
+        ai.models.generateContent({
         model: cfg.model,
         contents: [{ role: "user", parts: [{ text: req.prompt }] }],
         config: {
@@ -70,7 +72,9 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
           maxOutputTokens: req.maxTokens ?? 1024,
           ...(req.responseSchema ? { responseMimeType:"application/json", responseSchema:req.responseSchema } : {}),
         },
-      })
+        }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`gemini timeout after ${geminiTimeoutMs}ms`)), geminiTimeoutMs)),
+      ])
       const text = result.text || ""
       const latency = Date.now() - start
       diag.push({ provider: providerId, model: cfg.model, event: "success", retryCount, durationMs: latency, promptLen, responseLen: text.length })
@@ -106,6 +110,9 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
         method: "POST",
         headers,
         body: JSON.stringify(body),
+        // [RELIABILITY] timeoutMs from provider config was declared but never
+        // applied — a hung provider could strand a queue worker indefinitely.
+        signal: AbortSignal.timeout(cfg.timeoutMs ?? 15000),
       })
       if (!res.ok) {
         const errText = await res.text()
@@ -135,6 +142,7 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
           max_tokens: req.maxTokens ?? 1024,
           temperature: req.temperature ?? 0.3,
         }),
+        signal: AbortSignal.timeout(cfg.timeoutMs ?? 15000),
       })
       if (!res.ok) {
         const errText = await res.text()
@@ -156,6 +164,7 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
         method: "POST",
         headers: { "Authorization":`Bearer ${apiKey}`, "Content-Type":"application/json" },
         body: JSON.stringify({ inputs: req.prompt, parameters: { max_new_tokens: req.maxTokens||512, temperature: req.temperature||0.3 } }),
+        signal: AbortSignal.timeout(cfg.timeoutMs ?? 20000),
       })
       if (!res.ok) {
         const errText = await res.text()

@@ -39,10 +39,16 @@ export async function refreshProviderRegistry(): Promise<ProviderConfig[]> {
         return provider
       }
       
-      // Find the best usable model
-      const bestModel = catalogEntry.models
-        .filter(m => m.health.usable)
-        .sort((a, b) => (a.health.avgLatencyMs || 9999) - (b.health.avgLatencyMs || 9999))[0]
+      // Find the best usable model.
+      // P4: prefer measured production ACCURACY (benchmarks.overallScore,
+      // written by the live quality audit) over raw probe latency.
+      // Models with no benchmark data fall back to latency ordering, so
+      // accuracy can only improve selection, never starve it.
+      const usablePool = catalogEntry.models.filter(m => m.health.usable)
+      const benchmarked = usablePool.filter((m: any) => typeof m.benchmarks?.overallScore === 'number')
+      const bestModel = (benchmarked.length > 0
+        ? [...benchmarked].sort((a: any, b: any) => (b.benchmarks.overallScore - a.benchmarks.overallScore) || ((a.health.avgLatencyMs || 9999) - (b.health.avgLatencyMs || 9999)))[0]
+        : usablePool.sort((a, b) => (a.health.avgLatencyMs || 9999) - (b.health.avgLatencyMs || 9999))[0])
       
       if (!bestModel) {
         return { ...provider, enabled: false }

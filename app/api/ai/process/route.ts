@@ -35,6 +35,22 @@ export async function POST(req: Request) {
   const chain = Math.max(0, Math.min(60, Number(url.searchParams.get('chain')) || 0))
   const chainMax = Math.max(1, Math.min(60, Number(process.env.AI_DRAIN_CHAIN_MAX) || 40))
 
+  // ── Live model truth sync (chain head only, freshness-gated) ──────
+  // Discovery + real-inference verification + persistence happens here so
+  // the daily cron continuously refreshes which models actually work.
+  let modelSync: unknown = null
+  if (chain === 0) {
+    try {
+      const { syncLiveModelRegistry } = await import('@/lib/ai/model-sync')
+      modelSync = await syncLiveModelRegistry({
+        force: url.searchParams.get('discover') === '1',
+        budgetMs: 80_000,
+      })
+    } catch (e) {
+      modelSync = { error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }
+    }
+  }
+
   const started = Date.now()
   const result = await processAIQueue(batch)
 
@@ -88,7 +104,7 @@ export async function POST(req: Request) {
   }
 
   return NextResponse.json(
-    { ok: true, elapsedMs, ...result, stale, chain, chained, pendingAfter },
+    { ok: true, elapsedMs, ...result, stale, chain, chained, pendingAfter, modelSync },
     { status: 200 },
   )
 }

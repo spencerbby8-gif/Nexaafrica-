@@ -563,6 +563,41 @@ async function discoverNvidiaModels(apiKey: string): Promise<DiscoveredModel[]> 
  * CRITICAL: If discovery fails for a provider, that provider is NOT used.
  * No fallback to hardcoded lists.
  */
+
+/**
+ * Discover models from Hugging Face Inference Providers router
+ * Endpoint: https://router.huggingface.co/v1/models
+ * (The legacy api-inference.huggingface.co endpoint returns 410 Gone -
+ * verified in production: 0/8 queue attempts succeeded there.)
+ */
+async function discoverHuggingFaceModels(apiKey: string): Promise<DiscoveredModel[]> {
+  const res = await fetch('https://router.huggingface.co/v1/models', {
+    headers: { 'Authorization': `Bearer ${apiKey}` },
+    cache: 'no-store',
+    signal: AbortSignal.timeout(12_000)
+  })
+  if (!res.ok) {
+    throw new Error(`HF router ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  }
+  const data: any = await res.json()
+  const ids: string[] = (data.data || []).map((m: any) => m.id).filter(Boolean)
+  return ids.slice(0, 100).map((id) => ({
+    provider: 'huggingface',
+    modelId: id,
+    modelName: id,
+    discoveredAt: new Date().toISOString(),
+    discoveryEndpoint: 'https://router.huggingface.co/v1/models',
+    rawResponse: null,
+    capabilities: { chat: true },
+    health: {
+      verified: false, usable: false, healthScore: 10,
+      successRate: 0, failureRate: 0, avgLatencyMs: 0,
+      quotaStatus: 'ok' as const
+    },
+    routingPriority: 30
+  }))
+}
+
 export async function discoverAllModels(): Promise<ProviderCatalog[]> {
   const catalogs: ProviderCatalog[] = []
   
@@ -823,6 +858,35 @@ export async function discoverAllModels(): Promise<ProviderCatalog[]> {
     }
   }
   
+
+  // HuggingFace (router endpoint; legacy api-inference is dead)
+  if (process.env.HUGGINGFACE_API_KEY) {
+    try {
+      const models = await discoverHuggingFaceModels(process.env.HUGGINGFACE_API_KEY)
+      catalogs.push({
+        provider: 'huggingface',
+        discoveryEndpoint: 'https://router.huggingface.co/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models,
+        totalModels: models.length,
+        verifiedModels: 0,
+        usableModels: 0
+      })
+    } catch (error: any) {
+      console.error(`[Discovery] HuggingFace discovery failed: ${error.message}`)
+      catalogs.push({
+        provider: 'huggingface',
+        discoveryEndpoint: 'https://router.huggingface.co/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models: [],
+        totalModels: 0,
+        verifiedModels: 0,
+        usableModels: 0,
+        discoveryError: error.message
+      })
+    }
+  }
+
   // Cache results
   try {
     const supabase = createClient(supabaseUrl, supabaseKey)

@@ -30,7 +30,8 @@
  *    sinks to the bottom of the ranking on evidence.
  */
 
-import { PROVIDERS, type ProviderId, type ProviderConfig } from "./providers/types"
+import type { ProviderId, ProviderConfig } from "./providers/types"
+import { getProviders } from "./providers/dynamic-registry"
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -262,7 +263,8 @@ function scoreProvider(
 /** Route to the best provider for a task. Returns the top-ranked decision. */
 export function routeTask(taskType?: TaskType): RoutingDecision | null {
   const now = Date.now()
-  const decisions = PROVIDERS.map(cfg => scoreProvider(cfg, taskType, now))
+  // P2: read the LIVE registry (discovered + verified models), not static assumptions
+  const decisions = getProviders().map(cfg => scoreProvider(cfg, taskType, now))
   decisions.sort((a, b) => b.score - a.score)
   const best = decisions[0]
   if (!best || best.score <= 0) return null
@@ -272,7 +274,8 @@ export function routeTask(taskType?: TaskType): RoutingDecision | null {
 /** Get ALL non-gated providers ranked for a task (failover/exploration chain). */
 export function routeTaskAll(taskType?: TaskType): RoutingDecision[] {
   const now = Date.now()
-  const decisions = PROVIDERS.map(cfg => scoreProvider(cfg, taskType, now))
+  // P2: read the LIVE registry (discovered + verified models), not static assumptions
+  const decisions = getProviders().map(cfg => scoreProvider(cfg, taskType, now))
   decisions.sort((a, b) => b.score - a.score)
   return decisions.filter(d => d.score > 0)
 }
@@ -387,7 +390,7 @@ export async function syncHealthFromDB(): Promise<void> {
     if (!data) return
     for (const row of data as any[]) {
       const id = row.provider as ProviderId
-      if (!PROVIDERS.some(p => p.id === id)) continue
+      if (!getProviders().some(p => p.id === id)) continue
       const h = getHealth(id)
       h.consecutiveFailures = row.consecutive_failures || 0
       h.lastFailureAt = row.last_failure_at ? new Date(row.last_failure_at).getTime() : 0
@@ -417,7 +420,7 @@ export function getRouterHealthSnapshot(): Array<{
   samples: number; successRate: number | null; score: number; lastError: string
 }> {
   const now = Date.now()
-  return PROVIDERS.map(cfg => {
+  return getProviders().map(cfg => {
     const h = getHealth(cfg.id)
     const gate = isGated(cfg, h, now)
     const decision = scoreProvider(cfg, undefined, now)
@@ -448,7 +451,7 @@ export function getRoutingLogs(count: number = 50): RoutingLog[] {
 /** Routing statistics for all providers. */
 export function getRoutingStats(): { providers: Array<{ id: string; name: string; model: string; score: number; healthy: boolean; reasoning: string[]; taskTypes: string[] }>; totalDecisions: number } {
   const now = Date.now()
-  const providers = PROVIDERS.map(cfg => {
+  const providers = getProviders().map(cfg => {
     const decision = scoreProvider(cfg, undefined, now)
     const health = getHealth(cfg.id)
     const samples = health.totalSuccesses + health.totalFailures

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { discoverAllModels, getModelCatalog } from '@/lib/ai/model-discovery'
+import { getModelCatalog } from '@/lib/ai/model-discovery'
+import { isPipelineAuthorized } from '@/lib/server/auth'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -10,7 +11,10 @@ export const runtime = 'nodejs'
  * GET /api/models/discover - Get cached catalog
  * POST /api/models/discover - Trigger discovery and verification
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  if (!isPipelineAuthorized(request as unknown as Request)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   try {
     const catalog = await getModelCatalog()
     return NextResponse.json({ catalog })
@@ -23,8 +27,14 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  if (!isPipelineAuthorized(request as unknown as Request)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   try {
-    const catalog = await discoverAllModels()
+    // Full truth sync: discover + verify with real inference + persist + refresh registry
+    const { syncLiveModelRegistry } = await import('@/lib/ai/model-sync')
+    const modelSync = await syncLiveModelRegistry({ force: true, budgetMs: 80_000 })
+    const catalog = await getModelCatalog()
     
     const summary = catalog.map(c => ({
       provider: c.provider,

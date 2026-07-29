@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { isPipelineAuthorized, pipelineAuthConfigured } from '@/lib/server/auth'
 import { createServiceClient } from '@/lib/supabase/service'
 import {
   extractIntelligence,
@@ -25,19 +26,10 @@ export const maxDuration = 300
  * columns untouched.
  */
 export async function POST(req: Request) {
-  const ingestToken = process.env.INGEST_TOKEN
-  const cronSecret = process.env.CRON_SECRET
-  if (!ingestToken && !cronSecret) {
-    return NextResponse.json(
-      { error: 'No auth secret configured (INGEST_TOKEN or CRON_SECRET)' },
-      { status: 500 },
-    )
+  if (!pipelineAuthConfigured()) {
+    return NextResponse.json({ error: 'No auth secret configured (CRON_SECRET or INGEST_TOKEN)' }, { status: 500 })
   }
-  const auth = req.headers.get('authorization') ?? ''
-  const authorized =
-    (ingestToken && auth === `Bearer ${ingestToken}`) ||
-    (cronSecret && auth === `Bearer ${cronSecret}`)
-  if (!authorized) {
+  if (!isPipelineAuthorized(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { isPipelineAuthorized } from '@/lib/server/auth'
 import { runAllSources, runAllTier1 } from '@/lib/ingest/run'
 import type { AtsKind } from '@/lib/ingest/companies'
 
@@ -10,15 +11,8 @@ export const maxDuration = 300
  * Triggered by Vercel cron (daily) or manually with the INGEST_TOKEN.
  * Tier 1: ATS + Remote Boards (RemoteOK, Himalayas, Remotive, WWR)
  */
-function isAuthorized(req: Request): boolean {
-  if (req.headers.get('x-vercel-cron') === '1') return true
-  const token = process.env.INGEST_TOKEN
-  if (!token) return false
-  return req.headers.get('authorization') === `Bearer ${token}`
-}
-
 async function handle(req: Request): Promise<Response> {
-  if (!isAuthorized(req)) {
+  if (!isPipelineAuthorized(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

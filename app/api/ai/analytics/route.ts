@@ -1,16 +1,11 @@
 import { NextResponse } from 'next/server'
+import { isPipelineAuthorized } from '@/lib/server/auth'
 import { createServiceClient } from '@/lib/supabase/service'
 
 export const runtime = 'nodejs'; export const dynamic = 'force-dynamic'
 
-function isAuthorized(req: Request): boolean {
-  if (req.headers.get('x-vercel-cron') === '1') return true
-  const token = process.env.INGEST_TOKEN; if (!token) return false
-  return req.headers.get('authorization') === `Bearer ${token}`
-}
-
 export async function GET(req: Request) {
-  if (!isAuthorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isPipelineAuthorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const supabase = createServiceClient()
 
   const [prov, recent, health, quality, hourly] = await Promise.all([

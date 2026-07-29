@@ -22,14 +22,14 @@ const AF: AIResp = { africa_eligibility:"unknown",africa_confidence:0,africa_evi
  * Fetch the job page from its apply URL.
  * For ATS pages (Greenhouse, Ashby, etc.), returns stored description_md.
  */
-async function fetchJobPage(url: string, job: Job): Promise<string> {
+async function fetchJobPage(url: string, job: Job): Promise<{ text: string; status: number | null }> {
   const atsHosts = ['boards.greenhouse.io','jobs.ashbyhq.com','jobs.lever.co','apply.workable.com','jobs.smartrecruiters.com','recruitee.com','comeet.com','personio.com']
   const urlHost = (() => { try { return new URL(url).hostname } catch { return '' } })()
   const isAtsPage = atsHosts.some(h => urlHost.includes(h))
   
   if (isAtsPage) {
     const desc = job.description_md || ''
-    return desc.length >= 100 ? desc : ''
+    return { text: desc.length >= 100 ? desc : '', status: 200 }
   }
 
   for (let attempt = 0; attempt <= 2; attempt++) {
@@ -50,14 +50,14 @@ async function fetchJobPage(url: string, job: Job): Promise<string> {
         const html = await res.text()
         const { cleanDescription } = await import("@/lib/cleanDescription")
         const text = cleanDescription(html)
-        if (text.length >= 100) return text
+        if (text.length >= 100) return { text, status: res.status }
         if (attempt < 2) { await new Promise(r => setTimeout(r, 1000 * (attempt + 1))); continue }
-        return text
+        return { text, status: res.status }
       }
       if (attempt < 2) { await new Promise(r => setTimeout(r, 1000 * (attempt + 1))); continue }
     } catch { if (attempt < 2) { await new Promise(r => setTimeout(r, 1000 * (attempt + 1))); continue } }
   }
-  return ""
+  return { text: "", status: null }
 }
 
 /**
@@ -72,7 +72,32 @@ async function fetchCompanyPage(job: Job): Promise<string> {
     
     // Skip ATS domains - they're not the company website
     const atsDomains = ['greenhouse.io','ashbyhq.com','lever.co','workable.com','smartrecruiters.com','recruitee.com','comeet.com','personio.com','linkedin.com','indeed.com','glassdoor.com']
-    if (atsDomains.some(d => domain.includes(d))) return ""
+    if (atsDomains.some(d => domain.includes(d))) {
+      // P6: for ATS-hosted listings, attempt the company's own careers page
+      // as a richer source of Africa/visa/remote evidence.
+      const company = (job as any).company || ''
+      if (company.length >= 3) {
+        const slug = company.toLowerCase().replace(/[^a-z0-9]+/g, '')
+        for (const tld of ['.com', '.io', '.co']) {
+          try {
+            const c2 = new AbortController()
+            const t2 = setTimeout(() => c2.abort(), 5000)
+            const r2 = await fetch(`https://${slug}${tld}/careers`, {
+              headers: { "User-Agent": "Mozilla/5.0 (compatible; NexaBot/2.0; +https://v0-nexaafrica.vercel.app)" },
+              signal: c2.signal, redirect: "follow",
+            })
+            clearTimeout(t2)
+            if (r2.ok) {
+              const html2 = await r2.text()
+              const { cleanDescription } = await import("@/lib/cleanDescription")
+              const text2 = cleanDescription(html2)
+              if (text2.length >= 200) return text2.slice(0, 2000)
+            }
+          } catch {}
+        }
+      }
+      return ""
+    }
     
     // Fetch company homepage
     const companyUrl = `https://${domain}`
@@ -265,16 +290,18 @@ export function enforceTruthfulness(merged: AIResp, opts: { job: Job; truth: str
   return out
 }
 
-export interface ConsolidatedResult { ai: AIResp; diags: ProviderCallDiag[]; modelVersion: string; pageFetched: boolean; pageLen: number; aiUsed: boolean; companyPageFetched: boolean; companyPageLen: number }
+export interface ConsolidatedResult { ai: AIResp; diags: ProviderCallDiag[]; modelVersion: string; pageFetched: boolean; pageLen: number; pageStatus: number | null; aiUsed: boolean; companyPageFetched: boolean; companyPageLen: number }
 
 export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult> {
   const diags: ProviderCallDiag[] = []
   
   // Fetch job page and company page in parallel
-  const [pageText, companyText] = await Promise.all([
+  const [pageResult, companyText] = await Promise.all([
     fetchJobPage(job.apply_url, job),
     fetchCompanyPage(job),
   ])
+  const pageText = pageResult.text
+  const pageStatus = pageResult.status
   
   // [FIX #8] Increase description limit to 6000 chars to capture more salary/requirements info
   const combined = (job.description_md + "\n\n" + pageText).slice(0, 6000)
@@ -406,10 +433,13 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
 
   if (!aiUsed) modelVersion = Object.keys({ ...rxAfrica, ...rxRemote, ...rxSalary }).length > 0 ? "regex-extracted-" + pageText.length + "bytes" : "no-ai-providers"
   // P5: harden all claims against the actual source text before persisting.
+  // P6: evidence provenance label
+  const evidenceProvenance = aiUsed ? (companyText.length >= 100 ? "company_page" : "page") : (Object.keys({...rxAfrica,...rxRemote,...rxSalary}).length > 0 ? "regex" : "ats_metadata")
+
   const hardened = enforceTruthfulness(merged, {
     job,
     truth: combined + "\n" + companyText + "\n" + (job.salary_range || ""),
     hasCompanyPage: companyText.length >= 100,
   })
-  return { ai: hardened, diags, modelVersion, pageFetched: pageText.length > 0, pageLen: pageText.length, aiUsed, companyPageFetched: companyText.length > 0, companyPageLen: companyText.length }
+  return { ai: hardened, diags, modelVersion, pageFetched: pageText.length > 0, pageLen: pageText.length, pageStatus, aiUsed, companyPageFetched: companyText.length > 0, companyPageLen: companyText.length }
 }

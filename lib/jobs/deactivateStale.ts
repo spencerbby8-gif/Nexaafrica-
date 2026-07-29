@@ -1,7 +1,7 @@
 import { createServiceClient } from '@/lib/supabase/service'
 
 export interface DeactivateResult {
-  deactivated: { expired: number; stale: number; notSeen: number; total: number }
+  deactivated: { expired: number; stale: number; notSeen: number; deadPage: number; total: number }
   thresholds: { postedAtDays: number; notSeenDays: number }
   method: 'rpc' | 'manual'
 }
@@ -26,8 +26,28 @@ export async function runDeactivateStale(days = 60, notSeenDays = 14): Promise<D
     const expired = row.expired_count || 0
     const stale = row.stale_count || 0
     const notSeenCount = row.not_seen_count || 0
+    // P6: deactivate listings with confirmed-dead pages (404/410).
+    // Two-step: find dead-page job IDs, then deactivate.
+    let deadPage = 0
+    try {
+      const { data: deadIds } = await supabase
+        .from('job_ai_intelligence')
+        .select('job_id')
+        .in('page_status', [404, 410])
+      const ids = (deadIds || []).map((r: any) => r.job_id).filter(Boolean)
+      if (ids.length > 0) {
+        const { data: dp } = await supabase
+          .from('jobs')
+          .update({ is_active: false })
+          .eq('is_active', true)
+          .in('id', ids)
+          .select('id')
+        deadPage = dp?.length ?? 0
+      }
+    } catch {}
+
     return {
-      deactivated: { expired, stale, notSeen: notSeenCount, total: expired + stale + notSeenCount },
+      deactivated: { expired, stale, notSeen: notSeenCount, deadPage, total: expired + stale + notSeenCount + deadPage },
       thresholds: { postedAtDays: thresholdDays, notSeenDays: notSeen },
       method: 'rpc',
     }
@@ -51,7 +71,7 @@ export async function runDeactivateStale(days = 60, notSeenDays = 14): Promise<D
   const stale = staleRes.data?.length ?? 0
   const notSeenCount = notSeenRes.data?.length ?? 0
   return {
-    deactivated: { expired, stale, notSeen: notSeenCount, total: expired + stale + notSeenCount },
+    deactivated: { expired, stale, notSeen: notSeenCount, deadPage: 0, total: expired + stale + notSeenCount },
     thresholds: { postedAtDays: thresholdDays, notSeenDays: notSeen },
     method: 'manual',
   }

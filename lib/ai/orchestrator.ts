@@ -83,11 +83,42 @@ async function executeRoutingChain(
   taskType: TaskType | undefined,
 ): Promise<GatewayResult> {
   const diag: ProviderCallDiag[] = []
-  const maxAttempts = Math.min(ranked.length, 4) // Try up to 4 providers
+  const maxAttempts = Math.min(ranked.length, 7) // Try up to 7 providers (was 4 — blocked 5 providers from ever being tried)
   const startTime = Date.now()
   let lastError: Error | null = null
   let fallbackUsed = false
   const fallbackChain: ProviderId[] = []
+
+  // [DIAGNOSTIC] Log which providers are being skipped and why
+  const skipped = ranked.slice(maxAttempts).filter(d => d.score > 0)
+  if (skipped.length > 0) {
+    console.log(JSON.stringify({
+      scope: "orchestrator",
+      event: "providers_skipped",
+      agentId: req.agentId,
+      jobId: req.jobId,
+      maxAttempts,
+      willTry: ranked.slice(0, maxAttempts).map(d => `${d.provider.id}(${Math.round(d.score)})`),
+      skipped: skipped.map(d => `${d.provider.id}(${Math.round(d.score)})`),
+    }))
+  }
+
+  // [DIAGNOSTIC] Check for missing API keys before attempting
+  for (let i = 0; i < maxAttempts; i++) {
+    const d = ranked[i]
+    if (!d || d.score <= 0) break
+    const apiKey = process.env[d.provider.envKey]
+    if (!apiKey) {
+      console.log(JSON.stringify({
+        scope: "orchestrator",
+        event: "missing_api_key",
+        provider: d.provider.id,
+        envKey: d.provider.envKey,
+        rank: i + 1,
+        score: Math.round(d.score),
+      }))
+    }
+  }
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const decision = ranked[attempt]

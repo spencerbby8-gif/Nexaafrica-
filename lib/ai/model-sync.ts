@@ -215,6 +215,11 @@ export async function syncLiveModelRegistry(opts: { force?: boolean; budgetMs?: 
           if (cur && pm.health?.lastVerifiedAt && !existingById.get(pm.modelId)?.health?.lastVerifiedAt) {
             cur.health = pm.health
           }
+          // Preserve benchmark results (written by the production quality
+          // audit) — a re-discovery cycle must not erase measured accuracy.
+          if (cur && pm.benchmarks && !cur.benchmarks) {
+            cur.benchmarks = pm.benchmarks
+          }
         }
       } catch {}
 

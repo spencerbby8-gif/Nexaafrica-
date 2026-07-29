@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server'
-import { isPipelineAuthorized, pipelineAuthConfigured } from '@/lib/server/auth'
 import { createServiceClient } from '@/lib/supabase/service'
 import { buildJobSlug } from '@/lib/slug'
 import type { EmploymentType } from '@/lib/types'
@@ -141,10 +140,13 @@ function validateApplyUrl(raw: string): string | null {
 }
 
 export async function POST(req: Request) {
-  if (!pipelineAuthConfigured()) {
-    return NextResponse.json({ error: 'No auth secret configured (CRON_SECRET or INGEST_TOKEN)' }, { status: 500 })
+  const token = process.env.INGEST_TOKEN
+  if (!token) {
+    return NextResponse.json({ error: 'INGEST_TOKEN not configured' }, { status: 500 })
   }
-  if (!isPipelineAuthorized(req)) {
+
+  const auth = req.headers.get('authorization') ?? ''
+  if (auth !== `Bearer ${token}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

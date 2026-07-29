@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server'
-import { isPipelineAuthorized } from '@/lib/server/auth'
 import { createServiceClient } from '@/lib/supabase/service'
 import { warmHealthFromDB } from '@/lib/ai/orchestrator'
 import { getOrchHealth } from '@/lib/ai/orchestrator'
@@ -7,9 +6,16 @@ import { getOrchHealth } from '@/lib/ai/orchestrator'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+function isAuthorized(req: Request): boolean {
+  if (req.headers.get('x-vercel-cron') === '1') return true
+  const token = process.env.INGEST_TOKEN
+  if (!token) return true // allow in dev if no token set
+  return req.headers.get('authorization') === `Bearer ${token}`
+}
+
 export async function GET(req: Request) {
   await warmHealthFromDB()  // restore health from DB before reporting
-  if (!isPipelineAuthorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isAuthorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const supabase = createServiceClient()
 

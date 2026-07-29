@@ -1,8 +1,8 @@
 /**
- * AI Model Discovery & Verification System
+ * AI Model Discovery - Live Discovery from Provider APIs
  * 
- * Discovers available models from each provider's catalog/API,
- * verifies them with real inference requests, and caches results.
+ * CRITICAL: No hardcoded model lists. Every model must be discovered from
+ * the provider's official API or catalog.
  */
 
 import { createClient } from '@supabase/supabase-js'
@@ -11,25 +11,65 @@ export interface DiscoveredModel {
   provider: string
   modelId: string
   modelName: string
-  verified: boolean
-  usable: boolean
-  latencyMs?: number
-  error?: string
-  verifiedAt: string
-  capabilities?: {
+  discoveredAt: string
+  discoveryEndpoint: string
+  rawResponse: any
+  // Capabilities will be detected via live tests, not hardcoded
+  capabilities: {
+    chat?: boolean
+    reasoning?: boolean
+    coding?: boolean
+    vision?: boolean
+    functionCalling?: boolean
+    structuredJSON?: boolean
+    embeddings?: boolean
+    longContext?: boolean
     maxTokens?: number
-    supportsJSON?: boolean
-    supportsSystemPrompt?: boolean
+    contextLength?: number
+  }
+  // Health metrics (updated via live verification)
+  health: {
+    verified: boolean
+    usable: boolean
+    healthScore: number  // 0-100
+    successRate: number  // 0-100
+    failureRate: number  // 0-100
+    avgLatencyMs: number
+    lastVerifiedAt?: string
+    lastSuccessfulAt?: string
+    quotaStatus: 'ok' | 'warning' | 'exhausted'
+    cooldownUntil?: string
+  }
+  // Benchmark results
+  benchmarks?: {
+    jobIntelligence?: number  // 0-100
+    trustVerification?: number
+    africaEligibility?: number
+    salaryExtraction?: number
+    companyVerification?: number
+    cvParsing?: number
+    evidenceGeneration?: number
+    structuredJSON?: number
+    overallScore?: number
+    lastBenchmarkAt?: string
+  }
+  // Routing
+  routingPriority: number  // Calculated dynamically
+  cost?: {
+    inputPer1kTokens?: number
+    outputPer1kTokens?: number
   }
 }
 
 export interface ProviderCatalog {
   provider: string
+  discoveryEndpoint: string
+  discoveredAt: string
   models: DiscoveredModel[]
-  lastRefreshed: string
   totalModels: number
   verifiedModels: number
   usableModels: number
+  discoveryError?: string
 }
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -37,46 +77,67 @@ const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
 /**
  * Discover models from Gemini API
+ * Endpoint: https://generativelanguage.googleapis.com/v1beta/models
  */
 async function discoverGeminiModels(apiKey: string): Promise<DiscoveredModel[]> {
+  const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models'
   const models: DiscoveredModel[] = []
   
+  console.log(`[Gemini Discovery] Querying ${endpoint}`)
+  
   try {
-    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+    const response = await fetch(endpoint, {
       headers: { 'x-goog-api-key': apiKey }
     })
     
     if (!response.ok) {
-      throw new Error(`Gemini API error: ${response.status}`)
+      const errorText = await response.text()
+      throw new Error(`Gemini API error ${response.status}: ${errorText.substring(0, 200)}`)
     }
     
     const data = await response.json() as any
     const modelList = data.models || []
+    
+    console.log(`[Gemini Discovery] Found ${modelList.length} models`)
     
     for (const model of modelList) {
       const modelId = model.name.replace('models/', '')
       
       // Only include generation models
       if (!model.supportedGenerationMethods?.includes('generateContent')) {
+        console.log(`[Gemini Discovery] Skipping ${modelId} (no generateContent)`)
         continue
       }
+      
+      console.log(`[Gemini Discovery] Discovered ${modelId}`)
       
       models.push({
         provider: 'gemini',
         modelId,
         modelName: model.displayName || modelId,
-        verified: false,
-        usable: false,
-        verifiedAt: new Date().toISOString(),
+        discoveredAt: new Date().toISOString(),
+        discoveryEndpoint: endpoint,
+        rawResponse: model,
         capabilities: {
+          // Will be detected via live tests
           maxTokens: model.outputTokenLimit,
-          supportsJSON: true,
-          supportsSystemPrompt: true
-        }
+          contextLength: model.inputTokenLimit
+        },
+        health: {
+          verified: false,
+          usable: false,
+          healthScore: 0,
+          successRate: 0,
+          failureRate: 0,
+          avgLatencyMs: 0,
+          quotaStatus: 'ok'
+        },
+        routingPriority: 0  // Will be calculated after benchmarks
       })
     }
   } catch (error: any) {
-    console.error('Gemini discovery error:', error.message)
+    console.error(`[Gemini Discovery] FAILED: ${error.message}`)
+    throw error  // Do not fall back to hardcoded lists
   }
   
   return models
@@ -84,39 +145,57 @@ async function discoverGeminiModels(apiKey: string): Promise<DiscoveredModel[]> 
 
 /**
  * Discover models from Groq API
+ * Endpoint: https://api.groq.com/openai/v1/models
  */
 async function discoverGroqModels(apiKey: string): Promise<DiscoveredModel[]> {
+  const endpoint = 'https://api.groq.com/openai/v1/models'
   const models: DiscoveredModel[] = []
   
+  console.log(`[Groq Discovery] Querying ${endpoint}`)
+  
   try {
-    const response = await fetch('https://api.groq.com/openai/v1/models', {
+    const response = await fetch(endpoint, {
       headers: { 'Authorization': `Bearer ${apiKey}` }
     })
     
     if (!response.ok) {
-      throw new Error(`Groq API error: ${response.status}`)
+      const errorText = await response.text()
+      throw new Error(`Groq API error ${response.status}: ${errorText.substring(0, 200)}`)
     }
     
     const data = await response.json() as any
     const modelList = data.data || []
     
+    console.log(`[Groq Discovery] Found ${modelList.length} models`)
+    
     for (const model of modelList) {
+      console.log(`[Groq Discovery] Discovered ${model.id}`)
+      
       models.push({
         provider: 'groq',
         modelId: model.id,
         modelName: model.id,
-        verified: false,
-        usable: false,
-        verifiedAt: new Date().toISOString(),
+        discoveredAt: new Date().toISOString(),
+        discoveryEndpoint: endpoint,
+        rawResponse: model,
         capabilities: {
-          maxTokens: 8192,
-          supportsJSON: true,
-          supportsSystemPrompt: true
-        }
+          // Will be detected via live tests
+        },
+        health: {
+          verified: false,
+          usable: false,
+          healthScore: 0,
+          successRate: 0,
+          failureRate: 0,
+          avgLatencyMs: 0,
+          quotaStatus: 'ok'
+        },
+        routingPriority: 0
       })
     }
   } catch (error: any) {
-    console.error('Groq discovery error:', error.message)
+    console.error(`[Groq Discovery] FAILED: ${error.message}`)
+    throw error
   }
   
   return models
@@ -124,39 +203,55 @@ async function discoverGroqModels(apiKey: string): Promise<DiscoveredModel[]> {
 
 /**
  * Discover models from Cerebras API
+ * Endpoint: https://api.cerebras.ai/v1/models
  */
 async function discoverCerebrasModels(apiKey: string): Promise<DiscoveredModel[]> {
+  const endpoint = 'https://api.cerebras.ai/v1/models'
   const models: DiscoveredModel[] = []
   
+  console.log(`[Cerebras Discovery] Querying ${endpoint}`)
+  
   try {
-    const response = await fetch('https://api.cerebras.ai/v1/models', {
+    const response = await fetch(endpoint, {
       headers: { 'Authorization': `Bearer ${apiKey}` }
     })
     
     if (!response.ok) {
-      throw new Error(`Cerebras API error: ${response.status}`)
+      const errorText = await response.text()
+      throw new Error(`Cerebras API error ${response.status}: ${errorText.substring(0, 200)}`)
     }
     
     const data = await response.json() as any
     const modelList = data.models || []
     
+    console.log(`[Cerebras Discovery] Found ${modelList.length} models`)
+    
     for (const model of modelList) {
+      console.log(`[Cerebras Discovery] Discovered ${model.id}`)
+      
       models.push({
         provider: 'cerebras',
         modelId: model.id,
         modelName: model.id,
-        verified: false,
-        usable: false,
-        verifiedAt: new Date().toISOString(),
-        capabilities: {
-          maxTokens: 8192,
-          supportsJSON: true,
-          supportsSystemPrompt: true
-        }
+        discoveredAt: new Date().toISOString(),
+        discoveryEndpoint: endpoint,
+        rawResponse: model,
+        capabilities: {},
+        health: {
+          verified: false,
+          usable: false,
+          healthScore: 0,
+          successRate: 0,
+          failureRate: 0,
+          avgLatencyMs: 0,
+          quotaStatus: 'ok'
+        },
+        routingPriority: 0
       })
     }
   } catch (error: any) {
-    console.error('Cerebras discovery error:', error.message)
+    console.error(`[Cerebras Discovery] FAILED: ${error.message}`)
+    throw error
   }
   
   return models
@@ -164,44 +259,67 @@ async function discoverCerebrasModels(apiKey: string): Promise<DiscoveredModel[]
 
 /**
  * Discover models from OpenRouter API
+ * Endpoint: https://openrouter.ai/api/v1/models
  */
 async function discoverOpenRouterModels(apiKey: string): Promise<DiscoveredModel[]> {
+  const endpoint = 'https://openrouter.ai/api/v1/models'
   const models: DiscoveredModel[] = []
   
+  console.log(`[OpenRouter Discovery] Querying ${endpoint}`)
+  
   try {
-    const response = await fetch('https://openrouter.ai/api/v1/models', {
+    const response = await fetch(endpoint, {
       headers: { 'Authorization': `Bearer ${apiKey}` }
     })
     
     if (!response.ok) {
-      throw new Error(`OpenRouter API error: ${response.status}`)
+      const errorText = await response.text()
+      throw new Error(`OpenRouter API error ${response.status}: ${errorText.substring(0, 200)}`)
     }
     
     const data = await response.json() as any
     const modelList = data.data || []
     
+    console.log(`[OpenRouter Discovery] Found ${modelList.length} models`)
+    
     for (const model of modelList) {
       // Only include free models
       if (model.pricing?.prompt !== '0' || model.pricing?.completion !== '0') {
+        console.log(`[OpenRouter Discovery] Skipping ${model.id} (not free)`)
         continue
       }
+      
+      console.log(`[OpenRouter Discovery] Discovered ${model.id}`)
       
       models.push({
         provider: 'openrouter',
         modelId: model.id,
         modelName: model.name || model.id,
-        verified: false,
-        usable: false,
-        verifiedAt: new Date().toISOString(),
+        discoveredAt: new Date().toISOString(),
+        discoveryEndpoint: endpoint,
+        rawResponse: model,
         capabilities: {
-          maxTokens: model.context_length || 8192,
-          supportsJSON: true,
-          supportsSystemPrompt: true
+          contextLength: model.context_length
+        },
+        health: {
+          verified: false,
+          usable: false,
+          healthScore: 0,
+          successRate: 0,
+          failureRate: 0,
+          avgLatencyMs: 0,
+          quotaStatus: 'ok'
+        },
+        routingPriority: 0,
+        cost: {
+          inputPer1kTokens: parseFloat(model.pricing?.prompt || '0'),
+          outputPer1kTokens: parseFloat(model.pricing?.completion || '0')
         }
       })
     }
   } catch (error: any) {
-    console.error('OpenRouter discovery error:', error.message)
+    console.error(`[OpenRouter Discovery] FAILED: ${error.message}`)
+    throw error
   }
   
   return models
@@ -209,12 +327,16 @@ async function discoverOpenRouterModels(apiKey: string): Promise<DiscoveredModel
 
 /**
  * Discover models from GitHub Models API
+ * Endpoint: https://models.inference.ai.azure.com/models
  */
 async function discoverGitHubModels(apiKey: string): Promise<DiscoveredModel[]> {
+  const endpoint = 'https://models.inference.ai.azure.com/models'
   const models: DiscoveredModel[] = []
   
+  console.log(`[GitHub Models Discovery] Querying ${endpoint}`)
+  
   try {
-    const response = await fetch('https://models.inference.ai.azure.com/models', {
+    const response = await fetch(endpoint, {
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'api-version': '2024-05-01-preview'
@@ -222,29 +344,41 @@ async function discoverGitHubModels(apiKey: string): Promise<DiscoveredModel[]> 
     })
     
     if (!response.ok) {
-      throw new Error(`GitHub Models API error: ${response.status}`)
+      const errorText = await response.text()
+      throw new Error(`GitHub Models API error ${response.status}: ${errorText.substring(0, 200)}`)
     }
     
     const data = await response.json() as any
     const modelList = data.data || []
     
+    console.log(`[GitHub Models Discovery] Found ${modelList.length} models`)
+    
     for (const model of modelList) {
+      console.log(`[GitHub Models Discovery] Discovered ${model.id}`)
+      
       models.push({
         provider: 'github_models',
         modelId: model.id,
         modelName: model.name || model.id,
-        verified: false,
-        usable: false,
-        verifiedAt: new Date().toISOString(),
-        capabilities: {
-          maxTokens: 4096,
-          supportsJSON: true,
-          supportsSystemPrompt: true
-        }
+        discoveredAt: new Date().toISOString(),
+        discoveryEndpoint: endpoint,
+        rawResponse: model,
+        capabilities: {},
+        health: {
+          verified: false,
+          usable: false,
+          healthScore: 0,
+          successRate: 0,
+          failureRate: 0,
+          avgLatencyMs: 0,
+          quotaStatus: 'ok'
+        },
+        routingPriority: 0
       })
     }
   } catch (error: any) {
-    console.error('GitHub Models discovery error:', error.message)
+    console.error(`[GitHub Models Discovery] FAILED: ${error.message}`)
+    throw error
   }
   
   return models
@@ -252,47 +386,61 @@ async function discoverGitHubModels(apiKey: string): Promise<DiscoveredModel[]> 
 
 /**
  * Discover models from Cloudflare Workers AI
+ * Endpoint: https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/models/search
  */
 async function discoverCloudflareModels(apiToken: string, accountId: string): Promise<DiscoveredModel[]> {
+  const endpoint = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/models/search`
   const models: DiscoveredModel[] = []
   
+  console.log(`[Cloudflare Discovery] Querying ${endpoint}`)
+  
   try {
-    const response = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/models/search`,
-      {
-        headers: { 'Authorization': `Bearer ${apiToken}` }
-      }
-    )
+    const response = await fetch(endpoint, {
+      headers: { 'Authorization': `Bearer ${apiToken}` }
+    })
     
     if (!response.ok) {
-      throw new Error(`Cloudflare API error: ${response.status}`)
+      const errorText = await response.text()
+      throw new Error(`Cloudflare API error ${response.status}: ${errorText.substring(0, 200)}`)
     }
     
     const data = await response.json() as any
     const modelList = data.result || []
     
+    console.log(`[Cloudflare Discovery] Found ${modelList.length} models`)
+    
     for (const model of modelList) {
       // Only include text generation models
       if (!model.task?.name?.includes('Text Generation')) {
+        console.log(`[Cloudflare Discovery] Skipping ${model.name} (not text generation)`)
         continue
       }
+      
+      console.log(`[Cloudflare Discovery] Discovered ${model.name}`)
       
       models.push({
         provider: 'cloudflare',
         modelId: model.name,
         modelName: model.name,
-        verified: false,
-        usable: false,
-        verifiedAt: new Date().toISOString(),
-        capabilities: {
-          maxTokens: 2048,
-          supportsJSON: true,
-          supportsSystemPrompt: true
-        }
+        discoveredAt: new Date().toISOString(),
+        discoveryEndpoint: endpoint,
+        rawResponse: model,
+        capabilities: {},
+        health: {
+          verified: false,
+          usable: false,
+          healthScore: 0,
+          successRate: 0,
+          failureRate: 0,
+          avgLatencyMs: 0,
+          quotaStatus: 'ok'
+        },
+        routingPriority: 0
       })
     }
   } catch (error: any) {
-    console.error('Cloudflare discovery error:', error.message)
+    console.error(`[Cloudflare Discovery] FAILED: ${error.message}`)
+    throw error
   }
   
   return models
@@ -300,39 +448,55 @@ async function discoverCloudflareModels(apiToken: string, accountId: string): Pr
 
 /**
  * Discover models from Mistral API
+ * Endpoint: https://api.mistral.ai/v1/models
  */
 async function discoverMistralModels(apiKey: string): Promise<DiscoveredModel[]> {
+  const endpoint = 'https://api.mistral.ai/v1/models'
   const models: DiscoveredModel[] = []
   
+  console.log(`[Mistral Discovery] Querying ${endpoint}`)
+  
   try {
-    const response = await fetch('https://api.mistral.ai/v1/models', {
+    const response = await fetch(endpoint, {
       headers: { 'Authorization': `Bearer ${apiKey}` }
     })
     
     if (!response.ok) {
-      throw new Error(`Mistral API error: ${response.status}`)
+      const errorText = await response.text()
+      throw new Error(`Mistral API error ${response.status}: ${errorText.substring(0, 200)}`)
     }
     
     const data = await response.json() as any
     const modelList = data.data || []
     
+    console.log(`[Mistral Discovery] Found ${modelList.length} models`)
+    
     for (const model of modelList) {
+      console.log(`[Mistral Discovery] Discovered ${model.id}`)
+      
       models.push({
         provider: 'mistral',
         modelId: model.id,
         modelName: model.id,
-        verified: false,
-        usable: false,
-        verifiedAt: new Date().toISOString(),
-        capabilities: {
-          maxTokens: 8192,
-          supportsJSON: true,
-          supportsSystemPrompt: true
-        }
+        discoveredAt: new Date().toISOString(),
+        discoveryEndpoint: endpoint,
+        rawResponse: model,
+        capabilities: {},
+        health: {
+          verified: false,
+          usable: false,
+          healthScore: 0,
+          successRate: 0,
+          failureRate: 0,
+          avgLatencyMs: 0,
+          quotaStatus: 'ok'
+        },
+        routingPriority: 0
       })
     }
   } catch (error: any) {
-    console.error('Mistral discovery error:', error.message)
+    console.error(`[Mistral Discovery] FAILED: ${error.message}`)
+    throw error
   }
   
   return models
@@ -340,304 +504,323 @@ async function discoverMistralModels(apiKey: string): Promise<DiscoveredModel[]>
 
 /**
  * Discover models from NVIDIA NIM API
+ * Endpoint: https://integrate.api.nvidia.com/v1/models
  */
 async function discoverNvidiaModels(apiKey: string): Promise<DiscoveredModel[]> {
+  const endpoint = 'https://integrate.api.nvidia.com/v1/models'
   const models: DiscoveredModel[] = []
   
+  console.log(`[NVIDIA Discovery] Querying ${endpoint}`)
+  
   try {
-    const response = await fetch('https://integrate.api.nvidia.com/v1/models', {
+    const response = await fetch(endpoint, {
       headers: { 'Authorization': `Bearer ${apiKey}` }
     })
     
     if (!response.ok) {
-      throw new Error(`NVIDIA API error: ${response.status}`)
+      const errorText = await response.text()
+      throw new Error(`NVIDIA API error ${response.status}: ${errorText.substring(0, 200)}`)
     }
     
     const data = await response.json() as any
     const modelList = data.data || []
     
+    console.log(`[NVIDIA Discovery] Found ${modelList.length} models`)
+    
     for (const model of modelList) {
+      console.log(`[NVIDIA Discovery] Discovered ${model.id}`)
+      
       models.push({
         provider: 'nvidia',
         modelId: model.id,
         modelName: model.id,
-        verified: false,
-        usable: false,
-        verifiedAt: new Date().toISOString(),
-        capabilities: {
-          maxTokens: 4096,
-          supportsJSON: true,
-          supportsSystemPrompt: true
-        }
+        discoveredAt: new Date().toISOString(),
+        discoveryEndpoint: endpoint,
+        rawResponse: model,
+        capabilities: {},
+        health: {
+          verified: false,
+          usable: false,
+          healthScore: 0,
+          successRate: 0,
+          failureRate: 0,
+          avgLatencyMs: 0,
+          quotaStatus: 'ok'
+        },
+        routingPriority: 0
       })
     }
   } catch (error: any) {
-    console.error('NVIDIA discovery error:', error.message)
+    console.error(`[NVIDIA Discovery] FAILED: ${error.message}`)
+    throw error
   }
   
   return models
 }
 
 /**
- * Verify a model with a real inference request
- */
-async function verifyModel(model: DiscoveredModel, apiKey: string): Promise<DiscoveredModel> {
-  const startTime = Date.now()
-  
-  try {
-    let response: Response
-    
-    if (model.provider === 'gemini') {
-      response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model.modelId}:generateContent`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey
-          },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: 'Say "test"' }] }],
-            generationConfig: { maxOutputTokens: 10 }
-          })
-        }
-      )
-    } else if (model.provider === 'cloudflare') {
-      const accountId = process.env.CLOUDFLARE_ACCOUNT_ID!
-      response = await fetch(
-        `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${model.modelId}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-          },
-          body: JSON.stringify({
-            messages: [{ role: 'user', content: 'Say "test"' }],
-            max_tokens: 10
-          })
-        }
-      )
-    } else {
-      // OpenAI-compatible APIs
-      const endpoints: Record<string, string> = {
-        groq: 'https://api.groq.com/openai/v1/chat/completions',
-        cerebras: 'https://api.cerebras.ai/v1/chat/completions',
-        openrouter: 'https://openrouter.ai/api/v1/chat/completions',
-        github_models: 'https://models.inference.ai.azure.com/chat/completions',
-        mistral: 'https://api.mistral.ai/v1/chat/completions',
-        nvidia: 'https://integrate.api.nvidia.com/v1/chat/completions'
-      }
-      
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      }
-      
-      if (model.provider === 'github_models') {
-        headers['api-version'] = '2024-05-01-preview'
-      }
-      
-      if (model.provider === 'openrouter') {
-        headers['HTTP-Referer'] = 'https://nexaafrica.vercel.app'
-        headers['X-Title'] = 'Nexa Africa'
-      }
-      
-      response = await fetch(endpoints[model.provider], {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          model: model.modelId,
-          messages: [{ role: 'user', content: 'Say "test"' }],
-          max_tokens: 10
-        })
-      })
-    }
-    
-    const latency = Date.now() - startTime
-    
-    if (response.ok) {
-      return {
-        ...model,
-        verified: true,
-        usable: true,
-        latencyMs: latency,
-        verifiedAt: new Date().toISOString()
-      }
-    } else {
-      const errorText = await response.text()
-      return {
-        ...model,
-        verified: true,
-        usable: false,
-        error: `${response.status}: ${errorText.substring(0, 200)}`,
-        latencyMs: latency,
-        verifiedAt: new Date().toISOString()
-      }
-    }
-  } catch (error: any) {
-    return {
-      ...model,
-      verified: true,
-      usable: false,
-      error: error.message,
-      latencyMs: Date.now() - startTime,
-      verifiedAt: new Date().toISOString()
-    }
-  }
-}
-
-/**
- * Discover and verify all models from all providers
+ * Discover all models from all providers
+ * CRITICAL: If discovery fails for a provider, that provider is NOT used.
+ * No fallback to hardcoded lists.
  */
 export async function discoverAllModels(): Promise<ProviderCatalog[]> {
   const catalogs: ProviderCatalog[] = []
   
+  console.log('=== LIVE MODEL DISCOVERY ===\n')
+  
   // Gemini Primary
   if (process.env.GEMINI_API_KEY) {
-    const models = await discoverGeminiModels(process.env.GEMINI_API_KEY)
-    const verified = await Promise.all(
-      models.slice(0, 5).map(m => verifyModel(m, process.env.GEMINI_API_KEY!))
-    )
-    catalogs.push({
-      provider: 'gemini',
-      models: verified,
-      lastRefreshed: new Date().toISOString(),
-      totalModels: models.length,
-      verifiedModels: verified.length,
-      usableModels: verified.filter(m => m.usable).length
-    })
+    try {
+      const models = await discoverGeminiModels(process.env.GEMINI_API_KEY)
+      catalogs.push({
+        provider: 'gemini',
+        discoveryEndpoint: 'https://generativelanguage.googleapis.com/v1beta/models',
+        discoveredAt: new Date().toISOString(),
+        models,
+        totalModels: models.length,
+        verifiedModels: 0,
+        usableModels: 0
+      })
+    } catch (error: any) {
+      console.error(`[Discovery] Gemini discovery failed: ${error.message}`)
+      catalogs.push({
+        provider: 'gemini',
+        discoveryEndpoint: 'https://generativelanguage.googleapis.com/v1beta/models',
+        discoveredAt: new Date().toISOString(),
+        models: [],
+        totalModels: 0,
+        verifiedModels: 0,
+        usableModels: 0,
+        discoveryError: error.message
+      })
+    }
   }
   
   // Gemini Backup
   if (process.env.GEMINI_API_KEY_BACKUP) {
-    const models = await discoverGeminiModels(process.env.GEMINI_API_KEY_BACKUP)
-    const verified = await Promise.all(
-      models.slice(0, 5).map(m => verifyModel(m, process.env.GEMINI_API_KEY_BACKUP!))
-    )
-    catalogs.push({
-      provider: 'gemini_backup',
-      models: verified,
-      lastRefreshed: new Date().toISOString(),
-      totalModels: models.length,
-      verifiedModels: verified.length,
-      usableModels: verified.filter(m => m.usable).length
-    })
+    try {
+      const models = await discoverGeminiModels(process.env.GEMINI_API_KEY_BACKUP)
+      catalogs.push({
+        provider: 'gemini_backup',
+        discoveryEndpoint: 'https://generativelanguage.googleapis.com/v1beta/models',
+        discoveredAt: new Date().toISOString(),
+        models,
+        totalModels: models.length,
+        verifiedModels: 0,
+        usableModels: 0
+      })
+    } catch (error: any) {
+      console.error(`[Discovery] Gemini Backup discovery failed: ${error.message}`)
+      catalogs.push({
+        provider: 'gemini_backup',
+        discoveryEndpoint: 'https://generativelanguage.googleapis.com/v1beta/models',
+        discoveredAt: new Date().toISOString(),
+        models: [],
+        totalModels: 0,
+        verifiedModels: 0,
+        usableModels: 0,
+        discoveryError: error.message
+      })
+    }
   }
   
   // Groq
   if (process.env.GROQ_API_KEY) {
-    const models = await discoverGroqModels(process.env.GROQ_API_KEY)
-    const verified = await Promise.all(
-      models.slice(0, 5).map(m => verifyModel(m, process.env.GROQ_API_KEY!))
-    )
-    catalogs.push({
-      provider: 'groq',
-      models: verified,
-      lastRefreshed: new Date().toISOString(),
-      totalModels: models.length,
-      verifiedModels: verified.length,
-      usableModels: verified.filter(m => m.usable).length
-    })
+    try {
+      const models = await discoverGroqModels(process.env.GROQ_API_KEY)
+      catalogs.push({
+        provider: 'groq',
+        discoveryEndpoint: 'https://api.groq.com/openai/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models,
+        totalModels: models.length,
+        verifiedModels: 0,
+        usableModels: 0
+      })
+    } catch (error: any) {
+      console.error(`[Discovery] Groq discovery failed: ${error.message}`)
+      catalogs.push({
+        provider: 'groq',
+        discoveryEndpoint: 'https://api.groq.com/openai/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models: [],
+        totalModels: 0,
+        verifiedModels: 0,
+        usableModels: 0,
+        discoveryError: error.message
+      })
+    }
   }
   
   // Cerebras
   if (process.env.CEREBRAS_API_KEY) {
-    const models = await discoverCerebrasModels(process.env.CEREBRAS_API_KEY)
-    const verified = await Promise.all(
-      models.slice(0, 5).map(m => verifyModel(m, process.env.CEREBRAS_API_KEY!))
-    )
-    catalogs.push({
-      provider: 'cerebras',
-      models: verified,
-      lastRefreshed: new Date().toISOString(),
-      totalModels: models.length,
-      verifiedModels: verified.length,
-      usableModels: verified.filter(m => m.usable).length
-    })
+    try {
+      const models = await discoverCerebrasModels(process.env.CEREBRAS_API_KEY)
+      catalogs.push({
+        provider: 'cerebras',
+        discoveryEndpoint: 'https://api.cerebras.ai/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models,
+        totalModels: models.length,
+        verifiedModels: 0,
+        usableModels: 0
+      })
+    } catch (error: any) {
+      console.error(`[Discovery] Cerebras discovery failed: ${error.message}`)
+      catalogs.push({
+        provider: 'cerebras',
+        discoveryEndpoint: 'https://api.cerebras.ai/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models: [],
+        totalModels: 0,
+        verifiedModels: 0,
+        usableModels: 0,
+        discoveryError: error.message
+      })
+    }
   }
   
   // OpenRouter
   if (process.env.OPENROUTER_API_KEY) {
-    const models = await discoverOpenRouterModels(process.env.OPENROUTER_API_KEY)
-    const verified = await Promise.all(
-      models.slice(0, 10).map(m => verifyModel(m, process.env.OPENROUTER_API_KEY!))
-    )
-    catalogs.push({
-      provider: 'openrouter',
-      models: verified,
-      lastRefreshed: new Date().toISOString(),
-      totalModels: models.length,
-      verifiedModels: verified.length,
-      usableModels: verified.filter(m => m.usable).length
-    })
+    try {
+      const models = await discoverOpenRouterModels(process.env.OPENROUTER_API_KEY)
+      catalogs.push({
+        provider: 'openrouter',
+        discoveryEndpoint: 'https://openrouter.ai/api/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models,
+        totalModels: models.length,
+        verifiedModels: 0,
+        usableModels: 0
+      })
+    } catch (error: any) {
+      console.error(`[Discovery] OpenRouter discovery failed: ${error.message}`)
+      catalogs.push({
+        provider: 'openrouter',
+        discoveryEndpoint: 'https://openrouter.ai/api/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models: [],
+        totalModels: 0,
+        verifiedModels: 0,
+        usableModels: 0,
+        discoveryError: error.message
+      })
+    }
   }
   
   // GitHub Models
   if (process.env.GITHUB_MODELS_TOKEN) {
-    const models = await discoverGitHubModels(process.env.GITHUB_MODELS_TOKEN)
-    const verified = await Promise.all(
-      models.slice(0, 5).map(m => verifyModel(m, process.env.GITHUB_MODELS_TOKEN!))
-    )
-    catalogs.push({
-      provider: 'github_models',
-      models: verified,
-      lastRefreshed: new Date().toISOString(),
-      totalModels: models.length,
-      verifiedModels: verified.length,
-      usableModels: verified.filter(m => m.usable).length
-    })
+    try {
+      const models = await discoverGitHubModels(process.env.GITHUB_MODELS_TOKEN)
+      catalogs.push({
+        provider: 'github_models',
+        discoveryEndpoint: 'https://models.inference.ai.azure.com/models',
+        discoveredAt: new Date().toISOString(),
+        models,
+        totalModels: models.length,
+        verifiedModels: 0,
+        usableModels: 0
+      })
+    } catch (error: any) {
+      console.error(`[Discovery] GitHub Models discovery failed: ${error.message}`)
+      catalogs.push({
+        provider: 'github_models',
+        discoveryEndpoint: 'https://models.inference.ai.azure.com/models',
+        discoveredAt: new Date().toISOString(),
+        models: [],
+        totalModels: 0,
+        verifiedModels: 0,
+        usableModels: 0,
+        discoveryError: error.message
+      })
+    }
   }
   
   // Cloudflare
   if (process.env.CLOUDFLARE_API_TOKEN && process.env.CLOUDFLARE_ACCOUNT_ID) {
-    const models = await discoverCloudflareModels(
-      process.env.CLOUDFLARE_API_TOKEN,
-      process.env.CLOUDFLARE_ACCOUNT_ID
-    )
-    const verified = await Promise.all(
-      models.slice(0, 5).map(m => verifyModel(m, process.env.CLOUDFLARE_API_TOKEN!))
-    )
-    catalogs.push({
-      provider: 'cloudflare',
-      models: verified,
-      lastRefreshed: new Date().toISOString(),
-      totalModels: models.length,
-      verifiedModels: verified.length,
-      usableModels: verified.filter(m => m.usable).length
-    })
+    try {
+      const models = await discoverCloudflareModels(
+        process.env.CLOUDFLARE_API_TOKEN,
+        process.env.CLOUDFLARE_ACCOUNT_ID
+      )
+      catalogs.push({
+        provider: 'cloudflare',
+        discoveryEndpoint: `https://api.cloudflare.com/client/v4/accounts/${process.env.CLOUDFLARE_ACCOUNT_ID}/ai/models/search`,
+        discoveredAt: new Date().toISOString(),
+        models,
+        totalModels: models.length,
+        verifiedModels: 0,
+        usableModels: 0
+      })
+    } catch (error: any) {
+      console.error(`[Discovery] Cloudflare discovery failed: ${error.message}`)
+      catalogs.push({
+        provider: 'cloudflare',
+        discoveryEndpoint: `https://api.cloudflare.com/client/v4/accounts/${process.env.CLOUDFLARE_ACCOUNT_ID}/ai/models/search`,
+        discoveredAt: new Date().toISOString(),
+        models: [],
+        totalModels: 0,
+        verifiedModels: 0,
+        usableModels: 0,
+        discoveryError: error.message
+      })
+    }
   }
   
   // Mistral
   if (process.env.MISTRAL_API_KEY) {
-    const models = await discoverMistralModels(process.env.MISTRAL_API_KEY)
-    const verified = await Promise.all(
-      models.slice(0, 5).map(m => verifyModel(m, process.env.MISTRAL_API_KEY!))
-    )
-    catalogs.push({
-      provider: 'mistral',
-      models: verified,
-      lastRefreshed: new Date().toISOString(),
-      totalModels: models.length,
-      verifiedModels: verified.length,
-      usableModels: verified.filter(m => m.usable).length
-    })
+    try {
+      const models = await discoverMistralModels(process.env.MISTRAL_API_KEY)
+      catalogs.push({
+        provider: 'mistral',
+        discoveryEndpoint: 'https://api.mistral.ai/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models,
+        totalModels: models.length,
+        verifiedModels: 0,
+        usableModels: 0
+      })
+    } catch (error: any) {
+      console.error(`[Discovery] Mistral discovery failed: ${error.message}`)
+      catalogs.push({
+        provider: 'mistral',
+        discoveryEndpoint: 'https://api.mistral.ai/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models: [],
+        totalModels: 0,
+        verifiedModels: 0,
+        usableModels: 0,
+        discoveryError: error.message
+      })
+    }
   }
   
   // NVIDIA
   if (process.env.NVIDIA_API_KEY) {
-    const models = await discoverNvidiaModels(process.env.NVIDIA_API_KEY)
-    const verified = await Promise.all(
-      models.slice(0, 5).map(m => verifyModel(m, process.env.NVIDIA_API_KEY!))
-    )
-    catalogs.push({
-      provider: 'nvidia',
-      models: verified,
-      lastRefreshed: new Date().toISOString(),
-      totalModels: models.length,
-      verifiedModels: verified.length,
-      usableModels: verified.filter(m => m.usable).length
-    })
+    try {
+      const models = await discoverNvidiaModels(process.env.NVIDIA_API_KEY)
+      catalogs.push({
+        provider: 'nvidia',
+        discoveryEndpoint: 'https://integrate.api.nvidia.com/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models,
+        totalModels: models.length,
+        verifiedModels: 0,
+        usableModels: 0
+      })
+    } catch (error: any) {
+      console.error(`[Discovery] NVIDIA discovery failed: ${error.message}`)
+      catalogs.push({
+        provider: 'nvidia',
+        discoveryEndpoint: 'https://integrate.api.nvidia.com/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models: [],
+        totalModels: 0,
+        verifiedModels: 0,
+        usableModels: 0,
+        discoveryError: error.message
+      })
+    }
   }
   
   // Cache results
@@ -648,16 +831,23 @@ export async function discoverAllModels(): Promise<ProviderCatalog[]> {
         .from('ai_model_catalog')
         .upsert({
           provider: catalog.provider,
+          discovery_endpoint: catalog.discoveryEndpoint,
           models: catalog.models,
-          last_refreshed: catalog.lastRefreshed,
+          last_refreshed: catalog.discoveredAt,
           total_models: catalog.totalModels,
           verified_models: catalog.verifiedModels,
-          usable_models: catalog.usableModels
+          usable_models: catalog.usableModels,
+          discovery_error: catalog.discoveryError
         }, { onConflict: 'provider' })
     }
   } catch (error: any) {
-    console.error('Failed to cache model catalog:', error.message)
+    console.error('[Discovery] Failed to cache model catalog:', error.message)
   }
+  
+  console.log(`\n=== DISCOVERY COMPLETE ===`)
+  console.log(`Total providers: ${catalogs.length}`)
+  console.log(`Total models: ${catalogs.reduce((sum, c) => sum + c.totalModels, 0)}`)
+  console.log(`Providers with errors: ${catalogs.filter(c => c.discoveryError).length}`)
   
   return catalogs
 }
@@ -677,20 +867,22 @@ export async function getModelCatalog(provider?: string): Promise<ProviderCatalo
     const { data, error } = await query
     
     if (error) {
-      console.error('Failed to fetch model catalog:', error.message)
+      console.error('[Discovery] Failed to fetch model catalog:', error.message)
       return []
     }
     
     return (data || []).map((row: any) => ({
       provider: row.provider,
+      discoveryEndpoint: row.discovery_endpoint,
+      discoveredAt: row.last_refreshed,
       models: row.models,
-      lastRefreshed: row.last_refreshed,
       totalModels: row.total_models,
       verifiedModels: row.verified_models,
-      usableModels: row.usable_models
+      usableModels: row.usable_models,
+      discoveryError: row.discovery_error
     }))
   } catch (error: any) {
-    console.error('Failed to fetch model catalog:', error.message)
+    console.error('[Discovery] Failed to fetch model catalog:', error.message)
     return []
   }
 }

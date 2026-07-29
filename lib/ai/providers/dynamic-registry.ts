@@ -41,8 +41,8 @@ export async function refreshProviderRegistry(): Promise<ProviderConfig[]> {
       
       // Find the best usable model
       const bestModel = catalogEntry.models
-        .filter(m => m.usable)
-        .sort((a, b) => (a.latencyMs || 9999) - (b.latencyMs || 9999))[0]
+        .filter(m => m.health.usable)
+        .sort((a, b) => (a.health.avgLatencyMs || 9999) - (b.health.avgLatencyMs || 9999))[0]
       
       if (!bestModel) {
         return { ...provider, enabled: false }
@@ -52,10 +52,10 @@ export async function refreshProviderRegistry(): Promise<ProviderConfig[]> {
         ...provider,
         model: bestModel.modelId,
         enabled: true,
-        discoveredAt: catalogEntry.lastRefreshed,
-        verifiedAt: bestModel.verifiedAt,
-        usable: bestModel.usable,
-        latencyMs: bestModel.latencyMs,
+        discoveredAt: catalogEntry.discoveredAt,
+        verifiedAt: bestModel.health.lastVerifiedAt,
+        usable: bestModel.health.usable,
+        latencyMs: bestModel.health.avgLatencyMs,
         capabilities: bestModel.capabilities
       }
     })

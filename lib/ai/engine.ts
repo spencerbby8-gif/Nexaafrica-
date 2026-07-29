@@ -46,22 +46,21 @@ export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIn
     bundle = {}
   }
 
-  // Truthful: ONLY real AI bundle evidence, or real ATS salary_range, or UNKNOWN with empty evidence
-  // Disable every placeholder/template/fake evidence path
-  // UNKNOWN is acceptable, invented intelligence is not
-  // Per-job variance via perJobLowConf 0-10 based on id hash, proves per-job independence without fake evidence
+  // ── TRUTHFUL INTELLIGENCE ASSEMBLY ──────────────────────────────
+  // [FIX] Removed perJobLowConf — was a fake confidence derived from job ID hash.
+  // Now: confidence = 0 when no evidence. UNKNOWN is honest, fake confidence is not.
+  // Every field must be job-specific. No template values. No repeated defaults.
 
-  const perJobLowConf = () => {
-    const idSum = job.id.split('').reduce((acc: number, c: string) => acc + c.charCodeAt(0), 0)
-    return (idSum + job.description_md.length) % 11 // 0-10
-  }
-
-  // modelVersion now comes directly from the consolidated verifier
-  // (extractWithSingleAI). It records the actual provider:model that produced
-  // the result, or "regex-extracted-Nbytes" / "no-ai-providers" when AI
-  // was not used. No more collecting tags from 7 independent verifier calls.
   const realModelVersion = bundle?._consolidated?.modelVersion
     || (Object.keys(bundle).length > 0 ? "no-ai-providers" : AI_MODEL_VERSION);
+
+  // Collect all evidence URLs from all dimensions
+  const allEvidenceUrls = new Set<string>([job.apply_url])
+  if (bundle?.africa?.sourceUrls) bundle.africa.sourceUrls.forEach((u: string) => allEvidenceUrls.add(u))
+  if (bundle?.company?.sourceUrls) bundle.company.sourceUrls.forEach((u: string) => allEvidenceUrls.add(u))
+  if (bundle?._consolidated?.companyPageFetched) {
+    try { allEvidenceUrls.add(new URL(job.apply_url).origin) } catch {}
+  }
 
   const result: JobAIIntelligence = {
     jobId: job.id,
@@ -69,7 +68,7 @@ export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIn
     modelVersion: realModelVersion,
     africa: {
       value: bundle?.africa?.eligibility || "unknown",
-      confidence: bundle?.africa?.confidence ?? perJobLowConf(),
+      confidence: bundle?.africa?.confidence ?? 0,  // [FIX] Was perJobLowConf()
       evidence: bundle?.africa?.evidence ? [{ text: bundle.africa.evidence, url: job.apply_url, type: "job_description" as const }] : [],
       sourceUrls: bundle?.africa?.sourceUrls || [job.apply_url],
       lastVerified: bundle?.africa?.lastVerified || now,
@@ -78,7 +77,7 @@ export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIn
     },
     remote: {
       value: bundle?.remote?.eligibility || "unknown",
-      confidence: bundle?.remote?.confidence ?? perJobLowConf(),
+      confidence: bundle?.remote?.confidence ?? 0,  // [FIX] Was perJobLowConf()
       evidence: bundle?.remote?.evidence ? [{ text: bundle.remote.evidence, url: job.apply_url, type: "job_description" as const }] : [],
       sourceUrls: bundle?.remote?.sourceUrls || [job.apply_url],
       lastVerified: bundle?.remote?.lastVerified || now,
@@ -87,7 +86,7 @@ export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIn
     },
     visa: {
       value: bundle?.africa?.visaSponsorship || "unknown",
-      confidence: bundle?.africa?.confidence ?? perJobLowConf(),
+      confidence: bundle?.africa?.visaConfidence ?? 0,  // [FIX #6] Use visa-specific confidence, not africa's
       evidence: [],
       sourceUrls: [job.apply_url],
       lastVerified: now,
@@ -102,7 +101,7 @@ export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIn
         isEstimated: bundle?.salary?.isEstimated ?? false,
         transparency: bundle?.salary ? (bundle.salary.transparency || ("unknown" as const)) : (job.salary_range ? ("disclosed" as const) : ("unknown" as const)),
       },
-      confidence: bundle?.salary?.confidence ?? (job.salary_range ? 70 : perJobLowConf()),
+      confidence: bundle?.salary?.confidence ?? (job.salary_range ? 70 : 0),  // [FIX] Was perJobLowConf()
       evidence: bundle?.salary?.evidence ? [{ text: bundle.salary.evidence, url: job.apply_url, type: "job_description" as const }] : job.salary_range ? [{ text: job.salary_range, url: job.apply_url, type: "ats_metadata" as const }] : [],
       sourceUrls: bundle?.salary?.sourceUrls || [job.apply_url],
       lastVerified: bundle?.salary?.lastVerified || now,
@@ -110,7 +109,7 @@ export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIn
     },
     company: {
       value: bundle?.company?.legitimacy || "unknown",
-      confidence: bundle?.company?.confidence ?? perJobLowConf(),
+      confidence: bundle?.company?.confidence ?? 0,  // [FIX] Was perJobLowConf()
       evidence: bundle?.company?.evidence ? [{ text: bundle.company.evidence, url: job.apply_url, type: "company_page" as const }] : [],
       sourceUrls: bundle?.company?.sourceUrls || [job.apply_url],
       lastVerified: bundle?.company?.lastVerified || now,
@@ -118,7 +117,7 @@ export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIn
     },
     quality: {
       value: bundle?.quality?.quality || "unknown",
-      confidence: bundle?.quality?.confidence ?? perJobLowConf(),
+      confidence: bundle?.quality?.confidence ?? 0,  // [FIX] Was perJobLowConf()
       evidence: bundle?.quality?.evidence ? [{ text: bundle.quality.evidence, url: job.apply_url, type: "job_description" as const }] : [],
       sourceUrls: bundle?.quality?.sourceUrls || [job.apply_url],
       lastVerified: bundle?.quality?.lastVerified || now,
@@ -127,7 +126,7 @@ export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIn
     },
     experience: {
       value: bundle?.experience?.experience?.value || "unknown",
-      confidence: bundle?.experience?.experience?.confidence ?? perJobLowConf(),
+      confidence: bundle?.experience?.experience?.confidence ?? 0,  // [FIX] Was perJobLowConf()
       evidence: [],
       sourceUrls: [job.apply_url],
       lastVerified: now,
@@ -136,15 +135,15 @@ export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIn
     skills: {
       required: {
         value: bundle?.experience?.requiredSkills?.value || job.tags || [],
-        confidence: bundle?.experience?.requiredSkills?.confidence ?? 20,
+        confidence: bundle?.experience?.requiredSkills?.confidence ?? (job.tags?.length ? 30 : 0),  // [FIX #5] Was 20 always
         evidence: [],
         sourceUrls: [job.apply_url],
         lastVerified: now,
-        modelVersion: bundle?.experience?.requiredSkills?.modelVersion || "job-table-fallback-tags",
+        modelVersion: bundle?.experience?.requiredSkills?.modelVersion || (job.tags?.length ? "job-table-fallback-tags" : "failed-no-evidence"),
       },
       transferable: {
         value: bundle?.experience?.transferableSkills?.value || [],
-        confidence: bundle?.experience?.transferableSkills?.confidence ?? perJobLowConf(),
+        confidence: bundle?.experience?.transferableSkills?.confidence ?? 0,  // [FIX] Was perJobLowConf()
         evidence: [],
         sourceUrls: [job.apply_url],
         lastVerified: now,
@@ -152,7 +151,7 @@ export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIn
       },
       missing: {
         value: bundle?.experience?.missingSkills?.value || [],
-        confidence: bundle?.experience?.missingSkills?.confidence ?? perJobLowConf(),
+        confidence: bundle?.experience?.missingSkills?.confidence ?? 0,  // [FIX] Was perJobLowConf()
         evidence: [],
         sourceUrls: [job.apply_url],
         lastVerified: now,
@@ -161,7 +160,7 @@ export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIn
     },
     applicationDifficulty: {
       value: "unknown" as const,
-      confidence: perJobLowConf(),
+      confidence: 0,  // [FIX #3] Was perJobLowConf() — always unknown, confidence must be 0
       evidence: [],
       sourceUrls: [job.apply_url],
       lastVerified: now,
@@ -169,7 +168,7 @@ export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIn
     },
     hiringUrgency: {
       value: bundle?.freshness ? (bundle.freshness.status === "active" && bundle.freshness.confidence >=70 ? "high" as const : bundle.freshness.status === "stale" ? "low" as const : "medium" as const) : "unknown" as const,
-      confidence: bundle?.freshness?.confidence ?? perJobLowConf(),
+      confidence: bundle?.freshness?.confidence ?? 0,  // [FIX] Was perJobLowConf()
       evidence: bundle?.freshness?.evidence ? [{ text: bundle.freshness.evidence, url: job.apply_url, type: "job_description" as const }] : [],
       sourceUrls: bundle?.freshness?.sourceUrls || [job.apply_url],
       lastVerified: bundle?.freshness?.lastVerified || now,
@@ -476,7 +475,13 @@ export async function processAIQueue(batchSize = 100) {
           application_difficulty: intelligence.applicationDifficulty.value,
           hiring_urgency: intelligence.hiringUrgency.value,
           overall_confidence: Math.round(intelligence.overallConfidence),
-          evidence_urls: intelligence.africa.sourceUrls,
+          evidence_urls: Array.from(new Set<string>([
+            ...(intelligence.africa.sourceUrls || []),
+            ...(intelligence.company.sourceUrls || []),
+            ...(intelligence.salary.sourceUrls || []),
+            ...(intelligence.remote.sourceUrls || []),
+            job.apply_url,
+          ])).slice(0, 20),
           last_verified_at: new Date().toISOString(),
         }, { onConflict: "job_id" })
         if (upsertErr) {

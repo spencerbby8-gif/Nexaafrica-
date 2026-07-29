@@ -19,9 +19,10 @@ export async function verifyJobReal(job: Job): Promise<VerificationBundle> {
     africa: {
       eligibility: ai.africa_eligibility,
       confidence: ai.africa_confidence,
+      visaSponsorship: ai.visa_sponsorship,
+      visaConfidence: ai.visa_confidence,  // [FIX #6] Pass visa-specific confidence
       evidence: ai.africa_evidence || "",
       countryRestrictions: ai.country_restrictions,
-      visaSponsorship: ai.visa_sponsorship,
       languageRequirements: [],
       sourceUrls: [job.apply_url],
       lastVerified: now,
@@ -55,8 +56,8 @@ export async function verifyJobReal(job: Job): Promise<VerificationBundle> {
       legitimacy: ai.company_legitimacy,
       confidence: ai.company_confidence,
       evidence: ai.company_evidence || "",
-      reason: "",
-      sourceUrls: [job.apply_url],
+      reason: consolidated.companyPageFetched ? `Company page fetched (${consolidated.companyPageLen} bytes)` : "No company page available",
+      sourceUrls: consolidated.companyPageFetched ? [job.apply_url, (() => { try { return new URL(job.apply_url).origin } catch { return job.apply_url } })()] : [job.apply_url],
       lastVerified: now,
       modelVersion,
     },

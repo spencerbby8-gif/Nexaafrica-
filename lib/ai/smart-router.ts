@@ -1,15 +1,33 @@
 /**
- * Smart AI Router — Production Pipeline
- * 
- * Routes every AI request to the best provider based on:
- * 1. Task capability (does provider support this task type?)
- * 2. Health score (consecutive failures, cooldown, quota)
- * 3. Benchmark / historical performance (latency, success rate)
- * 4. Priority (configured preference)
- * 5. Cost (prefer cheaper when scores are similar)
- * 
- * Every routing decision is logged with full reasoning.
- * This router is the SINGLE ENTRY POINT for all model selection.
+ * Smart AI Router — v2 (measurement-driven, no structural bias)
+ *
+ * Rebuilt 2026-07-30 after live production verification proved structural
+ * exclusion: 5 of 10 configured providers (mistral, nvidia, github_models,
+ * huggingface, gemini_backup) had NEVER been attempted in production because
+ * static `taskTypes` affinity was worth 40/100 points and cold instances fell
+ * back to compile-time priority ordering.
+ *
+ * v2 principles:
+ *
+ * 1. EVERY enabled provider participates in EVERY task. There are no static
+ *    task-affinity gates. Task fit is LEARNED from measured per-task outcomes
+ *    (persisted in ai_orch_health.task_stats), never declared in code.
+ * 2. Scores are derived from live evidence:
+ *      - measured success rate      (recent, persisted across cold starts)
+ *      - measured latency           (EWMA, persisted)
+ *      - measured per-task fitness  (persisted)
+ *      - availability gates         (cooldown / quota backoff — live state)
+ *      - exploration bonus          (unmeasured providers get surfaced so
+ *                                    they accumulate real measurements)
+ *      - recency of last success
+ *      - declared cost + configured priority are TIE-BREAKERS only (<=13 pts
+ *        combined of ~100), documented as static inputs.
+ * 3. Health state survives cold starts: every outcome is written through to
+ *    `ai_orch_health` (best-effort, non-blocking) and re-synced on boot.
+ * 4. Nothing is permanently excluded. Failures trigger exponential cooldown
+ *    (30s -> 30m cap); after expiry the provider re-enters candidacy, so a
+ *    transiently-dead provider self-heals and a genuinely dead one simply
+ *    sinks to the bottom of the ranking on evidence.
  */
 
 import { PROVIDERS, type ProviderId, type ProviderConfig } from "./providers/types"
@@ -38,11 +56,13 @@ export interface RoutingDecision {
 }
 
 export interface RoutingFactors {
-  taskCapability: number     // 0-40 points
-  healthScore: number        // 0-25 points
-  performanceScore: number   // 0-20 points
-  priorityScore: number      // 0-10 points
-  costScore: number          // 0-5 points
+  measuredHealth: number      // 0-30  — recent measured success rate (live+persisted)
+  latencyScore: number        // 0-20  — measured average latency bands
+  taskFit: number             // 0-20  — measured success on this task type
+  costScore: number           // 0-10  — declared unit cost (static metadata)
+  explorationBonus: number    // 0-10  — inversely proportional to sample count
+  recencyScore: number        // 0-7   — how recently the provider last succeeded
+  configTieBreak: number      // 0-3   — configured priority, tie-breaker ONLY
 }
 
 export interface RoutingLog {
@@ -61,7 +81,9 @@ export interface RoutingLog {
   errorSummary?: string
 }
 
-// ─── In-memory health state (mirrors orchestrator but used for routing) ──
+// ─── Health state (in-memory hot cache, persisted to ai_orch_health) ──
+
+interface TaskStat { ok: number; fail: number; totalMs: number }
 
 interface ProviderHealthState {
   consecutiveFailures: number
@@ -72,22 +94,25 @@ interface ProviderHealthState {
   quotaResetAt: number
   isRateLimited: boolean
   avgLatencyMs: number
-  totalRequests: number
+  totalSuccesses: number
   totalFailures: number
-  successRate: number
+  lastError?: string
+  taskStats: Record<string, TaskStat>
 }
 
 const healthState = new Map<ProviderId, ProviderHealthState>()
 
-function getHealth(id: ProviderId): ProviderHealthState {
-  if (!healthState.has(id)) {
-    healthState.set(id, {
-      consecutiveFailures: 0, lastFailureAt: 0, lastSuccessAt: 0,
-      cooldownUntil: 0, isQuotaExhausted: false, quotaResetAt: 0,
-      isRateLimited: false, avgLatencyMs: 0, totalRequests: 0,
-      totalFailures: 0, successRate: 100,
-    })
+function emptyHealth(): ProviderHealthState {
+  return {
+    consecutiveFailures: 0, lastFailureAt: 0, lastSuccessAt: 0,
+    cooldownUntil: 0, isQuotaExhausted: false, quotaResetAt: 0,
+    isRateLimited: false, avgLatencyMs: 0, totalSuccesses: 0,
+    totalFailures: 0, taskStats: {},
   }
+}
+
+function getHealth(id: ProviderId): ProviderHealthState {
+  if (!healthState.has(id)) healthState.set(id, emptyHealth())
   return healthState.get(id)!
 }
 
@@ -99,7 +124,6 @@ const MAX_LOGS = 500
 function logRoutingDecision(log: RoutingLog): void {
   routingLogs.push(log)
   if (routingLogs.length > MAX_LOGS) routingLogs.shift()
-  // Also emit to console for Vercel logs
   console.log(JSON.stringify({
     scope: "smart_router",
     ts: log.timestamp,
@@ -115,128 +139,127 @@ function logRoutingDecision(log: RoutingLog): void {
 
 // ─── Core scoring ───────────────────────────────────────────────
 
+const GATE_SCORE = -10000
+const NEUTRAL_HEALTH = 18      // untested providers: neutral, not punished
+const NEUTRAL_LATENCY = 10
+const NEUTRAL_TASKFIT = 12
+
+function latencyBand(avgMs: number): number {
+  if (avgMs <= 0) return NEUTRAL_LATENCY
+  if (avgMs < 800) return 20
+  if (avgMs < 2000) return 16
+  if (avgMs < 5000) return 10
+  if (avgMs < 12000) return 5
+  return 2
+}
+
+function recencyBand(lastSuccessAt: number, now: number): number {
+  if (!lastSuccessAt) return 0
+  const age = now - lastSuccessAt
+  if (age < 5 * 60_000) return 7
+  if (age < 60 * 60_000) return 5
+  if (age < 24 * 60 * 60_000) return 3
+  return 1
+}
+
+function isGated(cfg: ProviderConfig, h: ProviderHealthState, now: number): string | null {
+  if (!cfg.enabled) return 'Disabled in config'
+  if (now < h.cooldownUntil) {
+    const remaining = Math.ceil((h.cooldownUntil - now) / 1000)
+    return h.isQuotaExhausted && now < h.quotaResetAt
+      ? `Quota backoff (${remaining}s remaining)`
+      : h.isRateLimited
+        ? `Rate-limit backoff (${remaining}s remaining)`
+        : `Failure cooldown (${remaining}s remaining)`
+  }
+  if (h.isQuotaExhausted && now < h.quotaResetAt) return 'Quota exhausted (backoff active)'
+  return null
+}
+
 function scoreProvider(
   cfg: ProviderConfig,
   taskType: TaskType | undefined,
   now: number,
 ): RoutingDecision {
-  const health = getHealth(cfg.id)
+  const h = getHealth(cfg.id)
+  const zero = { measuredHealth: 0, latencyScore: 0, taskFit: 0, costScore: 0, explorationBonus: 0, recencyScore: 0, configTieBreak: 0 }
+
+  const gate = isGated(cfg, h, now)
+  if (gate) {
+    return { provider: cfg, score: GATE_SCORE, reasoning: [gate], factors: zero }
+  }
+
   const reasoning: string[] = []
+  const samples = h.totalSuccesses + h.totalFailures
 
-  // ── Gate checks (instant -9999 if blocked) ──
-  if (!cfg.enabled) {
-    return { provider: cfg, score: -9999, reasoning: ['Disabled'], factors: { taskCapability: 0, healthScore: 0, performanceScore: 0, priorityScore: 0, costScore: 0 } }
+  // ── Factor 1: Measured health (0-30) ──
+  let measuredHealth: number
+  if (samples === 0) {
+    measuredHealth = NEUTRAL_HEALTH
+    reasoning.push('No call history — eligible for measurement')
+  } else {
+    const successRate = (h.totalSuccesses / samples) * 100
+    measuredHealth = Math.round(successRate * 0.3)
+    if (h.consecutiveFailures > 0) {
+      measuredHealth -= Math.min(h.consecutiveFailures * 3, 12)
+      reasoning.push(`${h.consecutiveFailures} consecutive failure(s), success ${successRate.toFixed(0)}% over ${samples} calls`)
+    } else {
+      reasoning.push(`Success ${successRate.toFixed(0)}% over ${samples} measured call(s)`)
+    }
+    measuredHealth = Math.max(0, Math.min(30, measuredHealth))
   }
 
-  const inCooldown = now < health.cooldownUntil
-  if (inCooldown) {
-    const remaining = Math.ceil((health.cooldownUntil - now) / 1000)
-    return { provider: cfg, score: -9999, reasoning: [`In cooldown (${remaining}s remaining)`], factors: { taskCapability: 0, healthScore: 0, performanceScore: 0, priorityScore: 0, costScore: 0 } }
-  }
+  // ── Factor 2: Measured latency (0-20) ──
+  const latencyScore = latencyBand(h.avgLatencyMs)
+  reasoning.push(h.avgLatencyMs > 0 ? `Measured latency ~${h.avgLatencyMs}ms` : 'No latency measurements yet')
 
-  const quotaBlocked = health.isQuotaExhausted && now < health.quotaResetAt
-  if (quotaBlocked) {
-    return { provider: cfg, score: -9999, reasoning: ['Quota exhausted'], factors: { taskCapability: 0, healthScore: 0, performanceScore: 0, priorityScore: 0, costScore: 0 } }
-  }
-
-  if (health.isRateLimited && now < health.cooldownUntil) {
-    return { provider: cfg, score: -9999, reasoning: ['Rate limited'], factors: { taskCapability: 0, healthScore: 0, performanceScore: 0, priorityScore: 0, costScore: 0 } }
-  }
-
-  // ── Factor 1: Task Capability (0-40 points) ──
-  let taskCapability = 0
+  // ── Factor 3: Measured task fit (0-20) ──
+  let taskFit = NEUTRAL_TASKFIT
   if (taskType) {
-    if (cfg.taskTypes && cfg.taskTypes.length > 0) {
-      if (cfg.taskTypes.includes(taskType)) {
-        taskCapability = 40
-        reasoning.push(`✓ Supports task "${taskType}"`)
-      } else if (cfg.taskTypes.includes('fallback')) {
-        taskCapability = 15
-        reasoning.push(`Fallback provider (not optimized for "${taskType}")`)
-      } else {
-        taskCapability = 5
-        reasoning.push(`No task affinity for "${taskType}" (will still try)`)
-      }
+    const ts = h.taskStats[taskType]
+    const tSamples = ts ? ts.ok + ts.fail : 0
+    if (ts && tSamples > 0) {
+      taskFit = Math.round((ts.ok / tSamples) * 20)
+      reasoning.push(`Task "${taskType}": ${ts.ok}/${tSamples} measured successes`)
     } else {
-      // No taskTypes defined = general purpose
-      taskCapability = 20
-      reasoning.push('General purpose (no task restriction)')
+      reasoning.push(`Task "${taskType}" unmeasured for this provider (neutral)`)
     }
   } else {
-    taskCapability = 25
-    reasoning.push('No task type specified (default capability)')
+    reasoning.push('No task type specified (neutral fit)')
   }
 
-  // ── Factor 2: Health (0-25 points) ──
-  let healthScore = 25 // Start perfect
-  if (health.consecutiveFailures > 0) {
-    healthScore -= Math.min(health.consecutiveFailures * 8, 25)
-    reasoning.push(`${health.consecutiveFailures} consecutive failure(s)`)
-  }
-  if (health.successRate < 80) {
-    healthScore -= Math.round((100 - health.successRate) / 5)
-    reasoning.push(`Success rate: ${health.successRate.toFixed(1)}%`)
-  } else if (health.totalRequests > 0) {
-    reasoning.push(`Success rate: ${health.successRate.toFixed(1)}%`)
-  }
-  healthScore = Math.max(0, healthScore)
+  // ── Factor 4: Declared cost (0-10) ──
+  let costScore: number
+  if (cfg.costPer1kTokens === 0) costScore = 10
+  else if (cfg.costPer1kTokens <= 1) costScore = 8
+  else if (cfg.costPer1kTokens <= 2) costScore = 6
+  else costScore = 4
+  reasoning.push(cfg.costPer1kTokens === 0 ? 'Free tier' : `Declared cost score ${costScore}/10`)
 
-  // ── Factor 3: Performance / Latency (0-20 points) ──
-  let performanceScore = 10 // Default if no data
-  if (health.avgLatencyMs > 0) {
-    if (health.avgLatencyMs < 500) {
-      performanceScore = 20
-      reasoning.push(`Fast: ${health.avgLatencyMs}ms avg`)
-    } else if (health.avgLatencyMs < 1500) {
-      performanceScore = 15
-      reasoning.push(`OK latency: ${health.avgLatencyMs}ms avg`)
-    } else if (health.avgLatencyMs < 5000) {
-      performanceScore = 8
-      reasoning.push(`Slow: ${health.avgLatencyMs}ms avg`)
-    } else {
-      performanceScore = 3
-      reasoning.push(`Very slow: ${health.avgLatencyMs}ms avg`)
-    }
-  } else {
-    reasoning.push('No latency data (untested)')
-  }
+  // ── Factor 5: Exploration bonus (0-10) — decays with measured samples ──
+  const explorationBonus = samples >= 20 ? 0 : Math.round((1 - samples / 20) * 10)
+  if (explorationBonus > 0) reasoning.push(`Exploration bonus +${explorationBonus} (${samples}/20 measured samples)`)
 
-  // ── Factor 4: Priority (0-10 points) ──
-  const priorityScore = Math.max(0, 10 - (cfg.priority - 1))
-  reasoning.push(`Priority: ${cfg.priority}/10`)
+  // ── Factor 6: Recency of last measured success (0-7) ──
+  const recencyScore = recencyBand(h.lastSuccessAt, now)
+  if (recencyScore > 0) reasoning.push('Recently succeeded')
 
-  // ── Factor 5: Cost (0-5 points, cheaper = better) ──
-  let costScore = 3
-  if (cfg.costPer1kTokens === 0) {
-    costScore = 5
-    reasoning.push('Free tier')
-  } else if (cfg.costPer1kTokens <= 1) {
-    costScore = 4
-    reasoning.push(`Low cost: $${cfg.costPer1kTokens}/1k`)
-  } else if (cfg.costPer1kTokens <= 2) {
-    costScore = 3
-    reasoning.push(`Medium cost: $${cfg.costPer1kTokens}/1k`)
-  } else {
-    costScore = 1
-    reasoning.push(`High cost: $${cfg.costPer1kTokens}/1k`)
-  }
+  // ── Factor 7: Config tie-break (0-3) — static input, tie-breaker only ──
+  const configTieBreak = Math.max(0, Math.round(((11 - cfg.priority) / 10) * 3))
 
-  const totalScore = taskCapability + healthScore + performanceScore + priorityScore + costScore
+  const totalScore = measuredHealth + latencyScore + taskFit + costScore + explorationBonus + recencyScore + configTieBreak
 
   return {
     provider: cfg,
     score: totalScore,
     reasoning,
-    factors: { taskCapability, healthScore, performanceScore, priorityScore, costScore },
+    factors: { measuredHealth, latencyScore, taskFit, costScore, explorationBonus, recencyScore, configTieBreak },
   }
 }
 
 // ─── Public API ─────────────────────────────────────────────────
 
-/**
- * Route to the best provider for a task.
- * Returns the top-ranked decision.
- */
+/** Route to the best provider for a task. Returns the top-ranked decision. */
 export function routeTask(taskType?: TaskType): RoutingDecision | null {
   const now = Date.now()
   const decisions = PROVIDERS.map(cfg => scoreProvider(cfg, taskType, now))
@@ -246,9 +269,7 @@ export function routeTask(taskType?: TaskType): RoutingDecision | null {
   return best
 }
 
-/**
- * Get all providers ranked for a task (for failover chain).
- */
+/** Get ALL non-gated providers ranked for a task (failover/exploration chain). */
 export function routeTaskAll(taskType?: TaskType): RoutingDecision[] {
   const now = Date.now()
   const decisions = PROVIDERS.map(cfg => scoreProvider(cfg, taskType, now))
@@ -256,62 +277,108 @@ export function routeTaskAll(taskType?: TaskType): RoutingDecision[] {
   return decisions.filter(d => d.score > 0)
 }
 
-/**
- * Record a successful provider call — updates routing health.
- */
+// ─── Persistence (best-effort write-through to ai_orch_health) ──
+
+function persistHealth(id: ProviderId): void {
+  const h = healthState.get(id)
+  if (!h) return
+  const row = {
+    provider: id,
+    updated_at: new Date().toISOString(),
+    consecutive_failures: h.consecutiveFailures,
+    last_failure_at: h.lastFailureAt ? new Date(h.lastFailureAt).toISOString() : null,
+    last_success_at: h.lastSuccessAt ? new Date(h.lastSuccessAt).toISOString() : null,
+    cooldown_until: h.cooldownUntil ? new Date(h.cooldownUntil).toISOString() : null,
+    last_error_code: null as string | null,
+    last_error_message: (h.lastError || '').slice(0, 500) || null,
+    avg_latency_ms: h.avgLatencyMs > 0 ? Math.round(h.avgLatencyMs) : null,
+    is_quota_exhausted: h.isQuotaExhausted,
+    quota_reset_at: h.quotaResetAt ? new Date(h.quotaResetAt).toISOString() : null,
+    is_rate_limited: h.isRateLimited,
+    total_successes: h.totalSuccesses,
+    total_failures: h.totalFailures,
+    task_stats: h.taskStats,
+  }
+  // Fire-and-forget: routing latency must never depend on the DB write.
+  void (async () => {
+    try {
+      const { createServiceClient } = await import("@/lib/supabase/service")
+      const supabase = createServiceClient()
+      await supabase.from("ai_orch_health").upsert(row, { onConflict: "provider" })
+    } catch {
+      // Persistence is best-effort; the in-memory state is still correct for
+      // this instance and the next sync will heal drift.
+    }
+  })()
+}
+
+function recordTaskStat(h: ProviderHealthState, taskType: string | undefined, ok: boolean, latencyMs?: number): void {
+  if (!taskType) return
+  const ts = h.taskStats[taskType] || { ok: 0, fail: 0, totalMs: 0 }
+  if (ok) { ts.ok++; if (latencyMs) ts.totalMs += latencyMs } else { ts.fail++ }
+  h.taskStats[taskType] = ts
+}
+
+// task-type context for record* (orchestrator knows the task; set per-request chain)
+const pendingTask = new Map<ProviderId, string | undefined>()
+export function tagPendingTask(id: ProviderId, taskType: string | undefined): void {
+  pendingTask.set(id, taskType)
+}
+
+/** Record a successful provider call — updates routing health + persists. */
 export function recordRouterSuccess(providerId: ProviderId, latencyMs: number): void {
   const h = getHealth(providerId)
   h.consecutiveFailures = 0
   h.lastSuccessAt = Date.now()
-  h.totalRequests++
+  h.totalSuccesses++
   h.avgLatencyMs = h.avgLatencyMs > 0
     ? Math.round(h.avgLatencyMs * 0.7 + latencyMs * 0.3)
     : latencyMs
   h.isQuotaExhausted = false
   h.isRateLimited = false
   h.cooldownUntil = 0
-  h.successRate = h.totalRequests > 0
-    ? ((h.totalRequests - h.totalFailures) / h.totalRequests) * 100
-    : 100
+  h.lastError = undefined
+  recordTaskStat(h, pendingTask.get(providerId) ?? undefined, true, latencyMs)
+  pendingTask.delete(providerId)
+  persistHealth(providerId)
 }
 
-/**
- * Record a failed provider call — updates routing health + cooldown.
- */
+/** Record a failed provider call — escalating cooldown + persists. */
 export function recordRouterFailure(providerId: ProviderId, errMsg: string): void {
   const h = getHealth(providerId)
   h.consecutiveFailures++
   h.lastFailureAt = Date.now()
-  h.totalRequests++
   h.totalFailures++
-  h.successRate = h.totalRequests > 0
-    ? ((h.totalRequests - h.totalFailures) / h.totalRequests) * 100
-    : 0
+  h.lastError = errMsg.slice(0, 300)
+  recordTaskStat(h, pendingTask.get(providerId) ?? undefined, false)
+  pendingTask.delete(providerId)
 
-  // Classify error for cooldown
   const msg = errMsg.toLowerCase()
   const isQuota = msg.includes('429') || msg.includes('resource_exhausted') || msg.includes('quota exceeded')
   const isRateLimit = msg.includes('rate_limit') || msg.includes('rate limit') || msg.includes('tokens per day')
-  const isAuth = msg.includes('401') || msg.includes('403') || msg.includes('invalid api key')
+  const isAuth = msg.includes('401') || msg.includes('403') || msg.includes('invalid api key') || msg.includes('not_found_error') || msg.includes('does not exist')
 
   if (isQuota) {
+    // Daily-quota classes (Groq TPD etc.) get a long backoff instead of the
+    // old 60s spin that re-hammered a provider that cannot recover for hours.
     h.isQuotaExhausted = true
-    h.quotaResetAt = Date.now() + 60_000
+    h.quotaResetAt = Date.now() + 30 * 60_000
     h.cooldownUntil = h.quotaResetAt
   } else if (isRateLimit) {
     h.isRateLimited = true
-    h.cooldownUntil = Date.now() + 120_000
+    h.cooldownUntil = Date.now() + 5 * 60_000
   } else if (isAuth) {
-    h.cooldownUntil = Date.now() + 300_000
+    // Key/model-level failure: long backoff, but never a permanent ban.
+    h.cooldownUntil = Date.now() + 30 * 60_000
   } else {
-    h.cooldownUntil = Date.now() + Math.min(2 ** h.consecutiveFailures * 2000, 300_000)
+    // Generic failure: exponential cooldown 30s → 30m cap, then re-eligible.
+    const backoff = Math.min(30_000 * 2 ** Math.min(h.consecutiveFailures - 1, 10), 30 * 60_000)
+    h.cooldownUntil = Date.now() + backoff
   }
+  persistHealth(providerId)
 }
 
-/**
- * Sync health state from the orchestrator's DB-persisted health.
- * Called at startup and periodically.
- */
+/** Sync health state from DB — warms cold instances with measured history. */
 export async function syncHealthFromDB(): Promise<void> {
   try {
     const { createServiceClient } = await import("@/lib/supabase/service")
@@ -320,6 +387,7 @@ export async function syncHealthFromDB(): Promise<void> {
     if (!data) return
     for (const row of data as any[]) {
       const id = row.provider as ProviderId
+      if (!PROVIDERS.some(p => p.id === id)) continue
       const h = getHealth(id)
       h.consecutiveFailures = row.consecutive_failures || 0
       h.lastFailureAt = row.last_failure_at ? new Date(row.last_failure_at).getTime() : 0
@@ -329,33 +397,61 @@ export async function syncHealthFromDB(): Promise<void> {
       h.quotaResetAt = row.quota_reset_at ? new Date(row.quota_reset_at).getTime() : 0
       h.isRateLimited = row.is_rate_limited || false
       h.avgLatencyMs = row.avg_latency_ms || 0
-      const successes = row.total_successes || 0
-      const failures = row.total_failures || 0
-      h.totalRequests = successes + failures
-      h.totalFailures = failures
-      h.successRate = h.totalRequests > 0 ? (successes / h.totalRequests) * 100 : 100
+      h.totalSuccesses = row.total_successes || 0
+      h.totalFailures = row.total_failures || 0
+      h.lastError = row.last_error_message || undefined
+      if (row.task_stats && typeof row.task_stats === 'object') {
+        h.taskStats = row.task_stats as Record<string, TaskStat>
+      }
     }
-    console.log(JSON.stringify({ scope: "smart_router", event: "health_synced", providers: data.length }))
+    console.log(JSON.stringify({ scope: "smart_router", event: "health_synced", providers: (data as any[]).length }))
   } catch (e) {
     console.log(JSON.stringify({ scope: "smart_router", event: "health_sync_error", error: (e instanceof Error ? e.message : String(e)).slice(0, 200) }))
   }
 }
 
-/**
- * Get recent routing logs (for audit endpoint).
- */
+/** Real, live snapshot of router knowledge (replaces fabricated health stubs). */
+export function getRouterHealthSnapshot(): Array<{
+  id: ProviderId; enabled: boolean; healthy: boolean; gated: boolean; gateReason: string | null
+  inCooldown: boolean; consecutiveFailures: number; avgLatencyMs: number; quotaExhausted: boolean
+  samples: number; successRate: number | null; score: number; lastError: string
+}> {
+  const now = Date.now()
+  return PROVIDERS.map(cfg => {
+    const h = getHealth(cfg.id)
+    const gate = isGated(cfg, h, now)
+    const decision = scoreProvider(cfg, undefined, now)
+    const samples = h.totalSuccesses + h.totalFailures
+    return {
+      id: cfg.id,
+      enabled: cfg.enabled,
+      healthy: cfg.enabled && !gate,
+      gated: gate !== null,
+      gateReason: gate,
+      inCooldown: now < h.cooldownUntil,
+      consecutiveFailures: h.consecutiveFailures,
+      avgLatencyMs: h.avgLatencyMs > 0 ? Math.round(h.avgLatencyMs) : 0,
+      quotaExhausted: h.isQuotaExhausted && now < h.quotaResetAt,
+      samples,
+      successRate: samples > 0 ? Math.round((h.totalSuccesses / samples) * 1000) / 10 : null,
+      score: Math.round(decision.score * 10) / 10,
+      lastError: h.lastError || '',
+    }
+  })
+}
+
+/** Recent routing logs (for audit endpoint). */
 export function getRoutingLogs(count: number = 50): RoutingLog[] {
   return routingLogs.slice(-count).reverse()
 }
 
-/**
- * Get routing statistics.
- */
+/** Routing statistics for all providers. */
 export function getRoutingStats(): { providers: Array<{ id: string; name: string; model: string; score: number; healthy: boolean; reasoning: string[]; taskTypes: string[] }>; totalDecisions: number } {
   const now = Date.now()
   const providers = PROVIDERS.map(cfg => {
     const decision = scoreProvider(cfg, undefined, now)
     const health = getHealth(cfg.id)
+    const samples = health.totalSuccesses + health.totalFailures
     return {
       id: cfg.id,
       name: cfg.name,
@@ -365,17 +461,17 @@ export function getRoutingStats(): { providers: Array<{ id: string; name: string
       reasoning: decision.reasoning,
       taskTypes: cfg.taskTypes || [],
       consecutiveFailures: health.consecutiveFailures,
-      avgLatencyMs: health.avgLatencyMs,
-      successRate: health.successRate,
+      avgLatencyMs: Math.round(health.avgLatencyMs),
+      samples,
+      successRate: samples > 0 ? Math.round((health.totalSuccesses / samples) * 1000) / 10 : null,
+      factors: decision.factors,
     }
   })
   providers.sort((a, b) => b.score - a.score)
   return { providers, totalDecisions: routingLogs.length }
 }
 
-/**
- * Test routing across all task types — proves different tasks route differently.
- */
+/** Test routing across all task types — proves per-task measured routing. */
 export function testRoutingAllTasks(): Record<string, { selected: string; model: string; score: number; reasoning: string[]; alternatives: string[] }> {
   const taskTypes: TaskType[] = [
     'job_intelligence', 'fast_extraction', 'cv_parsing', 'complex_analysis',
@@ -392,13 +488,13 @@ export function testRoutingAllTasks(): Record<string, { selected: string; model:
         score: Math.round(ranked[0].score * 10) / 10,
         reasoning: ranked[0].reasoning,
         alternatives: ranked.slice(1, 4).map(d => `${d.provider.id} (${Math.round(d.score * 10) / 10})`),
+        candidates: ranked.length,
       }
     } else {
-      result[task] = { selected: 'NONE', model: '', score: 0, reasoning: ['No available providers'], alternatives: [] }
+      result[task] = { selected: 'NONE', model: '', score: 0, reasoning: ['No available providers'], alternatives: [], candidates: 0 }
     }
   }
   return result
 }
 
-// Export logRoutingDecision for use by the orchestrator
 export { logRoutingDecision }

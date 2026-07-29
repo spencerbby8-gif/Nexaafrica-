@@ -19,18 +19,20 @@ import {
   recordRouterFailure,
   syncHealthFromDB,
   logRoutingDecision,
+  tagPendingTask,
+  getRouterHealthSnapshot,
   type TaskType,
   type RoutingLog,
 } from "./smart-router"
 
-let healthSynced = false
+let lastHealthSync = 0
+const HEALTH_SYNC_INTERVAL_MS = 5 * 60 * 1000
 
 async function ensureHealthSynced() {
-  if (!healthSynced) {
+  // Timestamp-based lazy resync: no timers (setTimeout leaks in serverless).
+  if (Date.now() - lastHealthSync > HEALTH_SYNC_INTERVAL_MS) {
     await syncHealthFromDB()
-    healthSynced = true
-    // Re-sync every 5 minutes
-    setTimeout(() => { healthSynced = false }, 5 * 60 * 1000)
+    lastHealthSync = Date.now()
   }
 }
 
@@ -63,7 +65,7 @@ export async function orchestrate(req: AIRequest): Promise<GatewayResult> {
 
   if (ranked.length === 0) {
     // Force a health re-sync and retry once
-    healthSynced = false
+    lastHealthSync = 0
     await ensureHealthSynced()
     const retryRanked = routeTaskAll(taskType)
     if (retryRanked.length === 0) {
@@ -126,6 +128,7 @@ async function executeRoutingChain(
 
     const cfg = decision.provider
     fallbackChain.push(cfg.id)
+    tagPendingTask(cfg.id, taskType)
 
     if (attempt > 0) fallbackUsed = true
 
@@ -256,7 +259,7 @@ async function probeProvider(cfg: ProviderConfig): Promise<{ ok: boolean; latenc
 }
 
 export async function refreshProviderHealth() {
-  healthSynced = false
+  lastHealthSync = 0
   await ensureHealthSynced()
 }
 
@@ -265,19 +268,17 @@ export async function warmHealthFromDB() {
 }
 
 export function getOrchHealth(): Array<{ id: string; enabled: boolean; healthy: boolean; inCooldown: boolean; consecutiveFailures: number; avgLatencyMs: number; quotaExhausted: boolean; lastError: string }> {
-  return PROVIDERS.map(cfg => {
-    const decision = routeTask(undefined)
-    return {
-      id: cfg.id,
-      enabled: cfg.enabled,
-      healthy: cfg.enabled && (decision?.provider.id === cfg.id || true),
-      inCooldown: false,
-      consecutiveFailures: 0,
-      avgLatencyMs: 0,
-      quotaExhausted: false,
-      lastError: '',
-    }
-  })
+  // Real measured state from the router (no fabricated fields).
+  return getRouterHealthSnapshot().map(s => ({
+    id: s.id,
+    enabled: s.enabled,
+    healthy: s.healthy,
+    inCooldown: s.inCooldown,
+    consecutiveFailures: s.consecutiveFailures,
+    avgLatencyMs: s.avgLatencyMs,
+    quotaExhausted: s.quotaExhausted,
+    lastError: s.lastError,
+  }))
 }
 
 export { probeProvider }

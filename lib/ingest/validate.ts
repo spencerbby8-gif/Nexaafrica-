@@ -87,12 +87,23 @@ export function validateApplyUrl(raw: string): string | null {
 
 const VALID_ELIGIBILITY = new Set(['explicit', 'likely', 'restricted', 'unknown'])
 
+// Placeholder company names seen in the wild (e.g. Himalayas feed emits
+// companyName "name" for 48 live rows). A job with a placeholder employer is
+// a trust hazard: reject at the final gate, before any upsert.
+const PLACEHOLDER_COMPANIES = new Set([
+  'name', 'company', 'companyname', 'company_name', 'title', 'unknown',
+  'n/a', 'na', 'none', 'test', 'example', 'employer', 'organization', 'organisation',
+])
+
 /**
  * Final gate before upsert. We're strict on purpose: bad rows damage trust.
  */
 export function validateNormalizedJob(j: NormalizedJob): string | null {
   if (!j.title || j.title.length < 2) return 'title missing or too short'
   if (!j.company || j.company.length < 2) return 'company missing'
+  if (PLACEHOLDER_COMPANIES.has(j.company.trim().toLowerCase())) {
+    return `placeholder company name "${j.company}"`
+  }
   if (!j.description_md || j.description_md.length < 60) return 'description too short'
   if (!j.apply_url) return 'apply_url missing'
   const urlErr = validateApplyUrl(j.apply_url)

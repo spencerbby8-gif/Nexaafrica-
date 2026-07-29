@@ -188,7 +188,13 @@ export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIn
     (result.africa.confidence + result.remote.confidence + result.salary.confidence + result.company.confidence + result.experience.confidence) / 5
   )
 
-  return { intelligence: result, diags: (bundle?._diags || []) as any[] }
+  // P6: carry liveness + provenance to persist layer
+  const raw_diags = bundle?._diags || []
+  const _pageStatus = raw_diags._pageStatus ?? bundle?._consolidated?.pageStatus ?? null
+  const _evidenceProvenance = bundle?._consolidated ? (
+    bundle._consolidated.companyPageFetched ? 'company_page' : bundle._consolidated.aiUsed ? 'page' : 'regex'
+  ) : 'ats_metadata'
+  return { intelligence: result, diags: Object.assign(raw_diags as any[], { _pageStatus, _evidenceProvenance }) }
 }
 
 /**
@@ -543,6 +549,10 @@ export async function processAIQueue(batchSize = 100) {
             job.apply_url,
           ])).slice(0, 20),
           last_verified_at: new Date().toISOString(),
+          // P6: liveness + provenance
+          page_status: (aiResult as any).diags?._pageStatus ?? ((aiResult as any).intelligence as any)?._pageStatus ?? null,
+          page_checked_at: new Date().toISOString(),
+          evidence_provenance: (aiResult as any).diags?._evidenceProvenance ?? null,
         }, { onConflict: "job_id" })
         if (upsertErr) {
           console.log(JSON.stringify({ scope:"ai_engine", event:"upsert_failed", jobId:(job as any).id?.slice(0,8)||"",

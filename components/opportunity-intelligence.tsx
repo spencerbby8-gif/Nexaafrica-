@@ -54,10 +54,14 @@ function africaFitLabel(elig: string | null | undefined, fallbackElig?: string |
   }
 }
 
-function remoteLabel(elig: string | null | undefined, isRemote?: boolean | null) {
+function remoteLabel(elig: string | null | undefined, isRemote?: boolean | null, evidence?: string | null) {
+  // P6: metadata-sourced truth gets an honest provenance marker.
+  const metadataTag = ' (from feed)' // signals the claim comes from ATS metadata, not page verification
   if (elig) {
     switch (elig) {
       case 'fully_remote':
+        // If the only evidence is the ATS metadata marker, label it honestly
+        if (evidence?.startsWith('Marked as remote in source feed')) return 'Fully remote' + metadataTag
         return 'Fully remote'
       case 'hybrid':
         return 'Hybrid – some onsite'
@@ -166,7 +170,7 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
   const state = intelligenceState(intelligence, (job as any)?._queueStatus)
   const degraded = hasAI && state.status === 'degraded' // regex/legacy fallback rows — not real AI output
   const africa = africaFitLabel(intelligence?.africa_eligibility, job?.eligibility)
-  const remote = remoteLabel(intelligence?.remote_eligibility, job?.is_remote)
+  const remote = remoteLabel(intelligence?.remote_eligibility, job?.is_remote, intelligence?.remote_evidence)
   const salary = salaryTruthLabel(intelligence, job || null)
   const company = companyLabel(intelligence?.company_legitimacy, job?.company_logo ? true : false)
   const exp = expLabel(intelligence?.experience_level, job?.title)
@@ -286,7 +290,7 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons }
 
         <div className="rounded-md border border-border/60 bg-secondary/30 p-3">
           <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"><Clock className="h-3 w-3" aria-hidden /> Remote Policy</p>
-          <p className="mt-1.5 text-sm font-medium text-foreground/90">{remoteLabel(intelligence?.remote_eligibility, job?.is_remote)}</p>
+          <p className="mt-1.5 text-sm font-medium text-foreground/90">{remoteLabel(intelligence?.remote_eligibility, job?.is_remote, intelligence?.remote_evidence)}</p>
           {intelligence?.timezone_requirements && <p className="mt-1 text-[11px] text-muted-foreground">Timezone: {intelligence.timezone_requirements}</p>}
           {intelligence?.remote_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.remote_confidence}% confidence</p>}
           <EvidenceQuote text={intelligence?.remote_evidence} url={intelligence?.evidence_urls?.[0]} />

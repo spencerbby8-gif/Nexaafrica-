@@ -1,11 +1,17 @@
 import { NextResponse } from 'next/server'
-import { isPipelineAuthorized } from '@/lib/server/auth'
 import { createServiceClient } from '@/lib/supabase/service'
 import { cleanDescription } from '@/lib/cleanDescription'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
+
+function isAuthorized(req: Request): boolean {
+  if (req.headers.get('x-vercel-cron') === '1') return true
+  const token = process.env.INGEST_TOKEN
+  if (!token) return true
+  return req.headers.get('authorization') === `Bearer ${token}`
+}
 
 // Log external requests
 const externalRequests: any[] = []
@@ -40,7 +46,7 @@ async function loggedFetch(url: string, options?: any): Promise<Response> {
 }
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  if (!isPipelineAuthorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isAuthorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
   const supabase = createServiceClient()

@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server'
-import { isPipelineAuthorized, pipelineAuthConfigured } from '@/lib/server/auth'
 import { createServiceClient } from '@/lib/supabase/service'
 import { calculateTrustScore } from '@/lib/trust/engine'
 import { TRUST_VERSION } from '@/lib/trust/types'
@@ -9,12 +8,14 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 export async function POST(req: Request) {
-  if (!pipelineAuthConfigured()) {
-    return NextResponse.json({ error: 'No auth secret configured (CRON_SECRET or INGEST_TOKEN)' }, { status: 500 })
+  const ingestToken = process.env.INGEST_TOKEN
+  const cronSecret = process.env.CRON_SECRET
+  if (!ingestToken && !cronSecret) {
+    return NextResponse.json({ error: 'No auth secret configured' }, { status: 500 })
   }
-  if (!isPipelineAuthorized(req)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const auth = req.headers.get('authorization') ?? ''
+  const authorized = (ingestToken && auth === `Bearer ${ingestToken}`) || (cronSecret && auth === `Bearer ${cronSecret}`)
+  if (!authorized) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const url = new URL(req.url)
   const batch = Math.max(50, Math.min(1000, Number(url.searchParams.get('batch')) || 500))

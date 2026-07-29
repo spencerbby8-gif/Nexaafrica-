@@ -1,13 +1,18 @@
 import { NextResponse } from 'next/server'
-import { isPipelineAuthorized } from '@/lib/server/auth'
 import { probeProvider } from '@/lib/ai/orchestrator'
 import { PROVIDERS } from '@/lib/ai/providers/types'
 import { getBenchmarkJobs, runBenchmark, compareBenchmarks } from '@/lib/ai/benchmark'
 
 export const runtime = 'nodejs'; export const dynamic = 'force-dynamic'; export const maxDuration = 300
 
+function isAuthorized(req: Request): boolean {
+  if (req.headers.get('x-vercel-cron') === '1') return true
+  const token = process.env.INGEST_TOKEN; if (!token) return false
+  return req.headers.get('authorization') === `Bearer ${token}`
+}
+
 export async function POST(req: Request) {
-  if (!isPipelineAuthorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isAuthorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const mode = new URL(req.url).searchParams.get('mode') || 'all'
 
   if (mode === 'benchmark') {

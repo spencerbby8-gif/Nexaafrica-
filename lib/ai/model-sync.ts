@@ -34,6 +34,9 @@ export interface ModelVerifyOutcome {
   ok: boolean
   latencyMs: number
   quotaExhausted: boolean
+  /** true when the failure is transient throttling (429 / rate limit),
+   *  not evidence the model is broken */
+  softFail?: boolean
   error?: string
 }
 
@@ -113,7 +116,8 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
     if (!res.ok) {
       const text = await res.text()
       const quotaExhausted = res.status === 429 || /quota|insufficient/i.test(text)
-      return { modelId, ok: false, latencyMs, quotaExhausted, error: `${res.status}: ${text.slice(0, 160)}` }
+      const rateLimited = res.status === 429 || /rate.?limit|too many/i.test(text)
+      return { modelId, ok: false, latencyMs, quotaExhausted, softFail: quotaExhausted || rateLimited, error: `${res.status}: ${text.slice(0, 160)}` }
     }
     const data: any = await res.json().catch(() => ({}))
     const text: string =
@@ -142,18 +146,22 @@ function shortlist(catalog: ProviderCatalog, configuredModel: string | undefined
 
 function mergeHealth(existing: DiscoveredModel['health'] | undefined, outcome: ModelVerifyOutcome): DiscoveredModel['health'] {
   const now = new Date().toISOString()
-  const prevOk = existing?.verified ? 1 : 0
-  const samples = 1
-  const successRate = outcome.ok ? 100 : 0
-  const baseScore = outcome.ok
+  // TRUTH RULE: only a HARD failure (model missing / auth denied / bad
+  // response) may mark a model unusable. Transient quota/rate limiting is
+  // recorded as quota state + short cooldown while preserving prior
+  // usability — otherwise a rate-limited provider would vanish from
+  // routing whenever the queue happens to be busy.
+  const hardFail = !outcome.ok && !outcome.softFail
+  const usable = outcome.ok ? true : hardFail ? false : (existing?.usable ?? false)
+    const baseScore = outcome.ok
     ? Math.min(100, 60 + Math.max(0, 40 - Math.round(outcome.latencyMs / 500)))
     : Math.max(0, Math.round((existing?.healthScore ?? 0) * 0.5))
   return {
-    verified: true, // verification was ATTEMPTED and result recorded
-    usable: outcome.ok,
+    verified: true,
+    usable,
     healthScore: baseScore,
-    successRate: prevOk > 0 && !outcome.ok ? 50 : successRate,
-    failureRate: outcome.ok ? 0 : 100 / samples,
+    successRate: outcome.ok ? 100 : (existing?.successRate ?? 0),
+    failureRate: outcome.ok ? 0 : 100,
     avgLatencyMs: outcome.latencyMs,
     lastVerifiedAt: now,
     lastSuccessfulAt: outcome.ok ? now : existing?.lastSuccessfulAt,

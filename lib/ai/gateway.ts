@@ -160,10 +160,11 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
     }
 
     if (providerId === "huggingface") {
-      const res = await fetch(`https://api-inference.huggingface.co/models/${cfg.model}`, {
+      const hfMessages: any[] = [...(req.systemInstruction?[{role:"system",content:req.systemInstruction}]:[]), {role:"user",content:req.prompt}]
+      const res = await fetch(`https://router.huggingface.co/v1/chat/completions`, {
         method: "POST",
         headers: { "Authorization":`Bearer ${apiKey}`, "Content-Type":"application/json" },
-        body: JSON.stringify({ inputs: req.prompt, parameters: { max_new_tokens: req.maxTokens||512, temperature: req.temperature||0.3 } }),
+        body: JSON.stringify({ model: cfg.model, messages: hfMessages, max_tokens: req.maxTokens||512, temperature: req.temperature||0.3 }),
         signal: AbortSignal.timeout(cfg.timeoutMs ?? 20000),
       })
       if (!res.ok) {
@@ -174,7 +175,7 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
         throw new Error(`HuggingFace ${res.status}: ${errText.slice(0,200)}`)
       }
       const data = await res.json() as any
-      const text = Array.isArray(data) ? data[0]?.generated_text || "" : data.generated_text || ""
+      const text = data.choices?.[0]?.message?.content || ""
       const latency = Date.now() - start
       diag.push({ provider: providerId, model: cfg.model, event: "success", retryCount, durationMs: latency, promptLen, responseLen: text.length })
       return { text, provider: providerId, model: cfg.model, latencyMs: latency }

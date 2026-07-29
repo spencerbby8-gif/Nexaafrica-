@@ -34,7 +34,7 @@ export const PROVIDERS: ProviderConfig[] = [
   // OpenRouter: free-tier key, routes through deepinfra.
   { id: "openrouter", name: "OpenRouter Llama 4", envKey: "OPENROUTER_API_KEY", model: "meta-llama/llama-4-maverick", enabled: true, priority: 5, rateLimitPerSec: 3, timeoutMs: 15000, costPer1kTokens: 0, taskTypes: ["job_intelligence", "fallback"] },
   // HuggingFace: re-enabled — was disabled due to Vercel fetch issues, now retried with timeout
-  { id: "huggingface", name: "HuggingFace", envKey: "HUGGINGFACE_API_KEY", model: "HuggingFaceH4/zephyr-7b-beta", enabled: true, priority: 6, rateLimitPerSec: 2, timeoutMs: 20000, costPer1kTokens: 1, taskTypes: ["simple_analysis"] },
+  { id: "huggingface", name: "HuggingFace", envKey: "HUGGINGFACE_API_KEY", model: "meta-llama/Llama-3.1-8B-Instruct", enabled: true, priority: 6, rateLimitPerSec: 2, timeoutMs: 20000, costPer1kTokens: 1, taskTypes: ["simple_analysis"] },
   // GitHub Models: GitHub's AI model marketplace
   { id: "github_models", name: "GitHub Models", envKey: "GITHUB_MODELS_TOKEN", model: "gpt-4o-mini", enabled: true, priority: 7, rateLimitPerSec: 3, timeoutMs: 15000, costPer1kTokens: 0, taskTypes: ["job_intelligence", "code_analysis"] },
   // Cloudflare Workers AI: Edge-deployed AI

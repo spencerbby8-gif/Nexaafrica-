@@ -167,6 +167,8 @@ function checkField(field: Field, row: Row, T: string, Tco: string): Verdict {
     }
     case 'quote_salary': case 'quote_africa': case 'quote_remote': {
       const ev = field === 'quote_salary' ? row.salary_evidence : field === 'quote_africa' ? row.africa_evidence : row.remote_evidence
+      // Metadata-provenance markers are honest source annotations, not quotes
+      if (ev && (ev.startsWith('Marked as remote in source feed'))) return 'SKIP'
       return quoteVerdict(ev, truth)
     }
     case 'quote_company': {

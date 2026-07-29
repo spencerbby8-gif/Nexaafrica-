@@ -92,7 +92,7 @@ export async function verifyJobReal(job: Job): Promise<VerificationBundle> {
   } catch (e) {
     console.warn("[verifyJobReal] consolidated threw:", e instanceof Error ? e.message.slice(0,200) : String(e).slice(0,200));
     const now = new Date().toISOString();
-    return { africa: { eligibility: "unknown", confidence: 10, evidence: "Failed" }, salary: { min: null, max: null, currency: null, period: null, isEstimated: false, transparency: "unknown", confidence: 10, evidence: "Failed" }, remote: { eligibility: "unknown", confidence: 10, evidence: "Failed" }, company: { legitimacy: "unknown", confidence: 10, evidence: "Failed" }, quality: { quality: "unknown", confidence: 10, evidence: "Failed" }, experience: { experience: { value: "unknown", confidence: 10 } }, freshness: { status: "unknown", confidence: 10 }, _diags: [], _consolidated: { ai: {}, diags: [], modelVersion: "verifyJobReal-threw", pageFetched: false, pageLen: 0, aiUsed: false } as any };
+    return { africa: { eligibility: "unknown", confidence: 0, evidence: null }, salary: { min: null, max: null, currency: null, period: null, isEstimated: false, transparency: "unknown", confidence: 0, evidence: null }, remote: { eligibility: "unknown", confidence: 0, evidence: null }, company: { legitimacy: "unknown", confidence: 0, evidence: null }, quality: { quality: "unknown", confidence: 0, evidence: null }, experience: { experience: { value: "unknown", confidence: 0 } }, freshness: { status: "unknown", confidence: 0 }, _diags: [], _consolidated: { ai: {}, diags: [], modelVersion: "verifyJobReal-threw", pageFetched: false, pageLen: 0, aiUsed: false } as any };
   }
 }
 

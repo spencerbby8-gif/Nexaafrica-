@@ -9,7 +9,9 @@ import { PROVIDERS } from "./providers/types"
 const cache = new Map<string, { result: { intelligence: JobAIIntelligence; diags: any[] }; timestamp: number }>()
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000
 let lastCallTime = 0
-const MIN_INTERVAL_MS = 100
+// P5: queue pacing — prevents free-tier collapse into regex-only output.
+// One AI call per 1.5s per instance (was 100ms, which hammered quotas).
+const MIN_INTERVAL_MS = Math.max(200, Number(process.env.AI_PACING_MS) || 1500)
 
 async function rateLimit() {
   const now = Date.now()
@@ -418,7 +420,7 @@ export async function processAIQueue(batchSize = 100) {
   // Each job is I/O-bound (page fetch + one provider call), so bounded
   // concurrency multiplies throughput. Provider pressure stays governed
   // by the Smart Router's quota/cooldown gates.
-  const concurrency = Math.max(1, Math.min(10, Number(process.env.AI_QUEUE_CONCURRENCY) || 5))
+  const concurrency = Math.max(1, Math.min(10, Number(process.env.AI_QUEUE_CONCURRENCY) || 3))
   let cursor = 0
   let skippedClaim = 0
 
@@ -481,6 +483,7 @@ export async function processAIQueue(batchSize = 100) {
             completed_at: retryStatus === "failed" ? new Date().toISOString() : null,
           }).eq("id", item.id)
           failed++ // count as failed for this batch; will retry or stay failed
+          consecutiveItemFailures++
           return
         }
       }
@@ -564,17 +567,27 @@ export async function processAIQueue(batchSize = 100) {
       // ── Mark queue item as completed ──────────────────────────────────
       await supabase.from("ai_processing_queue").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", item.id)
       processed++
+      consecutiveItemFailures = 0
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e)
       const attempts = (item as any).attempts + 1
       const status = attempts >= (item as any).max_attempts ? "failed" : "pending"
       await supabase.from("ai_processing_queue").update({ status, error, attempts }).eq("id", item.id)
       failed++
+      consecutiveItemFailures++
     }
   }
 
-  const workers = Array.from({ length: Math.min(concurrency, queueItems.length) }, async () => {
+  // Circuit breaker: when providers are quota-collapsed (item failures in a
+  // row), stop the link instead of burning attempts into a dead pool. The
+  // chain sees processed===0 and stops draining until the next window.
+  let consecutiveItemFailures = 0
+
+  const workers = Array.from({ length: Math.min(concurrency, queueItems.length) }, async (_, workerIdx) => {
+    // Stagger worker starts to avoid synchronized provider bursts
+    if (workerIdx > 0) await new Promise(r => setTimeout(r, workerIdx * 900))
     while (Date.now() - loopStart < 240000) {
+      if (consecutiveItemFailures >= 12) break
       const item = queueItems[cursor++]
       if (!item) break
       await processOne(item)
@@ -583,7 +596,7 @@ export async function processAIQueue(batchSize = 100) {
   await Promise.all(workers)
 
   // Log final stats
-  console.log(JSON.stringify({ scope: "ai_engine", event: "queue_done", processed, failed, skippedClaim, concurrency, elapsedMs: Date.now() - loopStart }))
+  console.log(JSON.stringify({ scope: "ai_engine", event: "queue_done", processed, failed, skippedClaim, circuitTripped: consecutiveItemFailures >= 12, concurrency, elapsedMs: Date.now() - loopStart }))
 
   return { processed, failed, skippedClaim }
 }

@@ -154,6 +154,117 @@ function regexCompany(text: string, job: Job): Partial<AIResp> {
   return { company_legitimacy: legitimacy, company_confidence: confidence, company_evidence: evidence || null }
 }
 
+
+// ─── P5: Truth-guard ────────────────────────────────────────────────
+// Every claim and every evidence string must be verifiable against the
+// actual source text. Unsupported claims downgrade to "unknown" with
+// 0 confidence; non-verbatim evidence strings are nulled.
+
+const TR = {
+  africa: /\b(africa|african|nigeria|kenya|ghana|egypt|south africa|morocco|rwanda|uganda|ethiopia|tanzania|tunisia|senegal|algeria|zimbabwe|namibia)\b/i,
+  restrict: /\b(us|u\.s\.|usa|united states|uk|u\.k\.|united kingdom|eu|canada|australia)\s+(only|residents? only|citizens? only)\b|\b(?:only|based) in the (us|usa|uk|eu|united states|united kingdom)\b|must (?:be )?(?:reside|residing|be located|be based)|work authori[sz]ation (?:in|for) the (us|uk|eu)|authorized to work in the (us|uk)/i,
+  worldwide: /work from anywhere|\banywhere in the world\b|\bworldwide\b|global(?:ly)? remote|remote[^\.\n]{0,30}(global|worldwide)|\bemea\b|distributed (?:team|workforce|company)|hire (?:in )?\d+\+? countries/i,
+  visaYes: /visa sponsor|sponsor(ship)? (?:is )?(?:available|offered|provided)|we (?:can )?sponsor|immigration (?:support|sponsorship)|sponsorship (?:is )?available|relocation (?:support|assistance|package)/i,
+  visaNo: /no visa sponsorship|sponsorship (?:is )?not (?:available|offered)|cannot sponsor|unable to sponsor/i,
+  hybrid: /\bhybrid\b|\b\d\+\s*days? a week in[- ](?:the )?office\b|\b\d+ days? (?:in|from) (?:the )?office\b/i,
+  senior: /\bsenior\b|\bsr\.?\s|\blead\b|\bprincipal\b|\bhead of\b|\b(?:[5-9]|1\d)\+?\s*(?:years?|yrs?)\s*(?:of )?(?:experience|exp)\b/i,
+  entry: /\bentry[- ]level\b|\bjunior\b|\bnew grad(?:uate)?\b|\bintern(ship)?\b|\b[0-2]\+?\s*(?:years?|yrs?)\s*(?:of )?(?:experience|exp)\b/i,
+}
+
+function stripAll(s: string): string { return s.toLowerCase().replace(/[^a-z0-9]+/g, "") }
+
+/** TRUE verbatim test: punctuation-insensitive contiguous containment. */
+function isVerbatim(ev: string | null | undefined, pool: string): boolean {
+  if (!ev) return false
+  const e = stripAll(ev)
+  if (e.length < 10) return false
+  return stripAll(pool).includes(e)
+}
+
+function numInText(n: number | null, t: string): boolean {
+  if (n == null) return false
+  const v = Math.abs(n)
+  const forms = [String(v), v.toLocaleString("en-US")]
+  if (v % 1000 === 0) forms.push(`${v / 1000}k`)
+  return forms.some(f => t.includes(f))
+}
+
+export function enforceTruthfulness(merged: AIResp, opts: { job: Job; truth: string; hasCompanyPage: boolean }): AIResp {
+  const { job, truth, hasCompanyPage } = opts
+  const out: AIResp = { ...merged }
+  const t = truth.toLowerCase()
+
+  // 1) Evidence strings must be real quotes — else null (never keep fabrications)
+  let nulled = 0
+  for (const k of ["africa_evidence","remote_evidence","salary_evidence","company_evidence","job_quality_evidence"] as const) {
+    const ev = (out as any)[k] as string | null
+    if (ev === "Failed") { (out as any)[k] = null; continue }
+    if (ev && !isVerbatim(ev, truth)) { (out as any)[k] = null; nulled++ }
+  }
+
+  // 2) Visa: page must prove it (hostile audit: 27% precision before)
+  if (out.visa_sponsorship === "available" && !TR.visaYes.test(truth)) {
+    out.visa_sponsorship = "unknown"; out.visa_confidence = 0
+  } else if (out.visa_sponsorship === "not_available" && !TR.visaNo.test(truth)) {
+    out.visa_sponsorship = "unknown"; out.visa_confidence = 0
+  }
+
+  // 3) Africa: every tier needs textual support, otherwise abstain
+  if (out.africa_eligibility === "explicit" && !TR.africa.test(truth)) {
+    out.africa_eligibility = "unknown"; out.africa_confidence = 0; out.africa_evidence = null
+  } else if (out.africa_eligibility === "restricted" && !TR.restrict.test(truth)) {
+    out.africa_eligibility = "unknown"; out.africa_confidence = 0; out.africa_evidence = null
+  } else if (out.africa_eligibility === "likely" && !TR.worldwide.test(truth) && !TR.africa.test(truth)) {
+    out.africa_eligibility = "unknown"; out.africa_confidence = 0; out.africa_evidence = null
+  }
+
+  // 4) Remote: metadata-backed stays; text-required otherwise
+  if (out.remote_eligibility === "hybrid" && !TR.hybrid.test(truth)) {
+    out.remote_eligibility = job.is_remote ? "fully_remote" : "unknown"
+    out.remote_confidence = job.is_remote ? Math.min(out.remote_confidence, 50) : 0
+    if (!job.is_remote) out.remote_evidence = null
+  }
+  if (out.remote_eligibility === "fully_remote") {
+    if (job.is_remote) {
+      if (!out.remote_evidence) {
+        out.remote_evidence = "Marked as remote in source feed"
+        out.remote_confidence = Math.max(out.remote_confidence, 40)
+      }
+    } else {
+      out.remote_eligibility = "unknown"; out.remote_confidence = 0; out.remote_evidence = null
+    }
+  }
+
+  // 5) Company legitimacy: no fetched company page -> no prior-based claims
+  if (!hasCompanyPage) {
+    if (out.company_legitimacy !== "unknown") { out.company_legitimacy = "unknown"; out.company_confidence = 0 }
+    out.company_evidence = null
+  }
+
+  // 6) Salary: claimed numbers must literally exist in the source
+  if (out.salary_min != null || out.salary_max != null) {
+    const minOk = out.salary_min == null || numInText(out.salary_min, t)
+    const maxOk = out.salary_max == null || numInText(out.salary_max, t)
+    if (!minOk || !maxOk) {
+      out.salary_min = null; out.salary_max = null
+      out.salary_currency = null; out.salary_period = null
+      out.salary_is_estimated = false
+      out.salary_transparency = "undisclosed"
+      out.salary_confidence = 0; out.salary_evidence = null
+    }
+  }
+
+  // 7) Experience: only downgrade hard contradictions (junior text vs senior claim)
+  if ((out.experience_level === "senior" || out.experience_level === "executive") && TR.entry.test(truth) && !TR.senior.test(truth)) {
+    out.experience_level = "unknown"; out.experience_confidence = 0
+  }
+
+  if (nulled > 0) {
+    console.log(JSON.stringify({ scope: "truth_guard", event: "evidence_nulled", company: job.company, nulled }))
+  }
+  return out
+}
+
 export interface ConsolidatedResult { ai: AIResp; diags: ProviderCallDiag[]; modelVersion: string; pageFetched: boolean; pageLen: number; aiUsed: boolean; companyPageFetched: boolean; companyPageLen: number }
 
 export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult> {
@@ -173,7 +284,8 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
     ? `\n\nCompany website excerpt:\n${companyText.slice(0, 1000)}`
     : ""
 
-  const prompt = `Extract all intelligence from this job as JSON. Quote evidence verbatim. Use "unknown" if evidence missing. Never guess.\n\n` +
+  // P5: abstention-first prompt — models must not guess from priors.
+  const prompt = `Extract intelligence from this job posting as JSON. STRICT RULES: (1) Use ONLY the provided text — never outside knowledge about the company or market. (2) For every *_evidence field, copy an EXACT quote from the text do not paraphrase, do not join fragments, do not invent sentences. (3) If the text does not directly prove a field, return "unknown" and null evidence — abstaining is correct, guessing is a violation. (4) visa_sponsorship = "available" ONLY when the text explicitly offers visa sponsorship/relocation support; otherwise "unknown". (5) company_legitimacy = "unknown" unless the provided company website text proves it. (6) africa_eligibility: "explicit" only if the text mentions Africa or an African country; "restricted" only if the text imposes location/work-authorization limits; "likely" only if the text says worldwide/global/EMEA hiring; else "unknown".\n\n` +
     `${job.title} @ ${job.company} | ${job.location||""} | ${job.country} | src=${job.source||""} | emp=${job.employment_type}\n` +
     `Salary: ${job.salary_range||""} ${job.salary_min||""}-${job.salary_max||""} ${job.salary_currency||""} | Tags: ${(job.tags||[]).join(",")}\n\n` +
     `Description:\n${combined.slice(0,5000)}${companyContext}\n\n` +
@@ -191,7 +303,7 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
 
   let aiResp: AIResp = AF; let modelVersion = "no-ai-providers"; let aiUsed = false
   try {
-    const gw = await aiGateway({ prompt, systemInstruction: "Extract job intelligence as JSON. Evidence-based. Never guess. Output only JSON.", agentId: "verifier:consolidated", jobId: job.id, temperature: 0.2, maxTokens: 1400 })
+    const gw = await aiGateway({ prompt, systemInstruction: "You extract job intelligence ONLY from the provided text. Never use outside knowledge. Evidence fields must be EXACT quotes from the text, or null. Prefer 'unknown' whenever proof is missing. Output only JSON.", agentId: "verifier:consolidated", jobId: job.id, temperature: 0.2, maxTokens: 1400 })
     if (gw.diag) for (const d of gw.diag) diags.push(d)
     const m = gw.response.text.match(/\{[\s\S]*\}/)
     if (m) { try { aiResp = { ...AF, ...JSON.parse(m[0]) }; modelVersion = gw.response.provider + ":" + gw.response.model; aiUsed = true } catch {} }
@@ -293,5 +405,11 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
   }
 
   if (!aiUsed) modelVersion = Object.keys({ ...rxAfrica, ...rxRemote, ...rxSalary }).length > 0 ? "regex-extracted-" + pageText.length + "bytes" : "no-ai-providers"
-  return { ai: merged, diags, modelVersion, pageFetched: pageText.length > 0, pageLen: pageText.length, aiUsed, companyPageFetched: companyText.length > 0, companyPageLen: companyText.length }
+  // P5: harden all claims against the actual source text before persisting.
+  const hardened = enforceTruthfulness(merged, {
+    job,
+    truth: combined + "\n" + companyText + "\n" + (job.salary_range || ""),
+    hasCompanyPage: companyText.length >= 100,
+  })
+  return { ai: hardened, diags, modelVersion, pageFetched: pageText.length > 0, pageLen: pageText.length, aiUsed, companyPageFetched: companyText.length > 0, companyPageLen: companyText.length }
 }

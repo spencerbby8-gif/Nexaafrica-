@@ -214,3 +214,123 @@ export async function getFreshnessPulse(): Promise<{
     openToAfricaThisWeek: africaRes.count ?? 0,
   }
 }
+
+// ─── Live Proof Layer queries (P7) ──────────────────────────────────
+
+/**
+ * Active jobs with real AI intelligence, recently verified by a live model.
+ * model_version contains ':' (provider:model) and is not regex-era.
+ */
+export async function getVerifiedJobs(limit = 6): Promise<JobWithAI<Job>[]> {
+  const supabase = await createClient()
+  const { data: rows } = await supabase
+    .from('job_ai_intelligence')
+    .select('job_id')
+    .like('model_version', '%:%')
+    .not('model_version', 'like', 'regex%')
+    .order('last_verified_at', { ascending: false })
+    .limit(limit)
+  const ids = (rows || []).map((r: any) => r.job_id).filter(Boolean)
+  if (ids.length === 0) return []
+  try {
+    const { aiMap, queueStatus } = await getAIIntelligenceWithQueueStatus(ids)
+    const { data: jobs } = await supabase
+      .from('jobs')
+      .select(JOB_COLUMNS)
+      .in('id', ids)
+      .eq('is_active', true)
+    return (jobs || []).map((j: any) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null } as any))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Active jobs queued for AI processing but not yet verified (no intelligence
+ * row, or queue status pending).
+ */
+export async function getQueuedJobs(limit = 6): Promise<JobWithAI<Job>[]> {
+  const supabase = await createClient()
+  // Jobs in the queue that are pending and have no intelligence row
+  const { data: queueRows } = await supabase
+    .from('ai_processing_queue')
+    .select('job_id')
+    .eq('status', 'pending')
+    .order('priority', { ascending: false })
+    .order('created_at', { ascending: true })
+    .limit(limit)
+  const ids = (queueRows || []).map((r: any) => r.job_id).filter(Boolean)
+  if (ids.length === 0) return []
+  try {
+    const { data: jobs } = await supabase
+      .from('jobs')
+      .select(JOB_COLUMNS)
+      .in('id', ids)
+      .eq('is_active', true)
+      .limit(limit)
+    const { aiMap, queueStatus } = await getAIIntelligenceWithQueueStatus(ids)
+    return (jobs || []).map((j: any) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null } as any))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Active jobs with stale or regex-era intelligence (not real AI, or old).
+ */
+export async function getStaleJobs(limit = 6): Promise<JobWithAI<Job>[]> {
+  const supabase = await createClient()
+  // Regex-era or very old AI rows
+  const { data: rows } = await supabase
+    .from('job_ai_intelligence')
+    .select('job_id')
+    .or('model_version.like.regex%,model_version.like.no-ai%')
+    .order('last_verified_at', { ascending: true })
+    .limit(limit)
+  const ids = (rows || []).map((r: any) => r.job_id).filter(Boolean)
+  if (ids.length === 0) return []
+  try {
+    const { data: jobs } = await supabase
+      .from('jobs')
+      .select(JOB_COLUMNS)
+      .in('id', ids)
+      .eq('is_active', true)
+      .limit(limit)
+    const { aiMap, queueStatus } = await getAIIntelligenceWithQueueStatus(ids)
+    return (jobs || []).map((j: any) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null } as any))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Aggregate proof stats for the homepage header / admin views.
+ */
+export async function getProofStats(): Promise<{
+  totalActive: number
+  verified: number
+  queued: number
+  stale: number
+  aiCoveragePct: number
+  queueDepth: number
+}> {
+  const supabase = await createClient()
+  const [activeCount, aiCount, queueCount, staleCount] = await Promise.all([
+    supabase.from('jobs').select('id', { count: 'exact', head: true }).eq('is_active', true),
+    supabase.from('job_ai_intelligence').select('id', { count: 'exact', head: true }).like('model_version', '%:%').not('model_version', 'like', 'regex%'),
+    supabase.from('ai_processing_queue').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+    supabase.from('job_ai_intelligence').select('id', { count: 'exact', head: true }).or('model_version.like.regex%,model_version.like.no-ai%'),
+  ])
+  const totalActive = activeCount.count ?? 0
+  const verified = aiCount.count ?? 0
+  const queued = queueCount.count ?? 0
+  const stale = staleCount.count ?? 0
+  return {
+    totalActive,
+    verified,
+    queued,
+    stale,
+    aiCoveragePct: totalActive > 0 ? Math.round((verified / totalActive) * 100) : 0,
+    queueDepth: queued,
+  }
+}

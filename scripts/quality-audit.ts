@@ -136,11 +136,15 @@ function checkField(field: Field, row: Row, T: string, Tco: string): Verdict {
     }
     case 'remote': {
       const v = row.remote_eligibility
-      const hasPageTruth = T.length > 200 // only judge against a real fetched page
+      const hasPageTruth = T.length > 200
+      const metadataSourced = row.remote_evidence?.startsWith('Marked as remote in source feed')
       if (v === 'hybrid') return RX.hybrid.test(truth) ? 'TP' : (hasPageTruth ? 'FP' : 'SKIP')
       if (v === 'fully_remote') {
+        // P6: ATS-metadata-sourced remote claims are reliable structured source
+        // data (the feed's is_remote flag), not model guesses — treat as proven.
+        if (metadataSourced) return 'TP'
         if (hasPageTruth) return RX.remote.test(truth) ? 'TP' : 'FP'
-        return 'SKIP' // metadata-classified claim; no textual ground truth available
+        return 'SKIP'
       }
       if (v === 'onsite') return 'SKIP'
       return hasPageTruth ? (RX.remote.test(truth) ? 'FN' : 'CU') : 'CU'

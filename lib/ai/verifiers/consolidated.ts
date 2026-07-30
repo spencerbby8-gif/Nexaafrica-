@@ -19,6 +19,34 @@ interface AIResp {
 const AF: AIResp = { africa_eligibility:"unknown",africa_confidence:0,africa_evidence:null,country_restrictions:[],visa_sponsorship:"unknown",visa_confidence:0,remote_eligibility:"unknown",remote_confidence:0,remote_evidence:null,timezone_requirements:null,salary_min:null,salary_max:null,salary_currency:null,salary_period:null,salary_is_estimated:false,salary_transparency:"unknown",salary_confidence:0,salary_evidence:null,company_legitimacy:"unknown",company_confidence:0,company_evidence:null,job_quality:"unknown",job_quality_confidence:0,job_quality_evidence:null,experience_level:"unknown",experience_confidence:0,required_skills:[],transferable_skills:[],missing_skills:[],hiring_urgency:"unknown",hiring_urgency_confidence:0 }
 
 /**
+ * P6: lightweight liveness probe — a real HTTP request to the apply_url
+ * to detect dead/blocked listings. Used for ATS-hosted jobs whose stored
+ * description_md gives a synthetic 200 (so dead ATS listings would
+ * otherwise never be flagged). Returns the true HTTP status, or null on
+ * timeout/abort (treated as "could not verify", not "dead").
+ */
+async function probeLiveness(url: string, timeoutMs = 6000): Promise<number | null> {
+  try {
+    const c = new AbortController()
+    const t = setTimeout(() => c.abort(), timeoutMs)
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; NexaBot/2.0; +https://v0-nexaafrica.vercel.app)" },
+      signal: c.signal,
+      redirect: "follow",
+    })
+    clearTimeout(t)
+    return res.status
+  } catch {
+    return null // timeout / network error — unverifiable, not dead
+  }
+}
+
+/**
+ * Fetch the job page from its apply URL.
+ * For ATS pages (Greenhouse, Ashby, etc.), returns stored description_md.
+ */
+/**
  * Fetch the job page from its apply URL.
  * For ATS pages (Greenhouse, Ashby, etc.), returns stored description_md.
  */
@@ -29,7 +57,10 @@ async function fetchJobPage(url: string, job: Job): Promise<{ text: string; stat
   
   if (isAtsPage) {
     const desc = job.description_md || ''
-    return { text: desc.length >= 100 ? desc : '', status: 200 }
+    // P6: real liveness probe against the live apply_url (not the stored
+    // description) so dead ATS listings (404/410) get flagged for sweep.
+    const liveStatus = await probeLiveness(url)
+    return { text: desc.length >= 100 ? desc : '', status: liveStatus }
   }
 
   for (let attempt = 0; attempt <= 2; attempt++) {

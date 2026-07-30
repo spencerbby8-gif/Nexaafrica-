@@ -2,6 +2,7 @@ import { createServiceClient } from "@/lib/supabase/service"
 import { createClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
 import { SiteShell } from "@/components/site-shell"
+import { getProofStats } from "@/lib/queries"
 
 export const dynamic = "force-dynamic"
 export const metadata = { title: "AI Intelligence — Admin", robots: { index: false, follow: false } }
@@ -12,6 +13,7 @@ export default async function AIAdminPage() {
   if (!user) redirect("/sign-in?next=/admin/ai")
 
   const supabase = createServiceClient()
+  const proofStats = await getProofStats()
 
   const [
     aiCount,
@@ -100,6 +102,30 @@ export default async function AIAdminPage() {
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
         <h1 className="text-2xl font-semibold tracking-tight">AI Job Intelligence — Production Health</h1>
         <p className="mt-2 text-sm text-muted-foreground">Queue → Gateway → Verifiers → job_ai_intelligence → Query → UI. Evidence-based, no fabrication. 100% coverage target.</p>
+
+        {/* P7: Live Proof Layer stats */}
+        <div className="mt-6 grid gap-3 sm:grid-cols-4">
+          <div className="rounded-xl border border-green-500/20 bg-green-500/5 p-3">
+            <p className="text-[11px] uppercase tracking-wider text-green-400">AI-Verified</p>
+            <p className="mt-1 text-xl font-semibold">{proofStats.verified}</p>
+            <p className="text-[11px] text-muted-foreground">{proofStats.aiCoveragePct}% coverage</p>
+          </div>
+          <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
+            <p className="text-[11px] uppercase tracking-wider text-amber-400">Queue Depth</p>
+            <p className="mt-1 text-xl font-semibold">{proofStats.queueDepth}</p>
+            <p className="text-[11px] text-muted-foreground">pending verification</p>
+          </div>
+          <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-3">
+            <p className="text-[11px] uppercase tracking-wider text-blue-400">Rule-Based</p>
+            <p className="mt-1 text-xl font-semibold">{proofStats.stale}</p>
+            <p className="text-[11px] text-muted-foreground">needs re-verification</p>
+          </div>
+          <div className="rounded-xl border border-border/60 bg-secondary/30 p-3">
+            <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Active Total</p>
+            <p className="mt-1 text-xl font-semibold">{proofStats.totalActive}</p>
+            <p className="text-[11px] text-muted-foreground">live roles</p>
+          </div>
+        </div>
 
         <div className="mt-6 grid gap-4 sm:grid-cols-4">
           <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">

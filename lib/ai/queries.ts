@@ -53,7 +53,11 @@ export interface JobAIIntelligenceRow {
   hiring_urgency: 'high' | 'medium' | 'low' | 'unknown' | null
 
   overall_confidence: number | null
+  quality_score: number | null
   evidence_urls: string[] | null
+  evidence_provenance: string | null
+  page_status: number | null
+  page_checked_at: string | null
   last_verified_at: string | null
   created_at: string
   updated_at: string

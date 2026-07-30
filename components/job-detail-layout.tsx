@@ -15,6 +15,7 @@ import { employmentLabel, isFresh, postedLabel } from '@/lib/format'
 import { cleanDescription, getCleanMarkdownForRender } from '@/lib/cleanDescription'
 import type { Job } from '@/lib/types'
 import { OpportunityIntelligencePanel } from '@/components/opportunity-intelligence'
+import { ProofBadge } from '@/components/proof-badge'
 import type { JobAIIntelligenceRow } from '@/lib/ai/queries'
 import type { JobWithAI } from '@/lib/ai/queries'
 
@@ -322,6 +323,11 @@ export function JobDetailLayout({
       {/* Evidence check — secondary, kept for backward compat, now below Trust Card */}
       <div className="pt-6">
         <EvidencePanel job={job} />
+      </div>
+
+      {/* Live Proof Layer — verification state, provider/model, provenance, liveness */}
+      <div className="pt-6">
+        <ProofBadge intelligence={aiIntelligence || (job as any).aiIntelligence || null} queueStatus={(job as any)?._queueStatus} variant="full" />
       </div>
 
       {/* Opportunity Intelligence – full panel for detail page, evidence-backed, uses same cleaned AI path + job fallback */}

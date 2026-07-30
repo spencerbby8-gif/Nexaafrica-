@@ -1,4 +1,5 @@
 import 'server-only'
+import { createServiceClient } from '@/lib/supabase/service'
 import { createClient } from '@/lib/supabase/server'
 import type { Category, Job, JobFilters } from '@/lib/types'
 import { getAIIntelligenceForJobs, getAIIntelligenceWithQueueStatus, type JobAIIntelligenceRow, type JobWithAI } from '@/lib/ai/queries'
@@ -223,7 +224,8 @@ export async function getFreshnessPulse(): Promise<{
  */
 export async function getVerifiedJobs(limit = 6): Promise<JobWithAI<Job>[]> {
   const supabase = await createClient()
-  const { data: rows } = await supabase
+  const svc = createServiceClient()
+  const { data: rows } = await svc
     .from('job_ai_intelligence')
     .select('job_id')
     .like('model_version', '%:%')
@@ -251,8 +253,9 @@ export async function getVerifiedJobs(limit = 6): Promise<JobWithAI<Job>[]> {
  */
 export async function getQueuedJobs(limit = 6): Promise<JobWithAI<Job>[]> {
   const supabase = await createClient()
-  // Jobs in the queue that are pending and have no intelligence row
-  const { data: queueRows } = await supabase
+  // Queue table is RLS-private — use service client to read it
+  const svc = createServiceClient()
+  const { data: queueRows } = await svc
     .from('ai_processing_queue')
     .select('job_id')
     .eq('status', 'pending')
@@ -280,8 +283,8 @@ export async function getQueuedJobs(limit = 6): Promise<JobWithAI<Job>[]> {
  */
 export async function getStaleJobs(limit = 6): Promise<JobWithAI<Job>[]> {
   const supabase = await createClient()
-  // Regex-era or very old AI rows
-  const { data: rows } = await supabase
+  const svc = createServiceClient()
+  const { data: rows } = await svc
     .from('job_ai_intelligence')
     .select('job_id')
     .or('model_version.like.regex%,model_version.like.no-ai%')
@@ -315,11 +318,12 @@ export async function getProofStats(): Promise<{
   queueDepth: number
 }> {
   const supabase = await createClient()
+  const svc = createServiceClient()
   const [activeCount, aiCount, queueCount, staleCount] = await Promise.all([
     supabase.from('jobs').select('id', { count: 'exact', head: true }).eq('is_active', true),
-    supabase.from('job_ai_intelligence').select('id', { count: 'exact', head: true }).like('model_version', '%:%').not('model_version', 'like', 'regex%'),
-    supabase.from('ai_processing_queue').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-    supabase.from('job_ai_intelligence').select('id', { count: 'exact', head: true }).or('model_version.like.regex%,model_version.like.no-ai%'),
+    svc.from('job_ai_intelligence').select('id', { count: 'exact', head: true }).like('model_version', '%:%').not('model_version', 'like', 'regex%'),
+    svc.from('ai_processing_queue').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+    svc.from('job_ai_intelligence').select('id', { count: 'exact', head: true }).or('model_version.like.regex%,model_version.like.no-ai%'),
   ])
   const totalActive = activeCount.count ?? 0
   const verified = aiCount.count ?? 0

@@ -6,13 +6,12 @@ import { HowItWorks } from '@/components/how-it-works'
 import { FAQ } from '@/components/faq'
 import { PersonalizedFeed } from '@/components/personalized-feed'
 import { ProofBadge } from '@/components/proof-badge'
-import { ShieldCheck, Loader2 } from 'lucide-react'
+import { ShieldCheck } from 'lucide-react'
 import {
   countJobs,
   getCategories,
   getFreshnessPulse,
   getVerifiedJobs,
-  getQueuedJobs,
   getProofStats,
 } from '@/lib/queries'
 
@@ -21,9 +20,8 @@ import {
 export const dynamic = 'force-dynamic'
 
 export default async function HomePage() {
-  const [verified, queued, categories, total, pulse, proofStats] = await Promise.all([
-    getVerifiedJobs(6),
-    getQueuedJobs(3),
+  const [verified, categories, total, pulse, proofStats] = await Promise.all([
+    getVerifiedJobs(8),
     getCategories(),
     countJobs(),
     getFreshnessPulse(),
@@ -85,24 +83,6 @@ export default async function HomePage() {
           </div>
           <div className="py-6">
             <JobFeed jobs={verified} showOpportunityIntelligence={true} />
-          </div>
-        </section>
-      )}
-
-      {/* ─── Queued (pending AI verification) ──────────────── */}
-      {queued.length > 0 && (
-        <section className="mx-auto mt-8 max-w-6xl px-4 sm:px-6" aria-labelledby="queued-heading">
-          <div className="border-b border-border/60 pb-4">
-            <h2 id="queued-heading" className="flex items-center gap-2 text-lg font-semibold tracking-tight">
-              <Loader2 className="h-4.5 w-4.5 text-amber-400" aria-hidden />
-              Pending verification
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Newly ingested roles awaiting AI intelligence analysis.
-            </p>
-          </div>
-          <div className="py-6">
-            <JobFeed jobs={queued} />
           </div>
         </section>
       )}

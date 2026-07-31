@@ -106,7 +106,7 @@ export default async function AIAdminPage() {
         {/* P7: Live Proof Layer stats */}
         <div className="mt-6 grid gap-3 sm:grid-cols-4">
           <div className="rounded-xl border border-green-500/20 bg-green-500/5 p-3">
-            <p className="text-[11px] uppercase tracking-wider text-green-400">AI-Verified</p>
+            <p className="text-[11px] uppercase tracking-wider text-green-400">Nexa Intelligence</p>
             <p className="mt-1 text-xl font-semibold">{proofStats.verified}</p>
             <p className="text-[11px] text-muted-foreground">{proofStats.aiCoveragePct}% coverage</p>
           </div>

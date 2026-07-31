@@ -33,7 +33,9 @@ export async function POST(req: Request) {
   const url = new URL(req.url)
   const batch = Math.max(1, Math.min(150, Number(url.searchParams.get('batch')) || 50))
   const chain = Math.max(0, Math.min(60, Number(url.searchParams.get('chain')) || 0))
+  const cooldowns = Math.max(0, Math.min(10, Number(url.searchParams.get('cooldowns')) || 0))
   const chainMax = Math.max(1, Math.min(60, Number(process.env.AI_DRAIN_CHAIN_MAX) || 40))
+  const COOLDOWN_MAX = Math.max(0, Math.min(10, Number(process.env.AI_COOLDOWN_MAX) || 3))
 
   // ── Live model truth sync (chain head only, freshness-gated) ──────
   // Discovery + real-inference verification + persistence happens here so
@@ -77,22 +79,38 @@ export async function POST(req: Request) {
   } catch {}
 
   const elapsedMs = Date.now() - started
-  if (
+  const madeProgress = (result.processed ?? 0) > 0
+
+  // ── Chain continuation with cooldown-retry ─────────────────────────
+  // Root cause of stalls: when providers are quota-exhausted mid-chain,
+  // a link gets processed=0 and the old condition permanently stopped
+  // the chain. Now: when no progress is made, wait 60s for provider
+  // rate-limit windows to reset, then retry (up to COOLDOWN_MAX times).
+  const shouldChain =
     pendingAfter !== null &&
     pendingAfter > 0 &&
-    (result.processed ?? 0) > 0 &&
     chain < chainMax &&
-    elapsedMs < 280_000
-  ) {
+    elapsedMs < 270_000 &&
+    (madeProgress || (!madeProgress && cooldowns < COOLDOWN_MAX))
+
+  let cooldownWaited = false
+  if (shouldChain) {
+    if (!madeProgress) {
+      console.log(JSON.stringify({ scope: 'ai_process', event: 'cooldown_wait', chain, cooldowns, pendingAfter, elapsedMs }))
+      const waitMs = Math.min(60_000, 270_000 - elapsedMs)
+      if (waitMs > 5000) {
+        await new Promise(r => setTimeout(r, waitMs))
+        cooldownWaited = true
+      }
+    }
     try {
       const nextUrl = new URL(req.url)
       nextUrl.searchParams.set('batch', String(batch))
       nextUrl.searchParams.set('chain', String(chain + 1))
+      nextUrl.searchParams.set('cooldowns', madeProgress ? '0' : String(cooldowns + 1))
       const auth = req.headers.get('authorization') ?? ''
       const ctrl = new AbortController()
       const t = setTimeout(() => ctrl.abort(), 4000)
-      // Await only link establishment; the next invocation keeps running
-      // server-side even if this socket aborts.
       await fetch(nextUrl.toString(), {
         method: 'POST',
         headers: { authorization: auth },
@@ -104,7 +122,7 @@ export async function POST(req: Request) {
   }
 
   return NextResponse.json(
-    { ok: true, elapsedMs, ...result, stale, chain, chained, pendingAfter, modelSync },
+    { ok: true, elapsedMs, ...result, stale, chain, chained, cooldowns, cooldownWaited, pendingAfter, modelSync },
     { status: 200 },
   )
 }

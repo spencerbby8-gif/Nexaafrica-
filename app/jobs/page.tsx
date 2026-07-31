@@ -54,8 +54,18 @@ export default async function JobsPage({
     getCategories(),
   ])
   
+  // Sort: Nexa Intelligence (AI-verified) jobs first, then by posted_at.
+  // Pending/unverified jobs sink below verified ones within each page.
+  const sortedJobs = [...jobs].sort((a: any, b: any) => {
+    const aVerified = a?.aiIntelligence?.model_version?.includes(':') && !a?.aiIntelligence?.model_version?.startsWith('regex')
+    const bVerified = b?.aiIntelligence?.model_version?.includes(':') && !b?.aiIntelligence?.model_version?.startsWith('regex')
+    if (aVerified && !bVerified) return -1
+    if (!aVerified && bVerified) return 1
+    return 0 // preserve posted_at order within same verification tier
+  })
+
   // Calculate cursor for next page (last job's posted_at)
-  const initialCursor = jobs.length > 0 ? jobs[jobs.length - 1].posted_at : null
+  const initialCursor = sortedJobs.length > 0 ? sortedJobs[sortedJobs.length - 1].posted_at : null
 
   const hasFilters = Boolean(
     sp.q || sp.category || sp.employment_type || sp.remote || sp.africa || sp.usd,
@@ -64,9 +74,9 @@ export default async function JobsPage({
   // Real, data-derived freshness signals using posted_at (real provider date) not created_at
   const now = Date.now()
   const DAY = 24 * 60 * 60 * 1000
-  const addedToday = jobs.filter((j) => now - new Date(j.posted_at).getTime() < DAY).length
-  const addedThisWeek = jobs.filter(
-    (j) => now - new Date(j.posted_at).getTime() < 7 * DAY,
+  const addedToday = sortedJobs.filter((j: any) => now - new Date(j.posted_at).getTime() < DAY).length
+  const addedThisWeek = sortedJobs.filter(
+    (j: any) => now - new Date(j.posted_at).getTime() < 7 * DAY,
   ).length
 
   return (
@@ -138,7 +148,7 @@ export default async function JobsPage({
 
         <div className="mt-4 pb-14">
           <JobFeed
-            initialJobs={jobs}
+            initialJobs={sortedJobs}
             initialCursor={initialCursor}
             filters={filters}
             empty={

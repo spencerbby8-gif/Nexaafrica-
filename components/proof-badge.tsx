@@ -23,7 +23,7 @@ function verificationState(ai: JobAIIntelligenceRow | null | undefined, qs?: str
   if (ai) {
     const mv = ai.model_version || ''
     if (mv.includes(':') && !mv.startsWith('regex') && !mv.includes('no-ai')) {
-      return { status: 'verified' as const, label: 'AI-Verified', tone: 'verified' }
+      return { status: 'verified' as const, label: 'Nexa Intelligence', tone: 'verified' }
     }
     if (mv.startsWith('regex') || mv.includes('no-ai')) {
       return { status: 'stale' as const, label: 'Rule-based', tone: 'stale' }
@@ -68,9 +68,6 @@ export function ProofBadge({ intelligence, queueStatus, variant = 'compact' }: P
   }
 
   // Full variant — detail page proof panel
-  const mv = intelligence?.model_version || ''
-  const provider = mv.includes(':') ? mv.split(':')[0] : null
-  const model = mv.includes(':') ? mv.slice(mv.indexOf(':') + 1) : null
   const prov = intelligence?.evidence_provenance
   const ProvInfo = prov ? provenanceLabel[prov] : null
 
@@ -85,13 +82,6 @@ export function ProofBadge({ intelligence, queueStatus, variant = 'compact' }: P
           </span>
         )}
       </div>
-
-      {provider && model && (
-        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-          <span className="font-medium text-foreground/70">Model:</span>
-          <span>{provider} / {model}</span>
-        </div>
-      )}
 
       {ProvInfo && (
         <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">

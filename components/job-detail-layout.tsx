@@ -16,6 +16,8 @@ import { cleanDescription, getCleanMarkdownForRender } from '@/lib/cleanDescript
 import type { Job } from '@/lib/types'
 import { OpportunityIntelligencePanel } from '@/components/opportunity-intelligence'
 import { ProofBadge } from '@/components/proof-badge'
+import { VerificationTimeline } from '@/components/verification-timeline'
+import { CompanyIntel } from '@/components/company-intel'
 import type { JobAIIntelligenceRow } from '@/lib/ai/queries'
 import type { JobWithAI } from '@/lib/ai/queries'
 
@@ -143,7 +145,7 @@ function countrySlug(country: string): string {
   return country.toLowerCase().replace(/\s+/g, '-')
 }
 
-export function JobDetailLayout({
+export function JobDetailLayout({ companyJobCount,
   job,
   related,
   applyState = 'anon',
@@ -151,6 +153,7 @@ export function JobDetailLayout({
   initialSaved = false,
   aiIntelligence,
 }: {
+  companyJobCount?: number | null
   job: Job
   related: (Job | JobWithAI<Job>)[]
   applyState?: 'anon' | 'authed-incomplete' | 'authed-complete'
@@ -328,6 +331,16 @@ export function JobDetailLayout({
       {/* Live Proof Layer — verification state, provider/model, provenance, liveness */}
       <div className="pt-6">
         <ProofBadge intelligence={aiIntelligence || (job as any).aiIntelligence || null} queueStatus={(job as any)?._queueStatus} variant="full" />
+      </div>
+
+      {/* Company Intelligence */}
+      <div className="pt-4">
+        <CompanyIntel job={job} intelligence={aiIntelligence || (job as any).aiIntelligence || null} companyJobCount={companyJobCount} />
+      </div>
+
+      {/* Verification Timeline */}
+      <div className="pt-4">
+        <VerificationTimeline job={job} intelligence={aiIntelligence || (job as any).aiIntelligence || null} />
       </div>
 
       {/* Opportunity Intelligence – full panel for detail page, evidence-backed, uses same cleaned AI path + job fallback */}

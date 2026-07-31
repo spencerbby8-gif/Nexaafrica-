@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { JobCard } from '@/components/job-card'
 import { getUserMatchSignals, scoreJob } from '@/lib/profile/match'
 import { getVerifiedJobs } from '@/lib/queries'
+import { rankJob } from '@/lib/ranking'
 
 /**
  * Personalized "Matching for you" homepage section.
@@ -27,11 +28,15 @@ export async function PersonalizedFeed() {
   const verifiedPool = await getVerifiedJobs(50)
   if (verifiedPool.length === 0) return null
 
-  // Score each verified job against the user's signals
+  // Score each verified job: profile match + Intelligence Ranking Engine
   const scored: Array<{ job: any; reasons: string[]; score: number }> = []
   for (const job of verifiedPool) {
     const m = scoreJob(job as any, signals)
-    if (m && m.score > 0) scored.push(m)
+    if (m && m.score > 0) {
+      // Blend match score with ranking score (freshness, trust, Africa, etc.)
+      const ranked = rankJob(job as any)
+      scored.push({ ...m, score: m.score + Math.round(ranked.rankScore * 0.3) })
+    }
   }
 
   const sortedMatched = scored.sort((a, b) => b.score - a.score).slice(0, 6)

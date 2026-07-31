@@ -73,9 +73,14 @@ export default async function JobsPage({
   const rankedIds = new Set(rankedJobs.map((j: any) => j.id))
   const fillJobs = jobs.filter((j: any) => !rankedIds.has(j.id))
 
+  // Fill ONLY with eligible jobs (never restricted/not-Africa).
+  // Verified eligible jobs rank first; other eligible jobs fill below.
+  const eligibleFill = fillJobs.filter((j: any) =>
+    j.eligibility !== 'restricted' && j.is_open_to_africa !== false
+  )
   const sortedJobs = filters.verifiedOnly
     ? rankedJobs.slice(0, 20)
-    : [...rankedJobs, ...fillJobs].slice(0, 20)
+    : [...rankedJobs, ...eligibleFill].slice(0, 20)
 
   // Cursor continues from the OLDEST job in the full fetch (not the
   // displayed slice) so pagination picks up where the initial window ended.

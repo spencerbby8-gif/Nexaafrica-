@@ -449,6 +449,23 @@ export async function processAIQueue(batchSize = 100) {
         failed++
         return
       }
+      // ── Africa eligibility gate (cheap deterministic check) ────────────
+      // Reject jobs that clearly don't meet African requirements BEFORE
+      // spending model quota. This is a deterministic signal from the
+      // ingest-time classifier (eligibility + is_open_to_africa flag).
+      // Saves AI calls on the ~22% of pending jobs that are restricted or
+      // explicitly not open to Africa.
+      if (job.eligibility === 'restricted' || (job.is_open_to_africa === false)) {
+        await supabase.from("ai_processing_queue").update({
+          status: "completed",
+          completed_at: new Date().toISOString(),
+          error: "Skipped: not Africa-eligible (deterministic gate, no AI call)"
+        }).eq("id", item.id)
+        processed++
+        consecutiveItemFailures = 0
+        return
+      }
+
       const aiResult = await enrichJobWithAI(job as any)
       const intelligence = aiResult.intelligence
       const diags = (aiResult as any).diags || []

@@ -34,6 +34,17 @@ export async function PersonalizedFeed() {
     // Fallback: no intelligence, cards will show pending state
   }
 
+  // Sort: Nexa Intelligence (AI-verified) jobs first within matches.
+  const sortedMatched = [...matched].sort((a, b) => {
+    const aAi = aiMap.get(a.job.id)
+    const bAi = aiMap.get(b.job.id)
+    const aVerified = aAi?.model_version?.includes(':') && !aAi?.model_version?.startsWith('regex')
+    const bVerified = bAi?.model_version?.includes(':') && !bAi?.model_version?.startsWith('regex')
+    if (aVerified && !bVerified) return -1
+    if (!aVerified && bVerified) return 1
+    return b.score - a.score // within same tier, higher match score first
+  })
+
   // Headline reflects what we actually used to match — never invent a
   // signal source we don't have.
   const headline =
@@ -44,9 +55,9 @@ export async function PersonalizedFeed() {
         : 'Recommended for your profile'
 
   const subhead =
-    matched.length === 1
+    sortedMatched.length === 1
       ? 'One fresh remote role we think fits your profile.'
-      : `${matched.length} fresh remote roles we think fit your profile.`
+      : `${sortedMatched.length} fresh remote roles we think fit your profile.`
 
   return (
     <section
@@ -71,7 +82,7 @@ export async function PersonalizedFeed() {
         </Link>
       </div>
       <ul className="grid gap-3 py-6 sm:grid-cols-2 lg:grid-cols-3">
-        {matched.map(({ job, reasons, score }) => (
+        {sortedMatched.map(({ job, reasons, score }) => (
           <li key={job.id} className="min-w-0">
             <JobCard
               job={job}

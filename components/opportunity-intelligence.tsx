@@ -17,7 +17,7 @@ function intelligenceState(row: any | null | undefined, queueStatus?: string | n
     const mv = row.model_version || "";
     // Real AI inference: contains provider:model pattern (e.g. "groq:llama-3.3-70b-versatile")
     if (mv.includes(":") && !mv.includes("gemini-2.5-flash-v1") && !mv.includes("template-removed") && !mv.includes("rule-based")) {
-      return { status: "complete", label: "Verified", tone: "accent" };
+      return { status: "complete", label: "Nexa Intelligence", tone: "accent" };
     }
     // Regex/fallback only — no real AI
     if (mv.startsWith("regex-") || mv === "no-ai-providers") {
@@ -28,7 +28,7 @@ function intelligenceState(row: any | null | undefined, queueStatus?: string | n
       return { status: "degraded", label: "Legacy", tone: "amber" };
     }
     // Has data but unrecognized model
-    return { status: "complete", label: "Verified", tone: "accent" };
+    return { status: "complete", label: "Nexa Intelligence", tone: "accent" };
   }
 
   // No AI row — check queue status
@@ -355,7 +355,7 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons }
           )}
         </ul>
         <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground/80">
-          Intelligence is evidence-based, stored separately from raw job data, never fabricated. When evidence is missing we show UNKNOWN or feed fallback. Model: {intelligence?.model_version || 'feed-fallback'} • Verified: {intelligence?.last_verified_at ? new Date(intelligence.last_verified_at).toLocaleString() : 'using feed data'}
+          Intelligence is evidence-based, stored separately from raw job data, never fabricated. When evidence is missing we show UNKNOWN or feed fallback. Verified: {intelligence?.last_verified_at ? new Date(intelligence.last_verified_at).toLocaleDateString() : 'using feed data'}
         </p>
       </div>
     </section>

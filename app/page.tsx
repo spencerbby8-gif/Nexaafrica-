@@ -53,7 +53,7 @@ export default async function HomePage() {
           <div className="flex items-center gap-2">
             <span className="inline-flex items-center gap-1 rounded-full border border-green-500/30 bg-green-500/10 px-2.5 py-1 text-xs font-medium text-green-400">
               <ShieldCheck className="h-3.5 w-3.5" aria-hidden />
-              {proofStats.verified} AI-Verified
+              {proofStats.verified} Nexa Intelligence
             </span>
           </div>
           <span className="text-xs text-muted-foreground">
@@ -72,10 +72,10 @@ export default async function HomePage() {
             <div>
               <h2 id="verified-heading" className="flex items-center gap-2 text-lg font-semibold tracking-tight">
                 <ShieldCheck className="h-4.5 w-4.5 text-green-400" aria-hidden />
-                AI-Verified roles
+                Nexa Intelligence
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Verified by live AI with real evidence from the source page.
+                Verified by Nexa Intelligence with real evidence from the source page.
                 {pulseLine && <span className="ml-1.5 font-medium text-accent">{pulseLine}</span>}
               </p>
             </div>

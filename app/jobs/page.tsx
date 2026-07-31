@@ -45,16 +45,28 @@ export default async function JobsPage({
     usdOnly: sp.usd === '1',
   }
   
-  // Fetch only first page (20 jobs) - rest will load via infinite scroll
+  // Fetch a wider window (50) so verified jobs have room to surface above
+  // the newest pending jobs. Display only 20 after verified-first sort.
   const [jobs, categories] = await Promise.all([
     getJobsWithAI({
       ...filters,
-      limit: 20,
+      limit: 50,
     }),
     getCategories(),
   ])
-  
-  // Calculate cursor for next page (last job's posted_at)
+
+  // Sort: Nexa Intelligence (AI-verified) jobs first, then by posted_at.
+  const sortedAll = [...jobs].sort((a: any, b: any) => {
+    const aVerified = a?.aiIntelligence?.model_version?.includes(':') && !a?.aiIntelligence?.model_version?.startsWith('regex')
+    const bVerified = b?.aiIntelligence?.model_version?.includes(':') && !b?.aiIntelligence?.model_version?.startsWith('regex')
+    if (aVerified && !bVerified) return -1
+    if (!aVerified && bVerified) return 1
+    return 0
+  })
+  const sortedJobs = sortedAll.slice(0, 20)
+
+  // Cursor continues from the OLDEST job in the full fetch (not the
+  // displayed slice) so pagination picks up where the initial window ended.
   const initialCursor = jobs.length > 0 ? jobs[jobs.length - 1].posted_at : null
 
   const hasFilters = Boolean(
@@ -64,9 +76,9 @@ export default async function JobsPage({
   // Real, data-derived freshness signals using posted_at (real provider date) not created_at
   const now = Date.now()
   const DAY = 24 * 60 * 60 * 1000
-  const addedToday = jobs.filter((j) => now - new Date(j.posted_at).getTime() < DAY).length
-  const addedThisWeek = jobs.filter(
-    (j) => now - new Date(j.posted_at).getTime() < 7 * DAY,
+  const addedToday = sortedJobs.filter((j: any) => now - new Date(j.posted_at).getTime() < DAY).length
+  const addedThisWeek = sortedJobs.filter(
+    (j: any) => now - new Date(j.posted_at).getTime() < 7 * DAY,
   ).length
 
   return (
@@ -138,7 +150,7 @@ export default async function JobsPage({
 
         <div className="mt-4 pb-14">
           <JobFeed
-            initialJobs={jobs}
+            initialJobs={sortedJobs}
             initialCursor={initialCursor}
             filters={filters}
             empty={

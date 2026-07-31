@@ -28,7 +28,7 @@ function verificationState(ai: JobAIIntelligenceRow | null | undefined, qs?: str
     if (mv.startsWith('regex') || mv.includes('no-ai')) {
       return { status: 'stale' as const, label: 'Rule-based', tone: 'stale' }
     }
-    return { status: 'verified' as const, label: 'AI-Verified', tone: 'verified' }
+    return { status: 'stale' as const, label: 'Unverified', tone: 'stale' }
   }
   if (qs === 'processing') return { status: 'queued' as const, label: 'Processing', tone: 'queued' }
   if (qs === 'pending') return { status: 'queued' as const, label: 'Queued', tone: 'queued' }

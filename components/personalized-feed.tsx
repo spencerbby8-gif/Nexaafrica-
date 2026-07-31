@@ -34,16 +34,15 @@ export async function PersonalizedFeed() {
     // Fallback: no intelligence, cards will show pending state
   }
 
-  // Sort: Nexa Intelligence (AI-verified) jobs first within matches.
-  const sortedMatched = [...matched].sort((a, b) => {
-    const aAi = aiMap.get(a.job.id)
-    const bAi = aiMap.get(b.job.id)
-    const aVerified = aAi?.model_version?.includes(':') && !aAi?.model_version?.startsWith('regex')
-    const bVerified = bAi?.model_version?.includes(':') && !bAi?.model_version?.startsWith('regex')
-    if (aVerified && !bVerified) return -1
-    if (!aVerified && bVerified) return 1
-    return b.score - a.score // within same tier, higher match score first
+  // Homepage shows only Nexa Intelligence (AI-verified) jobs.
+  // Pending/unverified jobs stay out of the homepage feed entirely.
+  const verifiedMatched = matched.filter((m) => {
+    const ai = aiMap.get(m.job.id)
+    return ai?.model_version?.includes(':') && !ai?.model_version?.startsWith('regex')
   })
+  // Sort by match score within the verified set
+  const sortedMatched = [...verifiedMatched].sort((a, b) => b.score - a.score)
+  if (sortedMatched.length === 0) return null // no verified matches — show nothing
 
   // Headline reflects what we actually used to match — never invent a
   // signal source we don't have.

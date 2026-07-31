@@ -5,6 +5,7 @@ import { JobDetailLayout } from '@/components/job-detail-layout'
 import { getJobBySlug, getJobBySlugWithAI, getRelatedJobsWithAI, getRelatedJobs } from '@/lib/queries'
 import { isJobSaved } from '@/lib/saved-jobs'
 import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import { ogImage } from '@/lib/og'
 import { siteUrl } from '@/lib/site'
 import { cleanDescription, generateExcerpt } from '@/lib/cleanDescription'
@@ -181,6 +182,17 @@ export default async function RolePage({ params }: { params: Promise<Params> }) 
   const aiIntelligence = (jobWithAI as any).aiIntelligence || null
 
   const related = await getRelatedJobsWithAI(job, 4)
+
+  // Company hiring activity count
+  let companyJobCount: number | null = null
+  try {
+    const svc = createServiceClient()
+    const { count } = await svc.from('jobs')
+      .select('id', { count: 'exact', head: true })
+      .eq('company', job.company)
+      .eq('is_active', true)
+    companyJobCount = count ?? 0
+  } catch {}
   const description = firstParagraph(job.description_md)
 
   const baseSalary = parseSalaryToSchema(job.salary_range)
@@ -261,6 +273,7 @@ export default async function RolePage({ params }: { params: Promise<Params> }) 
         isAuthed={Boolean(user)}
         initialSaved={initialSaved}
         aiIntelligence={aiIntelligence}
+        companyJobCount={companyJobCount}
       />
     </SiteShell>
   )

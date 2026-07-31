@@ -53,10 +53,17 @@ export async function PersonalizedFeed() {
         ? 'Aligned with your skills'
         : 'Recommended for your profile'
 
+  const skillPreview = Array.from(signals.skills).slice(0, 3).join(', ')
+  const categoryPreview = Array.from(signals.categories).slice(0, 2).map(c => c.replace(/-/g, ' ')).join(', ')
+  const matchBasis = skillPreview
+    ? `Based on your skills in ${skillPreview}`
+    : categoryPreview
+    ? `Based on your experience in ${categoryPreview}`
+    : 'Based on your saved roles'
   const subhead =
     sortedMatched.length === 1
-      ? 'One fresh remote role we think fits your profile.'
-      : `${sortedMatched.length} fresh remote roles we think fit your profile.`
+      ? `${matchBasis}. One verified role matches.`
+      : `${matchBasis}. ${sortedMatched.length} verified roles match.`
 
   return (
     <section

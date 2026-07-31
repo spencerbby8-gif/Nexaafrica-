@@ -26,6 +26,7 @@ type SearchParams = {
   remote?: string
   africa?: string
   usd?: string
+  verified?: string
 }
 
 export default async function JobsPage({
@@ -43,6 +44,7 @@ export default async function JobsPage({
     remoteOnly: sp.remote === '1',
     openToAfrica: sp.africa === '1',
     usdOnly: sp.usd === '1',
+    verifiedOnly: sp.verified === '1',
   }
   
   // Fetch a wider window (50) so verified jobs have room to surface above
@@ -63,7 +65,13 @@ export default async function JobsPage({
     if (!aVerified && bVerified) return 1
     return 0
   })
-  const sortedJobs = sortedAll.slice(0, 20)
+  const verifiedFiltered = filters.verifiedOnly
+    ? sortedAll.filter((j: any) => {
+        const mv = j?.aiIntelligence?.model_version || ''
+        return mv.includes(':') && !mv.startsWith('regex')
+      })
+    : sortedAll
+  const sortedJobs = verifiedFiltered.slice(0, 20)
 
   // Cursor continues from the OLDEST job in the full fetch (not the
   // displayed slice) so pagination picks up where the initial window ended.
@@ -146,6 +154,16 @@ export default async function JobsPage({
             )}
           </div>
           <JobFilters categories={categories} />
+        </div>
+
+        {/* Intelligence quick-filters */}
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Link
+            href={`/jobs?${new URLSearchParams({ ...(sp.q && { q: sp.q }), ...(sp.category && { category: sp.category }), ...(filters.verifiedOnly ? {} : { verified: '1' }) }).toString()}`}
+            className={`inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors ${filters.verifiedOnly ? 'border-green-500/40 bg-green-500/10 text-green-400' : 'border-border/60 text-muted-foreground hover:border-foreground/30'}`}
+          >
+            Nexa Intelligence only
+          </Link>
         </div>
 
         <div className="mt-4 pb-14">

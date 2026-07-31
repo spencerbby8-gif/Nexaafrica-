@@ -399,6 +399,13 @@ export async function processAIQueue(batchSize = 100) {
     console.log(JSON.stringify({ scope: "ai_engine", event: "stuck_recovery_error", error: (e instanceof Error ? e.message : String(e)).slice(0,200) }))
   }
 
+  // Self-healing: expire items pending >72h so nothing stays queued forever
+  try {
+    const { healQueue } = await import("./admission")
+    const { expired } = await healQueue()
+    if (expired > 0) console.log(JSON.stringify({ scope: "ai_engine", event: "queue_ttl_expired", expired }))
+  } catch {}
+
   // Log queue depth for observability
   try {
     const { count: pendingCount } = await supabase.from("ai_processing_queue").select("id", { count: "exact", head: true }).eq("status", "pending")
@@ -449,22 +456,23 @@ export async function processAIQueue(batchSize = 100) {
         failed++
         return
       }
-      // ── Africa eligibility gate (cheap deterministic check) ────────────
-      // Reject jobs that clearly don't meet African requirements BEFORE
-      // spending model quota. This is a deterministic signal from the
-      // ingest-time classifier (eligibility + is_open_to_africa flag).
-      // Saves AI calls on the ~22% of pending jobs that are restricted or
-      // explicitly not open to Africa.
-      if (job.eligibility === 'restricted' || (job.is_open_to_africa === false)) {
-        await supabase.from("ai_processing_queue").update({
-          status: "completed",
-          completed_at: new Date().toISOString(),
-          error: "Skipped: not Africa-eligible (deterministic gate, no AI call)"
-        }).eq("id", item.id)
-        processed++
-        consecutiveItemFailures = 0
-        return
-      }
+      // ── Intelligent admission filter (deterministic, pre-AI) ──────────
+      // Lightweight screening before any expensive model call. Rejects
+      // jobs that clearly don't belong in the pipeline.
+      try {
+        const { admit } = await import("./admission")
+        const decision = admit(job as any)
+        if (!decision.admitted) {
+          await supabase.from("ai_processing_queue").update({
+            status: "completed",
+            completed_at: new Date().toISOString(),
+            error: `Skipped: ${decision.reason} [${decision.gate}]`
+          }).eq("id", item.id)
+          processed++
+          consecutiveItemFailures = 0
+          return
+        }
+      } catch {}
 
       const aiResult = await enrichJobWithAI(job as any)
       const intelligence = aiResult.intelligence

@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { JobCard } from '@/components/job-card'
-import { getUserMatchSignals, getMatchedJobs } from '@/lib/profile/match'
-import { getAIIntelligenceForJobs } from '@/lib/ai/queries'
+import { getUserMatchSignals, scoreJob } from '@/lib/profile/match'
+import { getVerifiedJobs } from '@/lib/queries'
 
 /**
  * Personalized "Matching for you" homepage section.
@@ -22,26 +22,19 @@ export async function PersonalizedFeed() {
   const signals = await getUserMatchSignals()
   if (!signals.hasSignal) return null
 
-  const matched = await getMatchedJobs(signals, 6)
-  if (matched.length === 0) return null
+  // Pull from the freshness-first verified pool, then score against profile.
+  // This ensures the feed always uses the newest verified jobs, never stale.
+  const verifiedPool = await getVerifiedJobs(50)
+  if (verifiedPool.length === 0) return null
 
-  // Load AI intelligence for these jobs – join by job_id, production safe,
-  // fallback to pending if not ready, raw job untouched.
-  let aiMap = new Map()
-  try {
-    aiMap = await getAIIntelligenceForJobs(matched.map((m) => m.job.id))
-  } catch {
-    // Fallback: no intelligence, cards will show pending state
+  // Score each verified job against the user's signals
+  const scored: Array<{ job: any; reasons: string[]; score: number }> = []
+  for (const job of verifiedPool) {
+    const m = scoreJob(job as any, signals)
+    if (m && m.score > 0) scored.push(m)
   }
 
-  // Homepage shows only Nexa Intelligence (AI-verified) jobs.
-  // Pending/unverified jobs stay out of the homepage feed entirely.
-  const verifiedMatched = matched.filter((m) => {
-    const ai = aiMap.get(m.job.id)
-    return ai?.model_version?.includes(':') && !ai?.model_version?.startsWith('regex')
-  })
-  // Sort by match score within the verified set
-  const sortedMatched = [...verifiedMatched].sort((a, b) => b.score - a.score)
+  const sortedMatched = scored.sort((a, b) => b.score - a.score).slice(0, 6)
   if (sortedMatched.length === 0) return null // no verified matches — show nothing
 
   // Headline reflects what we actually used to match — never invent a
@@ -94,7 +87,7 @@ export async function PersonalizedFeed() {
               job={job}
               matchReasons={reasons}
               matchScore={score}
-              aiIntelligence={aiMap.get(job.id) || null}
+              aiIntelligence={(job as any).aiIntelligence || null}
               showOpportunityIntelligence={true}
             />
           </li>

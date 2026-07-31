@@ -57,21 +57,25 @@ export default async function JobsPage({
     getCategories(),
   ])
 
-  // Sort: Nexa Intelligence (AI-verified) jobs first, then by posted_at.
-  const sortedAll = [...jobs].sort((a: any, b: any) => {
-    const aVerified = a?.aiIntelligence?.model_version?.includes(':') && !a?.aiIntelligence?.model_version?.startsWith('regex')
-    const bVerified = b?.aiIntelligence?.model_version?.includes(':') && !b?.aiIntelligence?.model_version?.startsWith('regex')
-    if (aVerified && !bVerified) return -1
-    if (!aVerified && bVerified) return 1
-    return 0
-  })
-  const verifiedFiltered = filters.verifiedOnly
-    ? sortedAll.filter((j: any) => {
-        const mv = j?.aiIntelligence?.model_version || ''
-        return mv.includes(':') && !mv.startsWith('regex')
-      })
-    : sortedAll
-  const sortedJobs = verifiedFiltered.slice(0, 20)
+  // Intelligence Ranking Engine: rank verified + eligible + remote jobs
+  // first, then fill remaining slots with other jobs below.
+  const { rankAndFilter } = await import('@/lib/ranking')
+  const companies = Array.from(new Set(jobs.map((j: any) => j.company).filter(Boolean)))
+  const companyCounts = new Map<string, number>()
+  try {
+    const svc = (await import('@/lib/supabase/service')).createServiceClient()
+    const { data: cc } = await svc.from('jobs').select('company').in('company', companies.slice(0, 30)).eq('is_active', true)
+    for (const r of (cc || [])) companyCounts.set(r.company, (companyCounts.get(r.company) || 0) + 1)
+  } catch {}
+
+  const ranked = rankAndFilter(jobs as any, companyCounts)
+  const rankedJobs = ranked.map((r) => r.job as any)
+  const rankedIds = new Set(rankedJobs.map((j: any) => j.id))
+  const fillJobs = jobs.filter((j: any) => !rankedIds.has(j.id))
+
+  const sortedJobs = filters.verifiedOnly
+    ? rankedJobs.slice(0, 20)
+    : [...rankedJobs, ...fillJobs].slice(0, 20)
 
   // Cursor continues from the OLDEST job in the full fetch (not the
   // displayed slice) so pagination picks up where the initial window ended.

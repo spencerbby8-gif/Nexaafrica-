@@ -222,16 +222,18 @@ export async function getFreshnessPulse(): Promise<{
  * Active jobs with real AI intelligence, recently verified by a live model.
  * model_version contains ':' (provider:model) and is not regex-era.
  */
-export async function getVerifiedJobs(limit = 6): Promise<JobWithAI<Job>[]> {
+export async function getVerifiedJobs(limit = 8): Promise<JobWithAI<Job>[]> {
   const supabase = await createClient()
   const svc = createServiceClient()
+  // Fetch a wider pool (up to 50) so the ranking engine has room to
+  // differentiate. The top `limit` by ranking score are returned.
   const { data: rows } = await svc
     .from('job_ai_intelligence')
     .select('job_id')
     .like('model_version', '%:%')
     .not('model_version', 'like', 'regex%')
     .order('last_verified_at', { ascending: false })
-    .limit(limit)
+    .limit(50)
   const ids = (rows || []).map((r: any) => r.job_id).filter(Boolean)
   if (ids.length === 0) return []
   try {
@@ -241,7 +243,18 @@ export async function getVerifiedJobs(limit = 6): Promise<JobWithAI<Job>[]> {
       .select(JOB_COLUMNS)
       .in('id', ids)
       .eq('is_active', true)
-    return (jobs || []).map((j: any) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null } as any))
+    const enriched = (jobs || []).map((j: any) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null } as any))
+    // Get company hiring counts for the ranking engine
+    const companies = Array.from(new Set(enriched.map((j: any) => j.company).filter(Boolean)))
+    const companyCounts = new Map<string, number>()
+    if (companies.length > 0) {
+      const { data: cc } = await svc.from('jobs').select('company').in('company', companies.slice(0, 50)).eq('is_active', true)
+      for (const r of (cc || [])) companyCounts.set(r.company, (companyCounts.get(r.company) || 0) + 1)
+    }
+    // Rank and filter — Intelligence Ranking Engine
+    const { rankAndFilter } = await import('@/lib/ranking')
+    const ranked = rankAndFilter(enriched, companyCounts)
+    return ranked.slice(0, limit).map((r) => r.job as any)
   } catch {
     return []
   }

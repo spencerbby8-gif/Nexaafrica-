@@ -318,10 +318,25 @@ export function classifyEligibility(...fields: Array<string | null | undefined>)
   // Any restriction without explicit Africa support => restricted.
   if (restricted) return 'restricted'
   // Location-field lock: "United States" / "UK" / "Germany" as the posting
-  // location with NO global-outreach language => restricted. This catches
-  // the class of false 'likely' roles from the stabilization audit.
+  // location is restricted UNLESS the posting carries STRONG global outreach
+  // (worldwide / anywhere / EMEA / Africa / any timezone). Weak boilerplate
+  // like a bare "global" or "remote" does NOT unlock a restricted location —
+  // this catches the false-'likely' class from the stabilization audit.
+  const STRONG_GLOBAL = /\b(worldwide|anywhere|emea|africa\b|any\s+(time\s*zone|location|country)|remote\s*[-—,]?\s*(global|worldwide|anywhere|international))\b/i
+  // A "strong" token that is immediately qualified back to a restricted
+  // region is NOT global outreach: "Work anywhere in the US", "remote
+  // within the UK", "worldwide across Europe" all stay restricted.
+  const LOCAL_QUALIFIER = /\b(?:anywhere|worldwide|remote|global(?:ly)?)\b[^.!?\n]{0,50}\b(?:in|within|across|throughout|based)\s+(?:the\s+)?(?:us|usa|united\s+states|uk|u\.?k\.?|united\s+kingdom|canada|europe|eu|germany|france|spain|italy|netherlands|poland|sweden|norway|denmark|finland|belgium|austria|switzerland|ireland|portugal|australia|new\s+zealand|india|singapore|japan|israel|uae|dubai|qatar|saudi\s+arabia|turkey|brazil|mexico|argentina|colombia|chile|philippines|indonesia|vietnam|thailand|malaysia|south\s+korea|taiwan|hong\s+kong|latam|apac)\b/i
+  // "Anywhere Company" is a US real-estate firm — a company name, not outreach.
+  const FALSE_TOKEN = /\banywhere\s+compan(y|ies)\b/i
   const locationField = (fields[0] || '').trim()
-  if (locationField && LOCATION_RESTRICTED.test(locationField) && !global) return 'restricted'
+  const strongGlobal = STRONG_GLOBAL.test(text) && !LOCAL_QUALIFIER.test(text) && !FALSE_TOKEN.test(text)
+  // Location lock also fires for comma lists like "Dublin, Ireland" when every
+  // part is a restricted region (no global part like Remote/Worldwide/Africa).
+  const locParts = locationField.split(/[,;]/).map((p: string) => p.trim()).filter(Boolean)
+  const anyRestrictedPart = locParts.some((p: string) => LOCATION_RESTRICTED.test(p))
+  const anyGlobalPart = locParts.some((p: string) => /\b(worldwide|anywhere|remote|africa|emea|global)\b/i.test(p))
+  if (locationField && ((anyRestrictedPart && !anyGlobalPart) || (LOCATION_RESTRICTED.test(locationField) && !anyGlobalPart)) && !strongGlobal) return 'restricted'
   // Global remote with no restriction => moderate confidence.
   if (global) return 'likely'
   return 'unknown'

@@ -51,9 +51,14 @@ export function admit(job: AdmissionJob): AdmissionDecision {
   // 2b. Location-field lock: the posting is located in a restricted region
   // and contains NO global-outreach language anywhere => reject pre-AI.
   // Catches "based in Connecticut" style postings that evade text regexes.
-  const globalOutreach = /\b(worldwide|anywhere|global(ly)?|any\s+(time\s*zone|location|country)|emea|africa|any\s+country)\b/i.test(job.description_md)
+  const LOCAL_QUALIFIER = /\b(?:anywhere|worldwide|remote|global(?:ly)?)\b[^.!?\n]{0,50}\b(?:in|within|across|throughout|based)\s+(?:the\s+)?(?:us|usa|united\s+states|uk|u\.?k\.?|united\s+kingdom|canada|europe|eu|germany|france|spain|italy|netherlands|poland|sweden|norway|denmark|finland|belgium|austria|switzerland|ireland|portugal|australia|new\s+zealand|india|singapore|japan|israel|uae|dubai|qatar|saudi\s+arabia|turkey|brazil|mexico|argentina|colombia|chile|philippines|indonesia|vietnam|thailand|malaysia|south\s+korea|taiwan|hong\s+kong|latam|apac)\b/i
+  const FALSE_TOKEN = /\banywhere\s+compan(y|ies)\b/i
+  const globalOutreach = /\b(worldwide|anywhere|emea|africa\b|any\s+(time\s*zone|location|country)|remote\s*[-—,]?\s*(global|worldwide|anywhere|international))\b/i.test(job.description_md) && !LOCAL_QUALIFIER.test(job.description_md) && !FALSE_TOKEN.test(job.description_md)
   const locText = `${job.country || ''} ${job.location || ''}`.trim()
-  if (locText && LOCATION_RESTRICTED_RE.test(locText) && !globalOutreach) {
+  const locParts = locText.split(/[,;]/).map((p: string) => p.trim()).filter(Boolean)
+  const anyRestrictedPart = locParts.some((p: string) => LOCATION_RESTRICTED_RE.test(p))
+  const anyGlobalPart = locParts.some((p: string) => /\b(worldwide|anywhere|remote|africa|emea|global)\b/i.test(p))
+  if (locText && anyRestrictedPart && !anyGlobalPart && !globalOutreach) {
     return { admitted: false, reason: 'Located in a region restricted for African applicants', gate: 'work_authorization' }
   }
 

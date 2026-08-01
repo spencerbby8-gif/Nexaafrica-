@@ -87,6 +87,7 @@ export async function getRelatedJobs(job: Job, limit = 4): Promise<Job[]> {
     .eq('is_active', true)
     .eq('category', job.category)
     .neq('id', job.id)
+    .not('eligibility', 'eq', 'restricted')
     .order('posted_at', { ascending: false })
     .limit(limit)
   if (error) {
@@ -241,7 +242,7 @@ export async function getVerifiedJobs(limit = 8): Promise<JobWithAI<Job>[]> {
     .not('model_version', 'like', 'regex%')
     .in('africa_eligibility', ['explicit', 'likely'])
     .order('last_verified_at', { ascending: false })
-    .limit(100)
+    .limit(300)
   const ids = (rows || []).map((r: any) => r.job_id).filter(Boolean)
   if (ids.length === 0) return []
   try {

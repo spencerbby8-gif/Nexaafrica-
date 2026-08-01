@@ -99,7 +99,7 @@ export function calculateTrustScore(job: Job, ctx?: TrustContext): TrustResult {
  */
 export function unifiedTrustScore(
   job: Job,
-  ai?: { overall_confidence?: number | null } | null,
+  ai?: { overall_confidence?: number | null; africa_eligibility?: string | null } | null,
 ): number {
   const legitimacyRaw = (job as any).trust_score
   const legitimacy =
@@ -107,8 +107,17 @@ export function unifiedTrustScore(
       ? legitimacyRaw
       : (calculateTrustScore(job).score ?? 50)
   const evidence = ai?.overall_confidence
-  if (evidence == null) return Math.round(legitimacy * 0.4)
-  return Math.round(legitimacy * 0.4 + evidence * 0.6)
+  const score =
+    evidence == null
+      ? Math.round(legitimacy * 0.4)
+      : Math.round(legitimacy * 0.4 + evidence * 0.6)
+  // [STABILIZATION] Trust and Nexa Intelligence must agree: when the AI
+  // verdict says Africa eligibility is unknown or restricted, the job can
+  // never display as Trusted/Highly Trusted for an African audience —
+  // cap at Moderate Trust (59) until the AI verifies it.
+  const africa = ai?.africa_eligibility
+  if (africa === 'unknown' || africa === 'restricted') return Math.min(score, 59)
+  return score
 }
 
 

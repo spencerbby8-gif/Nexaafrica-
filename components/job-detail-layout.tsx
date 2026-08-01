@@ -250,12 +250,13 @@ export function JobDetailLayout({ companyJobCount,
         <div className="flex flex-wrap items-center gap-1.5">
           {job.is_remote && <TrustBadge variant="remote" />}
           {job.salary_range && <TrustBadge variant="usd" label={job.salary_range} />}
-          {job.eligibility === 'explicit' && (
-            <TrustBadge variant="verified" label="Open to Africa" />
-          )}
-          {job.eligibility === 'likely' && (
-            <TrustBadge variant="verified" label="Likely open to Africa" />
-          )}
+          {(() => {
+            const aiElig = (aiIntelligence as any)?.africa_eligibility
+            const effective = aiElig || job.eligibility
+            if (effective === 'explicit') return <TrustBadge variant="verified" label="Open to Africa" />
+            if (effective === 'likely') return <TrustBadge variant="verified" label="Likely open to Africa" />
+            return null
+          })()}
           {employment && (
             <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-foreground/70">
               {employment}
@@ -451,7 +452,11 @@ export function JobDetailLayout({ companyJobCount,
               `${job.title} — ${job.company}`,
               [
                 job.is_remote ? 'Remote' : null,
-                job.is_open_to_africa ? 'Open to Africa' : job.country,
+                (() => {
+                  const aiElig = (aiIntelligence as any)?.africa_eligibility
+                  const effective = aiElig || job.eligibility
+                  return effective === 'explicit' || effective === 'likely' ? 'Open to Africa' : job.country
+                })(),
                 job.salary_range,
               ]
                 .filter(Boolean)

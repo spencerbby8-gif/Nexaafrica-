@@ -383,6 +383,13 @@ const EXPERIENCE_ENUM = ["entry", "mid", "senior", "executive", "unknown"] as co
 const DIFFICULTY_ENUM = ["easy", "medium", "hard", "unknown"] as const
 const URGENCY_ENUM = ["high", "medium", "low", "unknown"] as const
 
+// [STABILIZATION] Exponential backoff for failed AI attempts.
+// 15m -> 30m -> 1h -> 2h -> 4h -> 8h -> 12h cap. Every failure schedules a
+// retry; only max_attempts exhausted attempts become Rejected (failed).
+function backoffMs(attempt: number): number {
+  return Math.min(15 * 60 * 1000 * Math.pow(2, attempt - 1), 12 * 60 * 60 * 1000)
+}
+
 export async function processAIQueue(batchSize = 100) {
   const { createServiceClient } = await import("@/lib/supabase/service")
   const supabase = createServiceClient()
@@ -399,12 +406,8 @@ export async function processAIQueue(batchSize = 100) {
     console.log(JSON.stringify({ scope: "ai_engine", event: "stuck_recovery_error", error: (e instanceof Error ? e.message : String(e)).slice(0,200) }))
   }
 
-  // Self-healing: expire items pending >72h so nothing stays queued forever
-  try {
-    const { healQueue } = await import("./admission")
-    const { expired } = await healQueue()
-    if (expired > 0) console.log(JSON.stringify({ scope: "ai_engine", event: "queue_ttl_expired", expired }))
-  } catch {}
+  // [STABILIZATION] No TTL expiry. Retries are scheduled with exponential
+  // backoff via next_retry_at; nothing is ever silently dropped.
 
   // Log queue depth for observability
   try {
@@ -412,10 +415,12 @@ export async function processAIQueue(batchSize = 100) {
     console.log(JSON.stringify({ scope: "ai_engine", event: "queue_start", pending: pendingCount, batchSize }))
   } catch {}
 
+  const nowIso = new Date().toISOString()
   const { data: queueItems } = await supabase
     .from("ai_processing_queue")
-    .select("id, job_id, attempts, max_attempts")
+    .select("id, job_id, attempts, max_attempts, next_retry_at")
     .eq("status", "pending")
+    .or(`next_retry_at.is.null,next_retry_at.lte.${nowIso}`)
     .order("priority", { ascending: false })
     .order("created_at", { ascending: true })
     .limit(batchSize)
@@ -437,7 +442,7 @@ export async function processAIQueue(batchSize = 100) {
   let cursor = 0
   let skippedClaim = 0
 
-  async function processOne(item: { id: string; job_id: string; attempts: number; max_attempts: number }): Promise<void> {
+  async function processOne(item: { id: string; job_id: string; attempts: number; max_attempts: number; next_retry_at: string | null }): Promise<void> {
     // Atomic claim: the conditional UPDATE only succeeds while the row is
     // still pending, so chained invocations or an overlapping cron can
     // never double-process the same job.
@@ -466,7 +471,7 @@ export async function processAIQueue(batchSize = 100) {
           await supabase.from("ai_processing_queue").update({
             status: "completed",
             completed_at: new Date().toISOString(),
-            error: `Skipped: ${decision.reason} [${decision.gate}]`
+            error: `Rejected: ${decision.reason} [${decision.gate}]`
           }).eq("id", item.id)
           processed++
           consecutiveItemFailures = 0
@@ -507,11 +512,15 @@ export async function processAIQueue(batchSize = 100) {
         const { data: existingCheck } = await supabase.from("job_ai_intelligence").select("id").eq("job_id", job.id).maybeSingle()
         if (!existingCheck) {
           const attempts = item.attempts + 1
-          const retryStatus = attempts >= item.max_attempts ? "failed" : "pending"
+          const exhausted = attempts >= item.max_attempts
+          const retryAt = new Date(Date.now() + backoffMs(attempts)).toISOString()
           await supabase.from("ai_processing_queue").update({
-            status: retryStatus,
-            error: `All AI providers failed (${intelligence.modelVersion}). Will retry.`,
-            completed_at: retryStatus === "failed" ? new Date().toISOString() : null,
+            status: exhausted ? "failed" : "pending",
+            error: exhausted
+              ? `Rejected: all AI providers failed after ${attempts} attempts (${intelligence.modelVersion})`
+              : `AI providers failed (${intelligence.modelVersion}). Retry #${attempts} scheduled.`,
+            completed_at: exhausted ? new Date().toISOString() : null,
+            next_retry_at: exhausted ? null : retryAt,
           }).eq("id", item.id)
           failed++ // count as failed for this batch; will retry or stay failed
           consecutiveItemFailures++
@@ -582,7 +591,15 @@ export async function processAIQueue(batchSize = 100) {
         if (upsertErr) {
           console.log(JSON.stringify({ scope:"ai_engine", event:"upsert_failed", jobId:(job as any).id?.slice(0,8)||"",
             code: (upsertErr as any).code, message: upsertErr.message?.slice(0,200), details: (upsertErr as any).details?.slice(0,200) }))
-          await supabase.from("ai_processing_queue").update({ status: "failed", error: `JAI upsert: ${upsertErr.message?.slice(0,300)}`, completed_at: new Date().toISOString() }).eq("id", item.id)
+          const attempts = item.attempts + 1
+          const exhausted = attempts >= item.max_attempts
+          const retryAt = new Date(Date.now() + backoffMs(attempts)).toISOString()
+          await supabase.from("ai_processing_queue").update({
+            status: exhausted ? "failed" : "pending",
+            error: exhausted ? `Rejected: JAI upsert failed after ${attempts} attempts (${upsertErr.message?.slice(0,200)})` : `JAI upsert failed (${upsertErr.message?.slice(0,200)}). Retry #${attempts} scheduled.`,
+            completed_at: exhausted ? new Date().toISOString() : null,
+            next_retry_at: exhausted ? null : retryAt,
+          }).eq("id", item.id)
           failed++
           return
         }
@@ -606,8 +623,15 @@ export async function processAIQueue(batchSize = 100) {
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e)
       const attempts = (item as any).attempts + 1
-      const status = attempts >= (item as any).max_attempts ? "failed" : "pending"
-      await supabase.from("ai_processing_queue").update({ status, error, attempts }).eq("id", item.id)
+      const exhausted = attempts >= (item as any).max_attempts
+      const retryAt = new Date(Date.now() + backoffMs(attempts)).toISOString()
+      await supabase.from("ai_processing_queue").update({
+        status: exhausted ? "failed" : "pending",
+        error: exhausted ? `Rejected: ${error.slice(0, 250)} (after ${attempts} attempts)` : `Retry #${attempts} scheduled: ${error.slice(0, 200)}`,
+        attempts,
+        completed_at: exhausted ? new Date().toISOString() : null,
+        next_retry_at: exhausted ? null : retryAt,
+      }).eq("id", item.id)
       failed++
       consecutiveItemFailures++
     }

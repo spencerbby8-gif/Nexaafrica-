@@ -56,12 +56,14 @@ async function fetchSitemapData() {
       .from('jobs')
       .select('slug, posted_at, created_at, expires_at')
       .eq('is_active', true)
+      .not('eligibility', 'eq', 'restricted')
       .order('posted_at', { ascending: false })
       .limit(500),
     supabase
       .from('jobs')
       .select('company, posted_at, created_at')
       .eq('is_active', true)
+      .not('eligibility', 'eq', 'restricted')
       .order('posted_at', { ascending: false })
       .limit(2000),
     supabase.from('categories').select('slug').order('title', { ascending: true }),

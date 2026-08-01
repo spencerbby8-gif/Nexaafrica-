@@ -53,6 +53,7 @@ export async function GET(request: NextRequest) {
       .from('jobs')
       .select(JOB_COLUMNS)
       .eq('is_active', true)
+      .not('eligibility', 'eq', 'restricted')
       .order('posted_at', { ascending: false })
       .order('id', { ascending: false }) // Secondary sort to handle duplicate posted_at
       .limit(limit)

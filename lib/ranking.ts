@@ -106,7 +106,8 @@ export function rankAndFilter(
       const ai = job.aiIntelligence
       const mv = ai?.model_version || ''
       const verified = mv.includes(':') && !mv.startsWith('regex')
-      const africaEligible = (job as any).is_open_to_africa !== false && (job as any).eligibility !== 'restricted'
+      const aiRestricted = ai?.africa_eligibility === 'restricted'
+      const africaEligible = (job as any).is_open_to_africa !== false && (job as any).eligibility !== 'restricted' && !aiRestricted
       const isRemote = (job as any).is_remote !== false
       return verified && africaEligible && isRemote
     })

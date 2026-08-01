@@ -19,6 +19,8 @@ export async function getJobs(filters: JobFilters = {}): Promise<Job[]> {
     .from('jobs')
     .select(JOB_COLUMNS)
     .eq('is_active', true)
+    // [STABILIZATION] Ineligible (location-restricted) jobs never appear in UI lists.
+    .not('eligibility', 'eq', 'restricted')
     // Order by the real posting date so the freshest *actual* postings lead,
     // not whichever rows Nexa happened to ingest most recently.
     .order('posted_at', { ascending: false })
@@ -110,7 +112,11 @@ export async function getJobsWithAI(filters: JobFilters = {}): Promise<JobWithAI
   if (jobs.length === 0) return []
   try {
     const { aiMap, queueStatus } = await getAIIntelligenceWithQueueStatus(jobs.map((j) => j.id))
-    return jobs.map((j) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null } as any))
+    // [STABILIZATION] AI-restricted verdicts override the deterministic flag:
+    // a job the AI says is restricted never appears in UI lists.
+    return jobs
+      .filter((j) => (aiMap.get(j.id) as any)?.africa_eligibility !== 'restricted')
+      .map((j) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null } as any))
   } catch {
     return jobs.map((j) => ({ ...j, aiIntelligence: null, _queueStatus: null } as any))
   }
@@ -225,84 +231,17 @@ export async function getFreshnessPulse(): Promise<{
 export async function getVerifiedJobs(limit = 8): Promise<JobWithAI<Job>[]> {
   const supabase = await createClient()
   const svc = createServiceClient()
-  // Fetch a wider pool (up to 50) so the ranking engine has room to
-  // differentiate. The top `limit` by ranking score are returned.
+  // [STABILIZATION] Homepage freshness: the newest REAL postings that are
+  // AI-verified AND AI-confirmed Africa-eligible (explicit/likely). No stale
+  // jobs, no 'unknown', no 'restricted' — newest posted_at always wins.
   const { data: rows } = await svc
     .from('job_ai_intelligence')
     .select('job_id')
     .like('model_version', '%:%')
     .not('model_version', 'like', 'regex%')
+    .in('africa_eligibility', ['explicit', 'likely'])
     .order('last_verified_at', { ascending: false })
-    .limit(50)
-  const ids = (rows || []).map((r: any) => r.job_id).filter(Boolean)
-  if (ids.length === 0) return []
-  try {
-    const { aiMap, queueStatus } = await getAIIntelligenceWithQueueStatus(ids)
-    const { data: jobs } = await supabase
-      .from('jobs')
-      .select(JOB_COLUMNS)
-      .in('id', ids)
-      .eq('is_active', true)
-    const enriched = (jobs || []).map((j: any) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null } as any))
-    // Get company hiring counts for the ranking engine
-    const companies = Array.from(new Set(enriched.map((j: any) => j.company).filter(Boolean)))
-    const companyCounts = new Map<string, number>()
-    if (companies.length > 0) {
-      const { data: cc } = await svc.from('jobs').select('company').in('company', companies.slice(0, 50)).eq('is_active', true)
-      for (const r of (cc || [])) companyCounts.set(r.company, (companyCounts.get(r.company) || 0) + 1)
-    }
-    // Rank and filter — Intelligence Ranking Engine
-    const { rankAndFilter } = await import('@/lib/ranking')
-    const ranked = rankAndFilter(enriched, companyCounts)
-    return ranked.slice(0, limit).map((r) => r.job as any)
-  } catch {
-    return []
-  }
-}
-
-/**
- * Active jobs queued for AI processing but not yet verified (no intelligence
- * row, or queue status pending).
- */
-export async function getQueuedJobs(limit = 6): Promise<JobWithAI<Job>[]> {
-  const supabase = await createClient()
-  // Queue table is RLS-private — use service client to read it
-  const svc = createServiceClient()
-  const { data: queueRows } = await svc
-    .from('ai_processing_queue')
-    .select('job_id')
-    .eq('status', 'pending')
-    .order('priority', { ascending: false })
-    .order('created_at', { ascending: true })
-    .limit(limit)
-  const ids = (queueRows || []).map((r: any) => r.job_id).filter(Boolean)
-  if (ids.length === 0) return []
-  try {
-    const { data: jobs } = await supabase
-      .from('jobs')
-      .select(JOB_COLUMNS)
-      .in('id', ids)
-      .eq('is_active', true)
-      .limit(limit)
-    const { aiMap, queueStatus } = await getAIIntelligenceWithQueueStatus(ids)
-    return (jobs || []).map((j: any) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null } as any))
-  } catch {
-    return []
-  }
-}
-
-/**
- * Active jobs with stale or regex-era intelligence (not real AI, or old).
- */
-export async function getStaleJobs(limit = 6): Promise<JobWithAI<Job>[]> {
-  const supabase = await createClient()
-  const svc = createServiceClient()
-  const { data: rows } = await svc
-    .from('job_ai_intelligence')
-    .select('job_id')
-    .or('model_version.like.regex%,model_version.like.no-ai%')
-    .order('last_verified_at', { ascending: true })
-    .limit(limit)
+    .limit(100)
   const ids = (rows || []).map((r: any) => r.job_id).filter(Boolean)
   if (ids.length === 0) return []
   try {
@@ -311,17 +250,18 @@ export async function getStaleJobs(limit = 6): Promise<JobWithAI<Job>[]> {
       .select(JOB_COLUMNS)
       .in('id', ids)
       .eq('is_active', true)
-      .limit(limit)
-    const { aiMap, queueStatus } = await getAIIntelligenceWithQueueStatus(ids)
-    return (jobs || []).map((j: any) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null } as any))
+      .not('eligibility', 'eq', 'restricted')
+    // Newest by the REAL posting date — never a stale job while a newer
+    // verified eligible job exists.
+    return (jobs || [])
+      .sort((a: any, b: any) => new Date(b.posted_at || b.created_at).getTime() - new Date(a.posted_at || a.created_at).getTime())
+      .slice(0, limit)
+      .map((j: any) => ({ ...j, aiIntelligence: null, _queueStatus: 'completed' } as any))
   } catch {
     return []
   }
 }
 
-/**
- * Aggregate proof stats for the homepage header / admin views.
- */
 export async function getProofStats(): Promise<{
   totalActive: number
   verified: number

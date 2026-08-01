@@ -12,10 +12,12 @@ export type AdmissionDecision =
   | { admitted: false; reason: string; gate: string }
 
 // Work-authorization restrictions that exclude African applicants
-const RESTRICTION_RE = /must be (?:based|located|residing) in|work authorization for|authorized to work in the (?:us|uk|eu|canada)|citizens? of|residents? of (?:the )?(?:us|uk|eu|canada) only|(?:us|uk|eu) (?:only|residents only)/i
+const RESTRICTION_RE = /must be (?:based|located|residing|licensed|registered) in|work authorization for|authorized to work in the (?:us|uk|eu|canada)|citizens? of|residents? of (?:the )?(?:us|uk|eu|canada) only|(?:us|uk|eu) (?:only|residents only|citizens only|based only)|(?:based|located|residing|licensed|registered) in (?:the )?(?:us|usa|united states|uk|u\.?k\.?|united kingdom|canada|eu|europe|germany|france|spain|italy|netherlands|poland|sweden|norway|denmark|finland|belgium|austria|switzerland|ireland|portugal|australia|new zealand|india|singapore|japan|israel|uae|dubai|qatar|saudi arabia|turkey|brazil|mexico|argentina|colombia|chile|philippines|indonesia|vietnam|thailand|malaysia|south korea|taiwan|hong kong|latam|apac)|(?:based|located|residing|licensed|registered|board[- ]certified) in (?:the )?(?:state of )?(?:connecticut|california|texas|new york|florida|illinois|pennsylvania|ohio|georgia|north carolina|south carolina|michigan|new jersey|virginia|washington|arizona|massachusetts|tennessee|indiana|missouri|maryland|wisconsin|colorado|minnesota|alabama|louisiana|kentucky|oregon|oklahoma|utah|iowa|nevada|arkansas|mississippi|kansas|new mexico|nebraska|west virginia|idaho|hawaii|maine|new hampshire|montana|rhode island|delaware|south dakota|north dakota|alaska|vermont|wyoming)|(?:us|united states) (?:work )?(?:authorization|eligibility|citizenship|resident|remote|only)|(?:must )?(?:be|hold|have) (?:a )?(?:valid )?(?:us|state|medical|nursing|law|attorney|teaching) licen[cs]e|licensed to (?:work|practice) in (?:the )?(?:us|usa|united states|uk|canada)|(?:within|inside) the (?:us|united states|uk|united kingdom|eu|canada)|(?:candidates?|applicants?) (?:must be|need to be|should be|will be) (?:based|located|residing|in)|no (?:visa )?(?:sponsorship|sponsoring)|(?:cannot|cannot|can'?t|do not|don'?t) (?:provide )?(?:visa )?sponsorship|(?:work|employment) authorization (?:is )?required|(?:location|locations?)\s*[:—-]\s*(?:us|usa|united states|uk|u\.?k\.?|canada|eu)/i
 
 // Dead/placeholder apply URLs
 const DEAD_URL_RE = /^(about:blank|javascript:|#)/i
+
+const LOCATION_RESTRICTED_RE = /^(?:us|usa|u\.?s\.?|united\s+states|uk|u\.?k\.?|united\s+kingdom|canada|eu|europe|germany|france|spain|italy|netherlands|poland|sweden|norway|denmark|finland|belgium|austria|switzerland|ireland|portugal|australia|new\s+zealand|india|singapore|japan|israel|uae|dubai|qatar|saudi\s+arabia|turkey|brazil|mexico|argentina|colombia|chile|philippines|indonesia|vietnam|thailand|malaysia|south\s+korea|taiwan|hong\s+kong|latam|apac)$/i
 
 interface AdmissionJob {
   eligibility: string
@@ -23,6 +25,7 @@ interface AdmissionJob {
   is_remote: boolean | null
   apply_url: string
   country: string
+  location: string | null
   description_md: string
   company: string
   source: string | null
@@ -43,6 +46,15 @@ export function admit(job: AdmissionJob): AdmissionDecision {
   // 2. Work authorization restrictions in description
   if (RESTRICTION_RE.test(job.description_md)) {
     return { admitted: false, reason: 'Requires work authorization unavailable to African applicants', gate: 'work_authorization' }
+  }
+
+  // 2b. Location-field lock: the posting is located in a restricted region
+  // and contains NO global-outreach language anywhere => reject pre-AI.
+  // Catches "based in Connecticut" style postings that evade text regexes.
+  const globalOutreach = /\b(worldwide|anywhere|global(ly)?|any\s+(time\s*zone|location|country)|emea|africa|any\s+country)\b/i.test(job.description_md)
+  const locText = `${job.country || ''} ${job.location || ''}`.trim()
+  if (locText && LOCATION_RESTRICTED_RE.test(locText) && !globalOutreach) {
+    return { admitted: false, reason: 'Located in a region restricted for African applicants', gate: 'work_authorization' }
   }
 
   // 3. On-site only outside supported hiring regions
@@ -123,7 +135,7 @@ export async function refreshCompanyIntelligence(): Promise<{ updated: number }>
         if (i.page_status != null && i.page_status >= 400) s.dead++
       }
       const q = queueMap.get((job as any).id)
-      if (q?.status === 'completed' && q?.error?.startsWith('Skipped')) s.rejected++
+      if (q?.status === 'failed' || (q?.status === 'completed' && (q?.error?.startsWith('Skipped') || q?.error?.startsWith('Rejected')))) s.rejected++
       stats.set(key, s)
     }
 
@@ -138,7 +150,7 @@ export async function refreshCompanyIntelligence(): Promise<{ updated: number }>
       africa_rate: s.total > 0 ? s.africa / s.total : 0,
       rejection_rate: s.total > 0 ? s.rejected / s.total : 0,
       verification_rate: s.total > 0 ? s.verified / s.total : 0,
-      priority: s.total > 5 && s.africa / s.total < 0.2 ? 0 : 1, // reduce priority if <20% Africa-eligible
+      priority: s.total > 5 && (s.rejected / s.total >= 0.4 || s.africa / s.total < 0.2) ? 0 : 1, // reduce priority if <20% Africa-eligible or >=40% rejected
       last_updated: new Date().toISOString(),
     }))
 
@@ -194,8 +206,9 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
       s.total++
       if (job.is_open_to_africa) { s.africa++; s.accepted++ }
       const q = queueMap.get((job as any).id)
-      if (q?.status === 'completed' && !q?.error?.startsWith('Skipped')) s.verified++
-      if (q?.status === 'completed' && q?.error?.startsWith('Skipped')) s.dup++ // gate-rejected
+      const isRejected = q?.status === 'failed' || (q?.status === 'completed' && (q?.error?.startsWith('Skipped') || q?.error?.startsWith('Rejected')))
+      if (q?.status === 'completed' && !isRejected) s.verified++
+      if (isRejected) s.dup++ // gate-rejected
       s.quota = quotaBySource.get(src) || 0
       stats.set(src, s)
     }
@@ -212,7 +225,7 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
       acceptance_rate: s.total > 0 ? s.accepted / s.total : 0,
       africa_rate: s.total > 0 ? s.africa / s.total : 0,
       verification_rate: s.total > 0 ? s.verified / s.total : 0,
-      crawl_priority: s.total > 10 && s.africa / s.total < 0.1 ? 0 : 1,
+      crawl_priority: s.total > 10 && (s.africa / s.total < 0.1 || s.dup / s.total >= 0.3) ? 0 : 1,
       last_updated: new Date().toISOString(),
     }))
 
@@ -228,28 +241,11 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
 }
 
 /**
- * Self-healing queue TTL: mark items pending >72h as expired.
- * No job stays permanently queued.
+ * Queue recovery (stabilization): the destructive 72h TTL expiry is REMOVED.
+ * Nothing is ever silently dropped. Retries are scheduled with exponential
+ * backoff inside processAIQueue (next_retry_at). Every job eventually becomes
+ * Verified (completed + AI row) or Rejected (failed with reason).
  */
 export async function healQueue(): Promise<{ expired: number }> {
-  const { createServiceClient } = await import('@/lib/supabase/service')
-  const sb = createServiceClient()
-
-  const cutoff = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString()
-  const { data, error } = await sb
-    .from('ai_processing_queue')
-    .update({
-      status: 'completed',
-      error: 'Expired: pending >72h without progress (self-healing TTL)',
-      completed_at: new Date().toISOString(),
-    })
-    .eq('status', 'pending')
-    .lt('created_at', cutoff)
-    .select('id')
-
-  if (error) {
-    console.error('[heal_queue] error:', error.message?.slice(0, 150))
-    return { expired: 0 }
-  }
-  return { expired: data?.length ?? 0 }
+  return { expired: 0 }
 }

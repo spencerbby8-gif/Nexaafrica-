@@ -272,6 +272,19 @@ const RESTRICTION = [
   /\bno\s+visa\s+sponsorship\b/i,
   /\bsecurity\s+clearance\b/i,
   /\b(?:gc|green\s+card)\s+(?:holder|required)\b/i,
+  // US-state / licensed / registration restrictions (stabilization audit:
+  // "based in Connecticut", "licensed in", state licensure all evaded the
+  // old list and let US-only roles into the Africa feed)
+  /\b(?:based|located|residing|licensed|registered|board[- ]certified)\s+in\s+(?:the\s+)?(?:state\s+of\s+)?(?:connecticut|california|texas|new\s+york|florida|illinois|pennsylvania|ohio|georgia|north\s+carolina|south\s+carolina|michigan|new\s+jersey|virginia|washington|arizona|massachusetts|tennessee|indiana|missouri|maryland|wisconsin|colorado|minnesota|alabama|louisiana|kentucky|oregon|oklahoma|utah|iowa|nevada|arkansas|mississippi|kansas|new\s+mexico|nebraska|west\s+virginia|idaho|hawaii|maine|new\s+hampshire|montana|rhode\s+island|delaware|south\s+dakota|north\s+dakota|alaska|vermont|wyoming)\b/i,
+  /\b(?:u\.?s\.?|united\s+states)\s+(?:work\s+)?(?:authorization|eligibility|citizenship|resident|remote|only)\b/i,
+  /\b(?:must\s+)?(?:be|hold|have)\s+(?:a\s+)?(?:valid\s+)?(?:us|u\.?s\.?|state|medical|nursing|law|attorney|teaching)\s+licen[cs]e\b/i,
+  /\blicensed\s+(?:to\s+(?:work|practice)\s+)?in\s+(?:the\s+)?(?:us|usa|united\s+states|uk|canada|state\b)/i,
+  /\b(?:within|inside)\s+the\s+(?:us|united\s+states|uk|united\s+kingdom|eu|canada)\b/i,
+  /\b(?:candidates?|applicants?)\s+(?:must\s+be|need\s+to\s+be|should\s+be|will\s+be)\s+(?:based|located|residing|in)\b/i,
+  /\b(?:us|u\.?s\.?|uk|u\.?k\.?|canada|eu|europe)\s+(?:only|residents?\s+only|citizens?\s+only|based\s+only)\b/i,
+  /\b(?:no|without)\s+(?:visa\s+)?(?:sponsorship|sponsoring)\b|\b(?:cannot|cannot|can'?t|do\s+not|don'?t)\s+(?:provide\s+)?(?:visa\s+)?sponsorship\b/i,
+  /\b(?:work|employment)\s+authorization\s+(?:is\s+)?required\b/i,
+  /\b(?:location|locations?)\s*[:—-]\s*(?:us|usa|united\s+states|uk|u\.?k\.?|canada|eu)\b/i,
 ]
 
 /**
@@ -282,6 +295,15 @@ const RESTRICTION = [
  * - Global-remote signals with no restriction => 'likely' (a hedge, not a claim).
  * - Otherwise => 'unknown'. We never guess 'open' from silence.
  */
+/**
+ * Location fields that lock a role to a region which excludes (or very
+ * likely excludes) African applicants. A role whose LOCATION FIELD is one
+ * of these — with no worldwide/global/EMEA/Africa outreach anywhere in the
+ * posting — is restricted, even if the description never repeats the
+ * restriction ("based in Connecticut" style postings evade text regexes).
+ */
+const LOCATION_RESTRICTED = /^(?:us|usa|u\.?s\.?|united\s+states|uk|u\.?k\.?|united\s+kingdom|canada|eu|europe|germany|france|spain|italy|netherlands|poland|sweden|norway|denmark|finland|belgium|austria|switzerland|ireland|portugal|australia|new\s+zealand|india|singapore|japan|israel|uae|dubai|qatar|saudi\s+arabia|turkey|brazil|mexico|argentina|colombia|chile|philippines|indonesia|vietnam|thailand|malaysia|south\s+korea|taiwan|hong\s+kong|latam|apac)$/i
+
 export function classifyEligibility(...fields: Array<string | null | undefined>): Eligibility {
   const text = fields.filter(Boolean).join(' ').toLowerCase()
   if (!text) return 'unknown'
@@ -295,6 +317,11 @@ export function classifyEligibility(...fields: Array<string | null | undefined>)
   if (explicit) return 'explicit'
   // Any restriction without explicit Africa support => restricted.
   if (restricted) return 'restricted'
+  // Location-field lock: "United States" / "UK" / "Germany" as the posting
+  // location with NO global-outreach language => restricted. This catches
+  // the class of false 'likely' roles from the stabilization audit.
+  const locationField = (fields[0] || '').trim()
+  if (locationField && LOCATION_RESTRICTED.test(locationField) && !global) return 'restricted'
   // Global remote with no restriction => moderate confidence.
   if (global) return 'likely'
   return 'unknown'

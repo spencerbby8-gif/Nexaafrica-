@@ -192,9 +192,33 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
       }
     }
 
+    // [STABILIZATION] Company learning gate: companies with measured high
+    // rejection or low Africa-eligibility lose crawl priority — their jobs are
+    // rejected before validation/upsert.
+    let companyGate = new Map<string, { rejection_rate: number; africa_rate: number; total_jobs: number }>()
+    try {
+      const { data: ci } = await supabase
+        .from('company_intelligence')
+        .select('company, rejection_rate, africa_rate, total_jobs')
+        .gte('total_jobs', 4)
+      for (const c of (ci || []) as any[]) {
+        companyGate.set(String(c.company).toLowerCase(), {
+          rejection_rate: Number(c.rejection_rate) || 0,
+          africa_rate: Number(c.africa_rate) || 0,
+          total_jobs: Number(c.total_jobs) || 0,
+        })
+      }
+    } catch {}
+
     for (const job of jobs) {
       const err = validateNormalizedJob(job)
       if (err) {
+        result.rejected += 1
+        continue
+      }
+      const ci = companyGate.get((job.company || '').toLowerCase())
+      if (ci && (ci.rejection_rate >= 0.5 || ci.africa_rate < 0.2)) {
+        console.log(`[ingest] company gate: rejected ${job.company} job "${job.title}" (rejection_rate=${ci.rejection_rate.toFixed(2)}, africa_rate=${ci.africa_rate.toFixed(2)})`)
         result.rejected += 1
         continue
       }
@@ -365,9 +389,24 @@ export async function runAllSources(
     }
   } catch {}
 
+  // [STABILIZATION] Source learning: sources with crawl_priority=0 (measured
+  // low Africa-eligibility or high rejection share) are skipped entirely.
+  let zeroPrioritySources = new Set<string>()
+  try {
+    const { data: srcIntel } = await supabase
+      .from('source_intelligence')
+      .select('source, crawl_priority')
+    for (const r of (srcIntel || []) as any[]) {
+      if (r.crawl_priority === 0) zeroPrioritySources.add(String(r.source))
+    }
+  } catch {}
+  if (zeroPrioritySources.size > 0) {
+    console.log(`[ingest] skipping low-priority sources: ${Array.from(zeroPrioritySources).join(', ')}`)
+  }
+
   let sources = filter ? INGEST_SOURCES.filter(filter) : INGEST_SOURCES
-  // Filter out auto-disabled
-  sources = sources.filter(s => !disabledSources.has(`${s.ats}:${s.slug}`))
+  // Filter out auto-disabled and learning-downgraded
+  sources = sources.filter(s => !disabledSources.has(`${s.ats}:${s.slug}`) && !zeroPrioritySources.has(s.ats))
 
   const results: SourceResult[] = []
   for (let i = 0; i < sources.length; i += concurrency) {
@@ -464,9 +503,33 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
       } catch {}
     }
 
+    // [STABILIZATION] Company learning gate: companies with measured high
+    // rejection or low Africa-eligibility lose crawl priority — their jobs are
+    // rejected before validation/upsert.
+    let companyGate = new Map<string, { rejection_rate: number; africa_rate: number; total_jobs: number }>()
+    try {
+      const { data: ci } = await supabase
+        .from('company_intelligence')
+        .select('company, rejection_rate, africa_rate, total_jobs')
+        .gte('total_jobs', 4)
+      for (const c of (ci || []) as any[]) {
+        companyGate.set(String(c.company).toLowerCase(), {
+          rejection_rate: Number(c.rejection_rate) || 0,
+          africa_rate: Number(c.africa_rate) || 0,
+          total_jobs: Number(c.total_jobs) || 0,
+        })
+      }
+    } catch {}
+
     for (const job of jobs) {
       const err = validateNormalizedJob(job)
       if (err) {
+        result.rejected += 1
+        continue
+      }
+      const ci = companyGate.get((job.company || '').toLowerCase())
+      if (ci && (ci.rejection_rate >= 0.5 || ci.africa_rate < 0.2)) {
+        console.log(`[ingest] company gate: rejected ${job.company} job "${job.title}" (rejection_rate=${ci.rejection_rate.toFixed(2)}, africa_rate=${ci.africa_rate.toFixed(2)})`)
         result.rejected += 1
         continue
       }
@@ -625,5 +688,13 @@ export async function runAllTier1(): Promise<SourceResult[]> {
     runAllSources(),
     runRemoteBoards(),
   ])
+  // [STABILIZATION] Refresh learning after every full run so the next run's
+  // gates (company rejection, source crawl priority) use fresh measurements.
+  try {
+    const { refreshCompanyIntelligence, refreshSourceIntelligence } = await import('@/lib/ai/admission')
+    await Promise.all([refreshCompanyIntelligence(), refreshSourceIntelligence()])
+  } catch (e) {
+    console.log('[ingest] learning refresh failed:', e instanceof Error ? e.message.slice(0, 150) : String(e))
+  }
   return [...atsResults, ...remoteResults]
 }

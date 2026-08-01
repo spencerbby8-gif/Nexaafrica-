@@ -73,11 +73,11 @@ export function JobCard({
         </p>
 
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          {/* Fallback: Legacy trust score display if intelligence scores not available */}
-          {job.trust_score == null && (() => {
+          {/* [STABILIZATION] Unified trust ALWAYS: listing legitimacy blended
+              with AI opportunity-evidence. Never shows 100 while intelligence
+              is vague/unknown — the raw persisted trust_score is not shown. */}
+          {(() => {
             try {
-              // Unified trust: listing legitimacy (deterministic) blended with AI
-              // opportunity-evidence depth. Cannot show 100 while intelligence is vague.
               const score = unifiedTrustScore(job as any, aiIntelligence as any)
               if (score >= 70) {
                 return <span className="inline-flex items-center gap-1 rounded-full border border-green-500/20 bg-green-500/10 px-2 py-0.5 text-[11px] text-green-300">Trust {score}</span>
@@ -99,12 +99,13 @@ export function JobCard({
               {salary.label}
             </span>
           )}
-          {job.eligibility === 'explicit' && (
-            <TrustBadge variant="verified" label="Open to Africa" />
-          )}
-          {job.eligibility === 'likely' && (
-            <TrustBadge variant="verified" label="Likely open" />
-          )}
+          {(() => {
+            const aiElig = (aiIntelligence as any)?.africa_eligibility
+            const effective = aiElig || job.eligibility
+            if (effective === 'explicit') return <TrustBadge variant="verified" label="Open to Africa" />
+            if (effective === 'likely') return <TrustBadge variant="verified" label="Likely open" />
+            return null
+          })()}
           {employmentLabel(job.employment_type) && (
             <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-foreground/70">
               {employmentLabel(job.employment_type)}

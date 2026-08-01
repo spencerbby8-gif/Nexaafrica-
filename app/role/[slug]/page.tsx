@@ -111,6 +111,10 @@ export async function generateMetadata({
   const { slug } = await params
   const job = await getJobBySlug(slug)
   if (!job) return {}
+  // [STABILIZATION] Restricted jobs are not indexed and carry no claims.
+  if (job.eligibility === 'restricted') {
+    return { title: job.title, robots: { index: false, follow: false } }
+  }
   // Description: prepend a calm trust prefix that compounds CTR by giving the
   // SERP snippet a recognisable Nexa shape. Falls back to body text when the
   // description is rich enough to stand on its own (>140 chars of real prose).
@@ -180,6 +184,11 @@ export default async function RolePage({ params }: { params: Promise<Params> }) 
   if (!jobWithAI) notFound()
   const job = jobWithAI
   const aiIntelligence = (jobWithAI as any).aiIntelligence || null
+  // [STABILIZATION] Ineligible jobs never render anywhere in the UI —
+  // deterministic OR AI-restricted verdict both 404 the page.
+  if (job.eligibility === 'restricted' || (aiIntelligence as any)?.africa_eligibility === 'restricted') {
+    notFound()
+  }
 
   const related = await getRelatedJobsWithAI(job, 4)
 
@@ -201,8 +210,13 @@ export default async function RolePage({ params }: { params: Promise<Params> }) 
   // Google Jobs. 'likely' is global-remote with no restriction, so we claim
   // only the conservative job country/Worldwide rather than asserting Africa
   // eligibility we can't confirm. 'restricted'/'unknown' never claim Africa.
+  // [STABILIZATION] Google Jobs eligibility claims cross-checked against the
+  // AI verdict: 'restricted'/'unknown' AI never asserts Africa; the broad
+  // African-country list requires deterministic explicit OR AI explicit/likely.
+  const aiElig = (aiIntelligence as any)?.africa_eligibility
+  const eligibleForAfrica = job.eligibility === 'explicit' || aiElig === 'explicit' || aiElig === 'likely'
   const applicantLocations =
-    job.eligibility === 'explicit'
+    eligibleForAfrica && job.eligibility === 'explicit'
       ? AFRICA_COUNTRIES.map((name) => ({ '@type': 'Country', name }))
       : [{ '@type': 'Country', name: job.country || 'Worldwide' }]
 

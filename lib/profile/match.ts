@@ -221,13 +221,27 @@ export async function getMatchedJobs(
       'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, employment_type, tags, is_remote, is_open_to_africa, eligibility, posted_at, created_at, expires_at',
     )
     .eq('is_active', true)
+    .not('eligibility', 'eq', 'restricted')
     .order('posted_at', { ascending: false })
     .limit(200)
 
   if (error || !data) return []
 
+  // [STABILIZATION] Matching Your Experience uses the newest VERIFIED jobs
+  // only: AI rows from a real provider, never AI-restricted, never stale.
+  let aiMap = new Map<string, any>()
+  try {
+    const { getAIIntelligenceForJobs } = await import('@/lib/ai/queries')
+    aiMap = await getAIIntelligenceForJobs((data as Job[]).map((j) => j.id))
+  } catch {}
+
   const scored: MatchedJob[] = []
   for (const j of data as Job[]) {
+    const ai = aiMap.get(j.id)
+    const mv = ai?.model_version || ''
+    const isVerified = mv.includes(':') && !mv.startsWith('regex')
+    if (!isVerified) continue // verified jobs only
+    if (ai?.africa_eligibility === 'restricted') continue // never restricted
     const m = scoreJob(j, signals)
     if (m) scored.push(m)
   }

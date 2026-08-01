@@ -102,7 +102,26 @@ export async function refreshCompanyIntelligence(): Promise<{ updated: number }>
   let data: any = null
   try { const r = await sb.rpc('aggregate_company_intelligence' as any); data = r.data } catch {}
   if (data && Array.isArray(data) && data.length > 0) {
-    return { updated: (data as any[]).length }
+    // [STABILIZATION] Persist RPC results — the RPC is the source of truth
+    // for company learning; without this upsert the learning never lands.
+    const rows = (data as any[]).map((c: any) => ({
+      company: c.company,
+      total_jobs: c.total_jobs ?? 0,
+      africa_eligible_jobs: c.africa_eligible_jobs ?? 0,
+      remote_jobs: c.remote_jobs ?? 0,
+      rejected_jobs: c.rejected_jobs ?? 0,
+      dead_page_count: c.dead_page_count ?? 0,
+      verified_count: c.verified_count ?? 0,
+      africa_rate: c.africa_rate ?? 0,
+      rejection_rate: c.rejection_rate ?? 0,
+      verification_rate: c.verification_rate ?? 0,
+      trust_avg: c.trust_avg ?? null,
+      priority: (c.total_jobs ?? 0) > 5 && ((c.rejection_rate ?? 0) >= 0.4 || (c.africa_rate ?? 1) < 0.2) ? 0 : 1,
+      last_updated: new Date().toISOString(),
+    }))
+    const { error: upErr } = await sb.from('company_intelligence').upsert(rows, { onConflict: 'company' })
+    if (upErr) console.error('[company_intel] RPC upsert error:', upErr.message?.slice(0, 150))
+    return { updated: rows.length }
   }
 
   // Fallback: manual aggregation if RPC doesn't exist

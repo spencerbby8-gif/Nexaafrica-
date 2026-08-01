@@ -672,7 +672,23 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
 }
 
 export async function runRemoteBoards(concurrency = 2): Promise<SourceResult[]> {
-  const enabled = REMOTE_BOARD_SOURCES.filter(s => s.enabled)
+  const supabase = createServiceClient()
+  // [STABILIZATION] Source learning applies to remote boards too: sources
+  // with crawl_priority=0 (measured low Africa-eligibility / high rejection)
+  // are skipped entirely.
+  let zeroPriority = new Set<string>()
+  try {
+    const { data: srcIntel } = await supabase
+      .from('source_intelligence')
+      .select('source, crawl_priority')
+    for (const r of (srcIntel || []) as any[]) {
+      if (r.crawl_priority === 0) zeroPriority.add(String(r.source))
+    }
+  } catch {}
+  const enabled = REMOTE_BOARD_SOURCES.filter(s => s.enabled && !zeroPriority.has(s.id))
+  if (zeroPriority.size > 0) {
+    console.log(`[ingest] remote boards skipped by learning: ${Array.from(zeroPriority).join(', ')}`)
+  }
   const results: SourceResult[] = []
   for (let i = 0; i < enabled.length; i += concurrency) {
     const chunk = enabled.slice(i, i + concurrency)

@@ -249,7 +249,7 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
       acceptance_rate: s.total > 0 ? s.accepted / s.total : 0,
       africa_rate: s.total > 0 ? s.africa / s.total : 0,
       verification_rate: s.total > 0 ? s.verified / s.total : 0,
-      crawl_priority: s.total > 10 && (s.africa / s.total < 0.1 || s.dup / s.total >= 0.3) ? 0 : 1,
+      crawl_priority: s.total > 10 && (s.africa / s.total < 0.25 || s.dup / s.total >= 0.3) ? 0 : 1,
       last_updated: new Date().toISOString(),
     }))
 

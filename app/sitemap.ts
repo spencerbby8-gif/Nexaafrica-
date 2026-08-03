@@ -48,24 +48,47 @@ async function fetchSitemapData() {
     return { jobs: [] as JobRow[], companies: [] as { slug: string; latestJobAt: string }[], categories: [] as CategoryRow[] }
   }
 
+  // [REGION-LOCK] Jobs the AI has judged Africa-restricted are never indexed
+  // (same gate as the UI feeds). Fetched up-front so the query chain can
+  // exclude them by id.
+  let aiRestrictedIds: string[] = []
+  try {
+    const { data: restricted } = await supabase
+      .from('job_ai_intelligence')
+      .select('job_id')
+      .eq('africa_eligibility', 'restricted')
+    aiRestrictedIds = (restricted || []).map((r: any) => r.job_id).filter(Boolean)
+  } catch {}
+
   // Each query is isolated: a single failure degrades gracefully to an empty
   // set rather than throwing and turning the whole sitemap into a 5xx
   // ("Couldn't fetch" in Search Console).
+  let jobsQuery = supabase
+    .from('jobs')
+    .select('slug, posted_at, created_at, expires_at')
+    .eq('is_active', true)
+    .not('eligibility', 'eq', 'restricted')
+    // [REGION-LOCK] Jobs not open to Africa are never indexed.
+    .eq('is_open_to_africa', true)
+    .order('posted_at', { ascending: false })
+    .limit(500)
+  if (aiRestrictedIds.length > 0) {
+    jobsQuery = jobsQuery.not('id', 'in', `(${aiRestrictedIds.join(',')})`)
+  }
+
+  let companiesQuery = supabase
+    .from('jobs')
+    .select('company, posted_at, created_at')
+    .eq('is_active', true)
+    .not('eligibility', 'eq', 'restricted')
+    // [REGION-LOCK] Company hubs only surface companies with open-to-Africa jobs.
+    .eq('is_open_to_africa', true)
+    .order('posted_at', { ascending: false })
+    .limit(2000)
+
   const [jobsRes, companiesRes, categoriesRes] = await Promise.allSettled([
-    supabase
-      .from('jobs')
-      .select('slug, posted_at, created_at, expires_at')
-      .eq('is_active', true)
-      .not('eligibility', 'eq', 'restricted')
-      .order('posted_at', { ascending: false })
-      .limit(500),
-    supabase
-      .from('jobs')
-      .select('company, posted_at, created_at')
-      .eq('is_active', true)
-      .not('eligibility', 'eq', 'restricted')
-      .order('posted_at', { ascending: false })
-      .limit(2000),
+    jobsQuery,
+    companiesQuery,
     supabase.from('categories').select('slug').order('title', { ascending: true }),
   ])
 

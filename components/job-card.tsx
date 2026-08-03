@@ -102,6 +102,10 @@ export function JobCard({
           {(() => {
             const aiElig = (aiIntelligence as any)?.africa_eligibility
             const effective = aiElig || job.eligibility
+            // [REGION-LOCK] A listing the system marks as not-open-to-Africa can
+            // never show an open-to-Africa badge, even when the AI found Africa
+            // language — the system's own flag wins.
+            if (job.is_open_to_africa === false) return null
             if (effective === 'explicit') return <TrustBadge variant="verified" label="Open to Africa" />
             if (effective === 'likely') return <TrustBadge variant="verified" label="Likely open" />
             return null

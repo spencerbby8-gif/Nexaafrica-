@@ -47,16 +47,34 @@ export async function GET(request: NextRequest) {
   
   try {
     const supabase = await createClient()
-    
+
+    // [REGION-LOCK] Never surface jobs the AI has judged Africa-restricted,
+    // even when the ingest-time eligibility flag still says open. Matches the
+    // getJobsWithAI behavior used by the server-rendered hubs.
+    let aiRestrictedIds: string[] = []
+    try {
+      const { data: restricted } = await supabase
+        .from('job_ai_intelligence')
+        .select('job_id')
+        .eq('africa_eligibility', 'restricted')
+      aiRestrictedIds = (restricted || []).map((r: any) => r.job_id).filter(Boolean)
+    } catch {}
+
     // Build query
     let query = supabase
       .from('jobs')
       .select(JOB_COLUMNS)
       .eq('is_active', true)
       .not('eligibility', 'eq', 'restricted')
+      // [REGION-LOCK] Jobs not open to Africa never surface in pagination.
+      .eq('is_open_to_africa', true)
       .order('posted_at', { ascending: false })
       .order('id', { ascending: false }) // Secondary sort to handle duplicate posted_at
       .limit(limit)
+
+    if (aiRestrictedIds.length > 0) {
+      query = query.not('id', 'in', `(${aiRestrictedIds.join(',')})`)
+    }
     
     // Apply cursor (fetch jobs older than cursor)
     if (cursor) {

@@ -222,6 +222,9 @@ export async function getMatchedJobs(
     )
     .eq('is_active', true)
     .not('eligibility', 'eq', 'restricted')
+    // [REGION-LOCK] Matching Your Experience stays verified-only AND never
+    // surfaces jobs the system marks as not open to Africa.
+    .eq('is_open_to_africa', true)
     .order('posted_at', { ascending: false })
     .limit(200)
 

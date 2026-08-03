@@ -9,11 +9,17 @@
 
 import { NextRequest, NextResponse } from "next/server"
 import { testRoutingAllTasks, getRoutingStats, getRoutingLogs } from "@/lib/ai/smart-router"
+import { isPipelineAuthorized } from "@/lib/server/auth"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 30
 
 export async function GET(req: NextRequest) {
+  // Internal Smart Router observability — provider scores, routing decisions
+  // and health are not public information.
+  if (!isPipelineAuthorized(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
   try {
     const action = req.nextUrl.searchParams.get("action") || "stats"
 

@@ -21,6 +21,9 @@ export async function getJobs(filters: JobFilters = {}): Promise<Job[]> {
     .eq('is_active', true)
     // [STABILIZATION] Ineligible (location-restricted) jobs never appear in UI lists.
     .not('eligibility', 'eq', 'restricted')
+    // [REGION-LOCK] Jobs not open to Africa never surface in UI lists (feeds,
+    // hubs, search) — the system's own flag is the gate.
+    .eq('is_open_to_africa', true)
     // Order by the real posting date so the freshest *actual* postings lead,
     // not whichever rows Nexa happened to ingest most recently.
     .order('posted_at', { ascending: false })
@@ -88,6 +91,7 @@ export async function getRelatedJobs(job: Job, limit = 4): Promise<Job[]> {
     .eq('category', job.category)
     .neq('id', job.id)
     .not('eligibility', 'eq', 'restricted')
+    .eq('is_open_to_africa', true)
     .order('posted_at', { ascending: false })
     .limit(limit)
   if (error) {
@@ -252,6 +256,7 @@ export async function getVerifiedJobs(limit = 8): Promise<JobWithAI<Job>[]> {
       .in('id', ids)
       .eq('is_active', true)
       .not('eligibility', 'eq', 'restricted')
+      .eq('is_open_to_africa', true)
     // Newest by the REAL posting date — never a stale job while a newer
     // verified eligible job exists.
     return (jobs || [])

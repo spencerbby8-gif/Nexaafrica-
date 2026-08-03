@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { isPipelineAuthorized } from '@/lib/server/auth'
 
 /**
  * Provider Audit Endpoint
  * Tests all configured providers and their models live
  * GET /api/providers/audit
+ * Internal diagnostic: fires real paid model calls, so it requires the
+ * pipeline bearer token (CRON_SECRET / INGEST_TOKEN) like every other
+ * machine-to-machine route.
  */
 export async function GET(request: NextRequest) {
+  if (!isPipelineAuthorized(request)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   const results: any = {}
   
   // Test Gemini

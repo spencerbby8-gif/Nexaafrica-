@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getRegistryStatus, forceRefresh } from '@/lib/ai/providers/dynamic-registry'
+import { isPipelineAuthorized } from '@/lib/server/auth'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -9,8 +10,12 @@ export const runtime = 'nodejs'
  * 
  * GET /api/providers/status - Get current status
  * POST /api/providers/status - Force refresh
+ * Internal diagnostic: requires the pipeline bearer token.
  */
-export async function GET() {
+export async function GET(req: Request) {
+  if (!isPipelineAuthorized(req)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   try {
     const status = getRegistryStatus()
     return NextResponse.json(status)
@@ -22,7 +27,10 @@ export async function GET() {
   }
 }
 
-export async function POST() {
+export async function POST(req: Request) {
+  if (!isPipelineAuthorized(req)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   try {
     await forceRefresh()
     const status = getRegistryStatus()

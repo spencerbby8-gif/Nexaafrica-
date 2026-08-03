@@ -47,6 +47,9 @@ export async function getCompanies(limit = 500): Promise<CompanyAggregate[]> {
     .select(
       'company, company_logo, category, country, is_open_to_africa, is_remote, posted_at, created_at',
     )
+    .eq('is_active', true)
+    // [REGION-LOCK] Company hubs only aggregate jobs that are open to Africa.
+    .eq('is_open_to_africa', true)
     .order('posted_at', { ascending: false })
     .limit(2000)
   if (error) {
@@ -116,6 +119,9 @@ export async function getCompanyBySlug(
   const { data: rows, error } = await supabase
     .from('jobs')
     .select(JOB_COLUMNS)
+    .eq('is_active', true)
+    // [REGION-LOCK] Company role lists only surface open-to-Africa jobs.
+    .eq('is_open_to_africa', true)
     .order('posted_at', { ascending: false })
     .limit(1000)
   if (error) {

@@ -253,6 +253,9 @@ export function JobDetailLayout({ companyJobCount,
           {(() => {
             const aiElig = (aiIntelligence as any)?.africa_eligibility
             const effective = aiElig || job.eligibility
+            // [REGION-LOCK] Jobs the system marks as not-open-to-Africa never
+            // display an open-to-Africa badge, even if AI found Africa language.
+            if (job.is_open_to_africa === false) return null
             if (effective === 'explicit') return <TrustBadge variant="verified" label="Open to Africa" />
             if (effective === 'likely') return <TrustBadge variant="verified" label="Likely open to Africa" />
             return null
@@ -455,6 +458,9 @@ export function JobDetailLayout({ companyJobCount,
                 (() => {
                   const aiElig = (aiIntelligence as any)?.africa_eligibility
                   const effective = aiElig || job.eligibility
+                  // [REGION-LOCK] Share text must never claim open-to-Africa
+                  // for listings the system marks as not open to Africa.
+                  if (job.is_open_to_africa === false) return job.country
                   return effective === 'explicit' || effective === 'likely' ? 'Open to Africa' : job.country
                 })(),
                 job.salary_range,

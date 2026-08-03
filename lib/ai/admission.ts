@@ -116,6 +116,12 @@ export async function refreshCompanyIntelligence(): Promise<{ updated: number }>
       rejection_rate: c.rejection_rate ?? 0,
       verification_rate: c.verification_rate ?? 0,
       trust_avg: c.trust_avg ?? null,
+      // [V2] learning-layer metrics
+      hiring_velocity_30d: c.hiring_velocity_30d ?? 0,
+      salary_consistency: c.salary_consistency ?? 0,
+      duplicate_count: c.duplicate_count ?? 0,
+      scam_reports: c.scam_reports ?? 0,
+      avg_ai_confidence: c.avg_ai_confidence ?? null,
       priority: (c.total_jobs ?? 0) > 5 && ((c.rejection_rate ?? 0) >= 0.4 || (c.africa_rate ?? 1) < 0.2) ? 0 : 1,
       last_updated: new Date().toISOString(),
     }))
@@ -127,15 +133,11 @@ export async function refreshCompanyIntelligence(): Promise<{ updated: number }>
   // Fallback: manual aggregation if RPC doesn't exist
   try {
     // [CAP-FIX] Paginated fetch — same 1,000-row cap applied to this fallback.
-    const jobs = await fetchAllActiveJobs(sb, 'id, company, is_open_to_africa, is_remote, is_active, source')
+    const jobs = await fetchAllActiveJobs(sb, 'id, company, is_open_to_africa, is_remote, is_active, source, posted_at, salary_range, duplicate_of')
 
-    const { data: intel } = await sb
-      .from('job_ai_intelligence')
-      .select('job_id, model_version, africa_eligibility, page_status')
+    const intel = await fetchAllRows<any>(sb, 'job_ai_intelligence', 'job_id, model_version, africa_eligibility, page_status, overall_confidence')
 
-    const { data: queue } = await sb
-      .from('ai_processing_queue')
-      .select('job_id, status, error')
+    const queue = await fetchAllRows<any>(sb, 'ai_processing_queue', 'job_id, status, error')
 
     const intelMap = new Map<string, any>()
     for (const r of (intel || [])) intelMap.set(r.job_id, r)
@@ -144,17 +146,22 @@ export async function refreshCompanyIntelligence(): Promise<{ updated: number }>
     for (const r of (queue || [])) queueMap.set(r.job_id, r)
 
     const stats = new Map<string, any>()
+    const nowMs = Date.now()
     for (const job of (jobs || [])) {
       const key = job.company
       if (!key) continue
-      const s = stats.get(key) || { company: key, total: 0, africa: 0, remote: 0, rejected: 0, dead: 0, verified: 0 }
+      const s = stats.get(key) || { company: key, total: 0, africa: 0, remote: 0, rejected: 0, dead: 0, verified: 0, velocity: 0, salary: 0, dup: 0, confSum: 0, confN: 0 }
       s.total++
       if (job.is_open_to_africa) s.africa++
       if (job.is_remote) s.remote++
+      if (job.posted_at && nowMs - new Date(job.posted_at).getTime() < 30 * 86400000) s.velocity++
+      if ((job as any).salary_range) s.salary++
+      if ((job as any).duplicate_of) s.dup++
       const i = intelMap.get((job as any).id)
       if (i) {
         if (i.model_version?.includes(':') && !i.model_version.startsWith('regex')) s.verified++
         if (i.page_status != null && i.page_status >= 400) s.dead++
+        if (typeof i.overall_confidence === 'number') { s.confSum += i.overall_confidence; s.confN++ }
       }
       const q = queueMap.get((job as any).id)
       if (q?.status === 'failed' || (q?.status === 'completed' && (q?.error?.startsWith('Skipped') || q?.error?.startsWith('Rejected')))) s.rejected++
@@ -172,6 +179,11 @@ export async function refreshCompanyIntelligence(): Promise<{ updated: number }>
       africa_rate: s.total > 0 ? s.africa / s.total : 0,
       rejection_rate: s.total > 0 ? s.rejected / s.total : 0,
       verification_rate: s.total > 0 ? s.verified / s.total : 0,
+      hiring_velocity_30d: s.velocity,
+      salary_consistency: s.total > 0 ? s.salary / s.total : 0,
+      duplicate_count: s.dup,
+      scam_reports: 0,
+      avg_ai_confidence: s.confN > 0 ? Math.round(s.confSum / s.confN) : null,
       priority: s.total > 5 && (s.rejected / s.total >= 0.4 || s.africa / s.total < 0.2) ? 0 : 1, // reduce priority if <20% Africa-eligible or >=40% rejected
       last_updated: new Date().toISOString(),
     }))
@@ -220,7 +232,32 @@ async function fetchAllActiveJobs<T = any>(sb: any, select: string): Promise<T[]
 }
 
 /**
- * Populate source_intelligence from live production data.
+ * [V2] Generic paginated fetch for ANY table (PostgREST caps at 1,000 rows).
+ */
+async function fetchAllRows<T = any>(sb: any, table: string, select: string, extra?: (q: any) => any): Promise<T[]> {
+  const PAGE = 1000
+  const rows: T[] = []
+  try {
+    for (let from = 0; from < 50000; from += PAGE) {
+      let q = sb.from(table).select(select)
+      if (extra) q = extra(q)
+      const { data, error } = await q.range(from, from + PAGE - 1)
+      if (error) {
+        console.error(`[learning] paginated fetch error (${table}):`, error.message?.slice(0, 150))
+        break
+      }
+      if (!data || data.length === 0) break
+      rows.push(...(data as T[]))
+      if (data.length < PAGE) break
+    }
+  } catch (e) {
+    console.error(`[learning] paginated fetch exception (${table}):`, (e instanceof Error ? e.message : String(e)).slice(0, 150))
+  }
+  return rows
+}
+
+/**
+ * Populate source_intelligence from live production data (V2).
  */
 export async function refreshSourceIntelligence(): Promise<{ updated: number }> {
   const { createServiceClient } = await import('@/lib/supabase/service')
@@ -229,21 +266,47 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
   try {
     // [CAP-FIX] Paginated fetch — a single capped request computed learning
     // stats on only the first 1,000 active jobs (~22% of the dataset).
-    const jobs = await fetchAllActiveJobs(sb, 'id, source, is_open_to_africa, is_active')
+    const jobs = await fetchAllActiveJobs(sb, 'id, source, is_open_to_africa, is_active, posted_at, expires_at')
 
-    const { data: queue } = await sb
-      .from('ai_processing_queue')
-      .select('job_id, status, error')
+    const queue = await fetchAllRows<any>(sb, 'ai_processing_queue', 'job_id, status, error')
+    const logs = await fetchAllRows<any>(sb, 'ai_provider_log', 'job_id')
+    const jai = await fetchAllRows<any>(sb, 'job_ai_intelligence', 'job_id, quality_score')
 
-    const { data: logs } = await sb
-      .from('ai_provider_log')
-      .select('job_id')
-      .limit(10000)
+    // Ingest-run history for reliability: source column is like
+    // "greenhouse:stripe" or "remoteok:api" — key by the prefix.
+    let runsBySource = new Map<string, { total: number; ok: number; failures: number; consecutive: number }>()
+    try {
+      const { data: runs } = await sb
+        .from('ingest_runs')
+        .select('source, ok')
+        .order('created_at', { ascending: false })
+        .limit(1000)
+      const groups = new Map<string, any[]>()
+      for (const r of (runs || []) as any[]) {
+        const key = String(r.source).split(':')[0]
+        if (!key) continue
+        if (!groups.has(key)) groups.set(key, [])
+        groups.get(key)!.push(r)
+      }
+      for (const [key, list] of groups) {
+        let consecutive = 0
+        for (const r of list) {
+          if (!r.ok) consecutive++
+          else break
+        }
+        runsBySource.set(key, {
+          total: list.length,
+          ok: list.filter((r: any) => r.ok).length,
+          failures: list.filter((r: any) => !r.ok).length,
+          consecutive,
+        })
+      }
+    } catch {}
 
-    // Count AI quota per source
-    const quotaBySource = new Map<string, number>()
+    // AI quota per source
     const jobSourceMap = new Map<string, string>()
-    for (const j of (jobs || [])) jobSourceMap.set((j as any).id, j.source)
+    for (const j of (jobs || [])) jobSourceMap.set((j as any).id, (j as any).source)
+    const quotaBySource = new Map<string, number>()
     for (const l of (logs || [])) {
       const src = jobSourceMap.get(l.job_id)
       if (src) quotaBySource.set(src, (quotaBySource.get(src) || 0) + 1)
@@ -251,36 +314,63 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
 
     const queueMap = new Map<string, any>()
     for (const r of (queue || [])) queueMap.set(r.job_id, r)
+    const jaiQuality = new Map<string, number | null>()
+    for (const r of (jai || [])) jaiQuality.set(r.job_id, r.quality_score ?? null)
 
     const stats = new Map<string, any>()
+    const now = Date.now()
     for (const job of (jobs || [])) {
       const src = job.source || 'unknown'
-      const s = stats.get(src) || { source: src, total: 0, accepted: 0, africa: 0, verified: 0, dead: 0, dup: 0, quota: 0 }
+      const s = stats.get(src) || { source: src, total: 0, accepted: 0, africa: 0, verified: 0, dead: 0, dup: 0, quota: 0, expired: 0, freshDays: 0, qualitySum: 0, qualityN: 0, rejected: 0 }
       s.total++
       if (job.is_open_to_africa) { s.africa++; s.accepted++ }
       const q = queueMap.get((job as any).id)
       const isRejected = q?.status === 'failed' || (q?.status === 'completed' && (q?.error?.startsWith('Skipped') || q?.error?.startsWith('Rejected')))
       if (q?.status === 'completed' && !isRejected) s.verified++
-      if (isRejected) s.dup++ // gate-rejected
+      if (isRejected) s.rejected++ // gate-rejected
+      if (q?.error?.toLowerCase().includes('duplicate')) s.dup++
+      if (job.expires_at && new Date(job.expires_at).getTime() < now) s.expired++
+      if (job.posted_at) {
+        const ageDays = (now - new Date(job.posted_at).getTime()) / 86400000
+        s.freshDays += ageDays
+      }
+      const qScore = jaiQuality.get((job as any).id)
+      if (qScore != null) { s.qualitySum += qScore; s.qualityN++ }
       s.quota = quotaBySource.get(src) || 0
       stats.set(src, s)
     }
 
-    const rows = Array.from(stats.values()).map(s => ({
-      source: s.source,
-      total_jobs: s.total,
-      accepted_jobs: s.accepted,
-      africa_eligible_jobs: s.africa,
-      verified_jobs: s.verified,
-      dead_link_count: s.dead,
-      duplicate_count: s.dup,
-      ai_quota_used: s.quota,
-      acceptance_rate: s.total > 0 ? s.accepted / s.total : 0,
-      africa_rate: s.total > 0 ? s.africa / s.total : 0,
-      verification_rate: s.total > 0 ? s.verified / s.total : 0,
-      crawl_priority: s.total > 10 && (s.africa / s.total < 0.25 || s.dup / s.total >= 0.3) ? 0 : 1,
-      last_updated: new Date().toISOString(),
-    }))
+    const rows = Array.from(stats.values()).map(s => {
+      const runs = runsBySource.get(s.source)
+      const reliability = runs && runs.total > 0 ? runs.ok / runs.total : 0
+      const duplicateShare = s.total > 0 ? s.dup / s.total : 0
+      const trustScore = Math.max(0, Math.min(100, Math.round(
+        100 * (0.35 * reliability + 0.25 * (s.total > 0 ? s.verified / s.total : 0) + 0.2 * (s.total > 0 ? s.africa / s.total : 0) + 0.2 * (1 - duplicateShare))
+      )))
+      return {
+        source: s.source,
+        total_jobs: s.total,
+        accepted_jobs: s.accepted,
+        africa_eligible_jobs: s.africa,
+        verified_jobs: s.verified,
+        dead_link_count: s.dead,
+        duplicate_count: s.dup,
+        ai_quota_used: s.quota,
+        acceptance_rate: s.total > 0 ? s.accepted / s.total : 0,
+        africa_rate: s.total > 0 ? s.africa / s.total : 0,
+        verification_rate: s.total > 0 ? s.verified / s.total : 0,
+        // [V2] reliability / freshness / expired / quality / composite trust
+        reliability_score: reliability,
+        runs_count: runs?.total ?? 0,
+        consecutive_failures: runs?.consecutive ?? 0,
+        expired_count: s.expired,
+        avg_quality_score: s.qualityN > 0 ? Math.round(s.qualitySum / s.qualityN) : 0,
+        avg_freshness_days: s.total > 0 ? Math.round(s.freshDays / s.total) : 0,
+        trust_score: trustScore,
+        crawl_priority: s.total > 10 && (s.africa / s.total < 0.25 || s.dup / s.total >= 0.3) ? 0 : 1,
+        last_updated: new Date().toISOString(),
+      }
+    })
 
     if (rows.length > 0) {
       const { error: upErr } = await sb.from('source_intelligence').upsert(rows, { onConflict: 'source' })
@@ -293,12 +383,6 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
   }
 }
 
-/**
- * Queue recovery (stabilization): the destructive 72h TTL expiry is REMOVED.
- * Nothing is ever silently dropped. Retries are scheduled with exponential
- * backoff inside processAIQueue (next_retry_at). Every job eventually becomes
- * Verified (completed + AI row) or Rejected (failed with reason).
- */
 export async function healQueue(): Promise<{ expired: number }> {
   return { expired: 0 }
 }

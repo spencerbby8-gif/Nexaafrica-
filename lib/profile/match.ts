@@ -192,6 +192,22 @@ export function scoreJob(job: Job, signals: MatchSignals): MatchedJob | null {
     if (reasons.length === 0) reasons.push('Remote-ready fit')
   }
 
+  // [V2] Real listing-quality factors (all from persisted job data — never
+  // fabricated): verified trust, salary disclosure, explicit Africa tier.
+  const trustRaw = (job as any).trust_score
+  if (typeof trustRaw === 'number' && trustRaw >= 60) {
+    score += 2
+    if (reasons.length === 0) reasons.push('Trusted listing')
+  }
+  if (job.salary_range) {
+    score += 1
+    if (reasons.length === 0) reasons.push('Salary disclosed')
+  }
+  if (job.eligibility === 'explicit') {
+    score += 1
+    if (reasons.length === 0) reasons.push('Explicitly open to Africa')
+  }
+
   // Mild freshness nudge, based on the real posting date.
   const ageDays =
     (Date.now() - new Date(job.posted_at).getTime()) / 86_400_000

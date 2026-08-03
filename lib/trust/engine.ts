@@ -12,6 +12,8 @@ import { remotePolicyClaritySignal } from "./signals/remotePolicyClarity"
 import { postingFreshnessSignal } from "./signals/postingFreshness"
 import { duplicateDetectionSignal } from "./signals/duplicateDetection"
 import { scamIndicatorsSignal } from "./signals/scamIndicators"
+import { companyLearningSignal } from "./signals/companyLearning"
+import { sourceLearningSignal } from "./signals/sourceLearning"
 
 const SIGNAL_FNS = [
   employerLegitimacySignal,
@@ -24,6 +26,8 @@ const SIGNAL_FNS = [
   postingFreshnessSignal,
   duplicateDetectionSignal,
   scamIndicatorsSignal,
+  companyLearningSignal,
+  sourceLearningSignal,
 ]
 
 function calculateConfidence(signals: TrustSignal[]): TrustConfidence {

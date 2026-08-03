@@ -1,4 +1,5 @@
 import 'server-only'
+import { cache } from 'react'
 import { createServiceClient } from '@/lib/supabase/service'
 import { createClient } from '@/lib/supabase/server'
 import type { Category, Job, JobFilters } from '@/lib/types'
@@ -154,7 +155,7 @@ export async function getCategory(slug: string): Promise<Category | null> {
   return (data as Category) ?? null
 }
 
-export async function countJobs(filters: JobFilters = {}): Promise<number> {
+export const countJobs = cache(async function countJobs(filters: JobFilters = {}): Promise<number> {
   const supabase = await createClient()
   let query = supabase
     .from('jobs')
@@ -174,7 +175,7 @@ export async function countJobs(filters: JobFilters = {}): Promise<number> {
     return 0
   }
   return count ?? 0
-}
+})
 
 export async function getDistinctCountriesForCategory(category: string): Promise<string[]> {
   const supabase = await createClient()
@@ -200,7 +201,7 @@ export async function getDistinctCountriesForCategory(category: string): Promise
  * Uses posted_at (real provider date) for freshness, not created_at (ingestion time),
  * per Job Refresh Engine requirement: freshness scoring using real posted dates.
  */
-export async function getFreshnessPulse(): Promise<{
+export const getFreshnessPulse = cache(async function getFreshnessPulse(): Promise<{
   addedThisWeek: number
   openToAfricaThisWeek: number
 }> {
@@ -225,7 +226,7 @@ export async function getFreshnessPulse(): Promise<{
     addedThisWeek: weekRes.count ?? 0,
     openToAfricaThisWeek: africaRes.count ?? 0,
   }
-}
+})
 
 // ─── Live Proof Layer queries (P7) ──────────────────────────────────
 
@@ -233,7 +234,7 @@ export async function getFreshnessPulse(): Promise<{
  * Active jobs with real AI intelligence, recently verified by a live model.
  * model_version contains ':' (provider:model) and is not regex-era.
  */
-export async function getVerifiedJobs(limit = 8): Promise<JobWithAI<Job>[]> {
+export const getVerifiedJobs = cache(async function getVerifiedJobs(limit = 8): Promise<JobWithAI<Job>[]> {
   const supabase = await createClient()
   const svc = createServiceClient()
   // [STABILIZATION] Homepage freshness: the newest REAL postings that are
@@ -271,9 +272,9 @@ export async function getVerifiedJobs(limit = 8): Promise<JobWithAI<Job>[]> {
   } catch {
     return []
   }
-}
+})
 
-export async function getProofStats(): Promise<{
+export const getProofStats = cache(async function getProofStats(): Promise<{
   totalActive: number
   verified: number
   queued: number
@@ -304,4 +305,4 @@ export async function getProofStats(): Promise<{
     aiCoveragePct: totalActive > 0 ? Math.round((verified / totalActive) * 100) : 0,
     queueDepth: queued,
   }
-}
+})

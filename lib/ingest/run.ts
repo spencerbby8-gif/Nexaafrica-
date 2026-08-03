@@ -192,6 +192,17 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
       }
     }
 
+    // [V2] Learning-layer context for the trust engine: company + source
+    // intelligence rows (both tables are small — one fetch each per run).
+    let ciMap = new Map<string, any>()
+    let siMap = new Map<string, any>()
+    try {
+      const { data: ci } = await supabase.from('company_intelligence').select('*')
+      for (const r of (ci || []) as any[]) ciMap.set(String(r.company).toLowerCase(), r)
+      const { data: si } = await supabase.from('source_intelligence').select('*')
+      for (const r of (si || []) as any[]) siMap.set(String(r.source).toLowerCase(), r)
+    } catch {}
+
     // [STABILIZATION] Company learning gate: companies with measured high
     // rejection or low Africa-eligibility lose crawl priority — their jobs are
     // rejected before validation/upsert.
@@ -262,7 +273,11 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
           source: job.source,
           source_id: job.source_id,
         }
-        trustResult = calculateTrustScore(jobForTrust, { companyJobCount })
+        trustResult = calculateTrustScore(jobForTrust, {
+          companyJobCount,
+          companyIntel: ciMap.get(String((job.company || '').toLowerCase())) || null,
+          sourceIntel: siMap.get(String((job.source || '').toLowerCase())) || null,
+        })
       } catch {}
 
       const row: Record<string, unknown> = {
@@ -520,6 +535,15 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
         })
       }
     } catch {}
+    // [V2] Learning-layer context for the trust engine.
+    let ciMap = new Map<string, any>()
+    let siMap = new Map<string, any>()
+    try {
+      const { data: ci } = await supabase.from('company_intelligence').select('*')
+      for (const r of (ci || []) as any[]) ciMap.set(String(r.company).toLowerCase(), r)
+      const { data: si } = await supabase.from('source_intelligence').select('*')
+      for (const r of (si || []) as any[]) siMap.set(String(r.source).toLowerCase(), r)
+    } catch {}
 
     for (const job of jobs) {
       const err = validateNormalizedJob(job)
@@ -579,7 +603,11 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
           source: job.source,
           source_id: job.source_id,
         }
-        trustResult = calculateTrustScore(jobForTrust, { companyJobCount: 0 })
+        trustResult = calculateTrustScore(jobForTrust, {
+          companyJobCount: 0,
+          companyIntel: ciMap.get(String((job.company || '').toLowerCase())) || null,
+          sourceIntel: siMap.get(String((job.source || '').toLowerCase())) || null,
+        })
       } catch {}
 
       const row: Record<string, unknown> = {

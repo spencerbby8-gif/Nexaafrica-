@@ -159,17 +159,48 @@ function extractCtx(text: string, re: RegExp): string|null {
   const i=m.index||0; return text.slice(Math.max(0,i-120),Math.min(text.length,i+(m[0]?.length||0)+120)).replace(/\s+/g,' ').trim().slice(0,200)||null
 }
 
-function regexAfrica(text: string): Partial<AIResp> {
-  const t=text.toLowerCase()
-  if(/africa|nigeria|kenya|south africa|ghana|egypt/i.test(t)) return {africa_eligibility:"explicit",africa_confidence:75,africa_evidence:extractCtx(text,/africa|nigeria|kenya|south africa|ghana|egypt/i)}
-  if(/us only|uk only|eu only|must reside|residents only|no visa sponsorship/i.test(t)) return {africa_eligibility:"restricted",africa_confidence:70,africa_evidence:extractCtx(text,/us only|uk only|eu only|must reside|residents only|no visa sponsorship/i)}
+// [V2] Full African country/demonym list — explicit Africa mention detection.
+const AFRICA_RE = /(\bafrica\b|\bafrican\b|nigeria|kenya|ghana|south africa|egypt|morocco|rwanda|uganda|ethiopia|tanzania|tunisia|senegal|algeria|zimbabwe|namibia|cameroon|ivory coast|c[ôo]te d'ivoire|mali|niger|burkina faso|benin|togo|sierra leone|liberia|guinea|gambia|mauritania|chad|sudan|south sudan|somalia|djibouti|eritrea|libya|botswana|lesotho|eswatini|swaziland|malawi|mozambique|angola|zambia|congo|gabon|equatorial guinea|central african republic|comoros|madagascar|mauritius|seychelles|cabo verde|lagos|nairobi|accra|addis ababa|cairo|casablanca|kigali|kampala|dar es salaam|johannesburg|abuja)/i
+
+// [V2] Location/work-authorization restriction language — expanded beyond the
+// old "us only" set to reduce false "unknown" for genuinely locked roles.
+const RESTRICT_RE = /\b(us only|uk only|eu only|must (?:reside|be based|be located|be residing|be resident)|residents? only|citizens? only|must be authorized|work authori[sz]ation (?:in|for|required)|authorized to work in (?:the )?(?:us|usa|united states|uk|canada|eu)|(?:us|uk|eu|canada|australia) (?:work )?(?:authorization|eligibility|citizenship|resident)(?: required| is required)?|no (?:visa )?(?:sponsorship|sponsoring)|cannot (?:provide )?sponsorship|(?:green card|citizenship) required|(?:based|located|residing) in (?:the )?(?:us|usa|united states|uk|united kingdom|canada|eu|europe|germany|france|spain|italy|netherlands|poland|sweden|norway|denmark|finland|belgium|austria|switzerland|ireland|portugal|australia|new zealand|india|singapore|japan|israel|uae|dubai|qatar|saudi arabia|turkey|brazil|mexico|argentina|colombia|chile|philippines|indonesia|vietnam|thailand|malaysia|south korea|taiwan|hong kong|latam|apac)|candidates? (?:must|need|should|will) (?:be|to be) (?:based|located|residing|in)|(?:location|locations?)[:\-—]\s*(?:us|usa|united states|uk|u\.?k\.?|canada|eu)|within (?:the )?(?:us|united states|uk|canada|eu))/i
+
+const EMEA_RE = /\b(emea|europe, the middle east and africa|europe\s*\/\s*middle east\s*\/\s*africa|middle east and africa)\b/i
+
+// [V2] Restricted-region location lock: country/location fields pointing at a
+// locked region with no global-outreach language anywhere → restricted.
+const LOCATION_RESTRICTED_RE = /^(us|usa|u\.?s\.?|united\s+states|uk|u\.?k\.?|united\s+kingdom|canada|eu|europe|germany|france|spain|italy|netherlands|poland|sweden|norway|denmark|finland|belgium|austria|switzerland|ireland|portugal|australia|new\s+zealand|india|singapore|japan|israel|uae|dubai|qatar|saudi\s+arabia|turkey|brazil|mexico|argentina|colombia|chile|philippines|indonesia|vietnam|thailand|malaysia|south\s+korea|taiwan|hong\s+kong|latam|apac)$/i
+const GLOBAL_OUTREACH_RE = /\b(worldwide|anywhere|emea|\bafrica\b|any\s+(time\s*zone|location|country)|remote\s*[-—,]?\s*(global|worldwide|anywhere|international)|distributed\s+(team|workforce)|work\s+from\s+anywhere|global(?:ly)?\s+remote)\b/i
+
+function regexAfrica(text: string, job: Job): Partial<AIResp> {
+  const t = text.toLowerCase()
+  // Explicit Africa mention — highest tier.
+  const af = AFRICA_RE.exec(text)
+  if (af) return { africa_eligibility: "explicit", africa_confidence: 75, africa_evidence: extractCtx(text, AFRICA_RE) }
+  // Hard restriction language — restricted before any "likely" inference.
+  if (RESTRICT_RE.test(t)) return { africa_eligibility: "restricted", africa_confidence: 70, africa_evidence: extractCtx(text, RESTRICT_RE) }
+  // Location lock: the posting is located in a restricted region with no
+  // global-outreach language anywhere (reduces false "unknown").
+  const locText = `${job.country || ""} ${job.location || ""}`.trim()
+  const locParts = locText.split(/[,;]/).map((p: string) => p.trim()).filter(Boolean)
+  const anyRestrictedPart = locParts.some((p: string) => LOCATION_RESTRICTED_RE.test(p))
+  const anyGlobalPart = locParts.some((p: string) => GLOBAL_OUTREACH_RE.test(p))
+  if (locText && anyRestrictedPart && !anyGlobalPart && !GLOBAL_OUTREACH_RE.test(t)) {
+    return { africa_eligibility: "restricted", africa_confidence: 60, africa_evidence: extractCtx(text, /(remote|location)/i) }
+  }
+  // EMEA / global outreach → likely.
+  if (EMEA_RE.test(text) || GLOBAL_OUTREACH_RE.test(t)) {
+    return { africa_eligibility: "likely", africa_confidence: 55, africa_evidence: extractCtx(text, /emea|worldwide|global|anywhere/i) }
+  }
   return {}
 }
 
 function regexRemote(text: string, isRemote: boolean): Partial<AIResp> {
   const t=text.toLowerCase()
-  if(/fully remote|work from anywhere|remote.*worldwide/i.test(t)||isRemote) return {remote_eligibility:"fully_remote",remote_confidence:40,remote_evidence:extractCtx(text,/fully remote|work from anywhere|remote/i)}
-  if(/hybrid|2 days in office/i.test(t)) return {remote_eligibility:"hybrid",remote_confidence:65,remote_evidence:extractCtx(text,/hybrid|2 days in office/i)}
+  if(/fully remote|work from anywhere|remote.*worldwide|100% remote|remote-first|remote first|remote \(anywhere|distributed team|remote.?(global|anywhere|international)/i.test(t)||isRemote) return {remote_eligibility:"fully_remote",remote_confidence:40,remote_evidence:extractCtx(text,/fully remote|work from anywhere|remote/i)}
+  if(/hybrid|2 days in office|3 days in office|in[- ]office (?:days|2|3)|partially remote/i.test(t)) return {remote_eligibility:"hybrid",remote_confidence:65,remote_evidence:extractCtx(text,/hybrid|days in office|partially remote/i)}
+  if(/onsite|on-site|in[- ]office\b|must work from (?:our )?(?:office|headquarters)|not remote/i.test(t)) return {remote_eligibility:"onsite",remote_confidence:65,remote_evidence:extractCtx(text,/onsite|on-site|in[- ]office|not remote/i)}
   return {}
 }
 
@@ -186,28 +217,76 @@ function regexSalary(text: string, job: Job): Partial<AIResp> {
 function regexCompany(text: string, job: Job): Partial<AIResp> {
   if (!text || text.length < 100) return {}
   const t = text.toLowerCase()
-  // Positive signals
-  const hasAbout = /about us|our mission|our team|founded in/i.test(t)
+  // [V2] Positive signals — expanded set.
+  const hasAbout = /about us|our mission|our team|founded in|who we are/i.test(t)
   const hasContact = /contact|email|phone|address/i.test(t)
-  const hasPrivacy = /privacy policy|terms of service/i.test(t)
-  const hasCareers = /careers|jobs|join us/i.test(t)
+  const hasPrivacy = /privacy policy|terms of service|cookie policy/i.test(t)
+  const hasCareers = /careers|jobs|join us|open (positions|roles)|we're hiring|we are hiring/i.test(t)
+  const hasLegal = /copyright|©|all rights reserved|legal notice/i.test(t)
+  const hasLinkedIn = /linkedin|twitter|instagram|facebook|youtube/i.test(t)
   
   let legitimacy: "verified"|"likely_legit"|"unknown"|"suspicious" = "unknown"
   let confidence = 0
   let evidence = ""
   
-  const positiveSignals = [hasAbout, hasContact, hasPrivacy, hasCareers].filter(Boolean).length
-  if (positiveSignals >= 3) {
+  const positiveSignals = [hasAbout, hasContact, hasPrivacy, hasCareers, hasLegal, hasLinkedIn].filter(Boolean).length
+  // [V2] Require at least one identity signal (about/legal) — a page that only
+  // mentions "jobs" is not evidence of a real employer.
+  const hasIdentity = hasAbout || hasLegal
+  if (positiveSignals >= 4 && hasIdentity) {
     legitimacy = "likely_legit"
-    confidence = 40 + positiveSignals * 10
-    evidence = `Company website has ${positiveSignals}/4 legitimacy signals (about, contact, privacy, careers)`
+    confidence = 40 + positiveSignals * 8
+    evidence = `Company website has ${positiveSignals}/6 legitimacy signals (about, contact, privacy, careers, legal, social)`
+  } else if (positiveSignals >= 3 && hasIdentity) {
+    legitimacy = "likely_legit"
+    confidence = 32
+    evidence = `Company website has ${positiveSignals}/6 legitimacy signals`
   } else if (positiveSignals >= 2) {
     legitimacy = "likely_legit"
-    confidence = 30
-    evidence = `Company website has ${positiveSignals}/4 legitimacy signals`
+    confidence = 22
+    evidence = `Company website has ${positiveSignals}/6 signals (weak)`
   }
   
   return { company_legitimacy: legitimacy, company_confidence: confidence, company_evidence: evidence || null }
+}
+
+// [V2] Timezone requirements — only when the posting actually mentions time
+// zones or working-hours overlap. Never inferred.
+const TZ_RE = /\b(CET|CEST|GMT|UTC|EST|EDT|CST|CDT|PST|PDT|BST|EET|EEST|IST|JST|AEST|GMT[+-]\d{1,2}|UTC[+-]\d{1,2})\b|work(?:ing)?\s+(?:hours|within)\s+(?:the\s+)?(?:us|uk|eu|european|eastern|central|pacific)\s*(?:time\s*)?(?:zones?|hours)?|overlap\s+(?:with\s+)?(?:us|uk|european|eastern|central|pacific)\s*(?:time\s*)?(?:zones?|hours)?|(?:us|uk|european|eastern|central|pacific)\s+(?:business\s+)?hours|time[- ]?zone[s]?\s+(?:overlap|requirement|required)|must\s+(?:be\s+)?available\s+(?:during|in)\s+(?:the\s+)?(?:us|uk|eu|european)\s+(?:time\s*)?(?:zones?|hours)?/i
+
+function regexTimezone(text: string): Partial<AIResp> {
+  const m = TZ_RE.exec(text)
+  if (!m) return {}
+  const tz = m[0].trim().replace(/\s+/g, " ")
+  return {
+    timezone_requirements: tz.length <= 80 ? tz : tz.slice(0, 77) + "...",
+  }
+}
+
+// [V2] Experience level from explicit evidence: years of experience or
+// seniority title. Conservative — abstains without direct evidence.
+const YEARS_EXP_RE = /(\d{1,2})\s*\+?\s*(?:years?|yrs?)(?:\s+of)?(?:\s+relevant)?(?:\s+professional)?\s+(?:experience|work|exp)\b/i
+const TITLE_RE = /\b(?:entry[- ]level|junior|new grad(?:uate)?|graduate|intern(?:ship)?|associate)\b|\b(?:senior|sr\.?|lead|principal|staff|head of|director|vp|vice president|chief|cto|ceo|cfo|coo)\b/i
+
+function regexExperience(text: string): Partial<AIResp> {
+  // 1) Years of experience
+  const y = YEARS_EXP_RE.exec(text)
+  if (y) {
+    const years = Number.parseInt(y[1], 10)
+    const value = years <= 2 ? "entry" : years <= 5 ? "mid" : "senior"
+    return { experience_level: value, experience_confidence: 70 }
+  }
+  // 2) Explicit seniority title
+  const t = text.toLowerCase()
+  if (/\b(?:entry[- ]level|junior|new grad(?:uate)?|graduate|intern(?:ship)?)\b/i.test(t)) {
+    return { experience_level: "entry", experience_confidence: 55 }
+  }
+  if (/\b(?:principal|staff|senior|sr\.?|lead|head of|director|vp|vice president|chief|cto|ceo|cfo|coo)\b/i.test(t)) {
+    // Head-of/director/C-suite titles are senior+; keep conservative mapping.
+    const value = /\b(?:head of|director|vp|vice president|chief|cto|ceo|cfo|coo)\b/i.test(t) ? "executive" : "senior"
+    return { experience_level: value, experience_confidence: 55 }
+  }
+  return {}
 }
 
 
@@ -217,12 +296,16 @@ function regexCompany(text: string, job: Job): Partial<AIResp> {
 // 0 confidence; non-verbatim evidence strings are nulled.
 
 const TR = {
-  africa: /\b(africa|african|nigeria|kenya|ghana|egypt|south africa|morocco|rwanda|uganda|ethiopia|tanzania|tunisia|senegal|algeria|zimbabwe|namibia)\b/i,
-  restrict: /\b(us|u\.s\.|usa|united states|uk|u\.k\.|united kingdom|eu|canada|australia)\s+(only|residents? only|citizens? only)\b|\b(?:only|based) in the (us|usa|uk|eu|united states|united kingdom)\b|must (?:be )?(?:reside|residing|be located|be based)|work authori[sz]ation (?:in|for) the (us|uk|eu)|authorized to work in the (us|uk)/i,
-  worldwide: /work from anywhere|\banywhere in the world\b|\bworldwide\b|global(?:ly)? remote|remote[^\.\n]{0,30}(global|worldwide)|\bemea\b|distributed (?:team|workforce|company)|hire (?:in )?\d+\+? countries/i,
+  africa: AFRICA_RE,
+  // [V2] Restriction patterns extended to cover location locks and
+  // authorization requirements (reduces false unknowns).
+  restrict: /(?:us|u\.s\.|usa|united states|uk|u\.k\.|united kingdom|eu|canada|australia)\s+(?:only|residents? only|citizens? only)\b|\b(?:only|based) in the (?:us|usa|uk|eu|united states|united kingdom)\b|must (?:be )?(?:reside|residing|be located|be based|be resident)|work authori[sz]ation (?:in|for|required)|authorized to work in the (?:us|uk)|must be authorized|no (?:visa )?(?:sponsorship|sponsoring)|(?:green card|citizenship) required|(?:based|located|residing) in (?:the )?(?:us|usa|united states|uk|united kingdom|canada|eu|europe|germany|france|spain|italy|netherlands|poland|sweden|norway|denmark|finland|belgium|austria|switzerland|ireland|portugal|australia|new zealand|india|singapore|japan|israel|uae|dubai|qatar|saudi arabia|turkey|brazil|mexico|argentina|colombia|chile|philippines|indonesia|vietnam|thailand|malaysia|south korea|taiwan|hong kong|latam|apac)|candidates? (?:must|need|should|will) (?:be|to be) (?:based|located|residing|in)|within (?:the )?(?:us|united states|uk|canada|eu)/i,
+  worldwide: GLOBAL_OUTREACH_RE,
   visaYes: /visa sponsor|sponsor(ship)? (?:is )?(?:available|offered|provided)|we (?:can )?sponsor|immigration (?:support|sponsorship)|sponsorship (?:is )?available|relocation (?:support|assistance|package)/i,
   visaNo: /no visa sponsorship|sponsorship (?:is )?not (?:available|offered)|cannot sponsor|unable to sponsor/i,
-  hybrid: /\bhybrid\b|\b\d\+\s*days? a week in[- ](?:the )?office\b|\b\d+ days? (?:in|from) (?:the )?office\b/i,
+  hybrid: /\bhybrid\b|\b\d\+\s*days? a week in[- ](?:the )?office\b|\b\d+ days? (?:in|from) (?:the )?office\b|partially remote/i,
+  onsite: /\bonsite\b|\bon-site\b|in[- ]office\b|not remote/i,
+  tz: TZ_RE,
   senior: /\bsenior\b|\bsr\.?\s|\blead\b|\bprincipal\b|\bhead of\b|\b(?:[5-9]|1\d)\+?\s*(?:years?|yrs?)\s*(?:of )?(?:experience|exp)\b/i,
   entry: /\bentry[- ]level\b|\bjunior\b|\bnew grad(?:uate)?\b|\bintern(ship)?\b|\b[0-2]\+?\s*(?:years?|yrs?)\s*(?:of )?(?:experience|exp)\b/i,
 }
@@ -310,6 +393,19 @@ export function enforceTruthfulness(merged: AIResp, opts: { job: Job; truth: str
     }
   }
 
+  // 6b) Timezone: a stated timezone requirement must be backed by timezone
+  // language in the source text — else drop it (never infer).
+  if (out.timezone_requirements && !TR.tz.test(truth)) {
+    out.timezone_requirements = null
+  }
+
+  // 6c) On-site claims need on-site language; metadata remote stays remote.
+  if (out.remote_eligibility === "onsite" && !TR.onsite.test(truth)) {
+    out.remote_eligibility = job.is_remote ? "fully_remote" : "unknown"
+    out.remote_confidence = job.is_remote ? Math.min(out.remote_confidence, 50) : 0
+    if (!job.is_remote) out.remote_evidence = null
+  }
+
   // 7) Experience: only downgrade hard contradictions (junior text vs senior claim)
   if ((out.experience_level === "senior" || out.experience_level === "executive") && TR.entry.test(truth) && !TR.senior.test(truth)) {
     out.experience_level = "unknown"; out.experience_confidence = 0
@@ -380,17 +476,19 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
   }
 
   // ── Regex extraction (ground truth from page text) ──
-  const rxAfrica = regexAfrica(combined)
+  const rxAfrica = regexAfrica(combined, job)
   const rxRemote = regexRemote(combined, job.is_remote)
   const rxSalary = regexSalary(combined, job)
   const rxCompany = regexCompany(companyText, job)
+  const rxTz = regexTimezone(combined)
+  const rxExp = regexExperience(combined)
 
   // [FIX #2] Smart merge: regex is ground truth, AI supplements
   // Start with defaults
   const merged: AIResp = { ...AF }
   
   // Apply regex first (ground truth from page)
-  Object.assign(merged, rxAfrica, rxRemote, rxSalary, rxCompany)
+  Object.assign(merged, rxAfrica, rxRemote, rxSalary, rxCompany, rxTz, rxExp)
   
   // AI overrides ONLY when AI returns non-unknown/non-null values
   // This ensures regex-extracted salary is preserved when AI returns null
@@ -462,10 +560,10 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
     }
   }
 
-  if (!aiUsed) modelVersion = Object.keys({ ...rxAfrica, ...rxRemote, ...rxSalary }).length > 0 ? "regex-extracted-" + pageText.length + "bytes" : "no-ai-providers"
+  if (!aiUsed) modelVersion = Object.keys({ ...rxAfrica, ...rxRemote, ...rxSalary, ...rxTz, ...rxExp }).length > 0 ? "regex-extracted-" + pageText.length + "bytes" : "no-ai-providers"
   // P5: harden all claims against the actual source text before persisting.
   // P6: evidence provenance label
-  const evidenceProvenance = aiUsed ? (companyText.length >= 100 ? "company_page" : "page") : (Object.keys({...rxAfrica,...rxRemote,...rxSalary}).length > 0 ? "regex" : "ats_metadata")
+  const evidenceProvenance = aiUsed ? (companyText.length >= 100 ? "company_page" : "page") : (Object.keys({...rxAfrica,...rxRemote,...rxSalary,...rxTz,...rxExp}).length > 0 ? "regex" : "ats_metadata")
 
   const hardened = enforceTruthfulness(merged, {
     job,

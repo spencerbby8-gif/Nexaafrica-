@@ -157,6 +157,13 @@ const RANGE_RE = new RegExp(
   `(${CUR})\\s?(${NUM})\\s?(?:-|–|—|to)\\s?(${CUR})?\\s?(${NUM})\\s*((?:/|per\\s|a\\s|an\\s)?(?:hour|hr|day|week|wk|month|mo|year|yr|annum|annually))?`,
   'i',
 )
+// [V2] Trailing-currency range: "135000-165000 USD", "80k–120k EUR" — only
+// accepted when a currency word follows, so bare number pairs ("10-15
+// employees") can never be misread as salary.
+const RANGE_RE_TRAILING = new RegExp(
+  `(${NUM})\\s?(?:-|–|—|to)\\s?(${NUM})\\s*((?:/|per\\s|a\\s|an\\s)?(?:hour|hr|day|week|wk|month|mo|year|yr|annum|annually))?\\s*(${CUR})`,
+  'i',
+)
 // Upper bound: up to $200k | earn up to €150,000
 const UPTO_RE = new RegExp(
   `up\\s+to\\s+(${CUR})\\s?(${NUM})\\s*((?:/|per\\s|a\\s|an\\s)?(?:hour|hr|day|week|wk|month|mo|year|yr|annum|annually))?`,
@@ -204,6 +211,18 @@ export function extractSalary(text: string): SalaryIntelligence | null {
     const period = normalizePeriod(r[0], max ?? min)
     if (currency && min != null && max != null && min <= max && plausible(max, period)) {
       return { min, max, currency, period, raw: r[0].trim() }
+    }
+  }
+
+  // 1b) Trailing-currency range ("135000-165000 USD")
+  const rt = RANGE_RE_TRAILING.exec(text)
+  if (rt) {
+    const currency = normalizeCurrency(rt[4])
+    const min = parseAmount(rt[1])
+    const max = parseAmount(rt[2])
+    const period = normalizePeriod(rt[3] || '', max ?? min)
+    if (currency && min != null && max != null && min <= max && plausible(max, period)) {
+      return { min, max, currency, period, raw: rt[0].trim() }
     }
   }
 

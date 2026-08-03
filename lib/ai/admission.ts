@@ -126,10 +126,8 @@ export async function refreshCompanyIntelligence(): Promise<{ updated: number }>
 
   // Fallback: manual aggregation if RPC doesn't exist
   try {
-    const { data: jobs } = await sb
-      .from('jobs')
-      .select('company, is_open_to_africa, is_remote, is_active, source')
-      .eq('is_active', true)
+    // [CAP-FIX] Paginated fetch — same 1,000-row cap applied to this fallback.
+    const jobs = await fetchAllActiveJobs(sb, 'id, company, is_open_to_africa, is_remote, is_active, source')
 
     const { data: intel } = await sb
       .from('job_ai_intelligence')
@@ -190,6 +188,38 @@ export async function refreshCompanyIntelligence(): Promise<{ updated: number }>
 }
 
 /**
+ * Fetch ALL active jobs in pages of 1,000.
+ *
+ * PostgREST caps a single request at 1,000 rows, which silently truncated the
+ * learning layer (source_intelligence totals summed to exactly 1,000 while the
+ * real counts were 5x higher). Paginating keeps the learning gates computed on
+ * the full dataset.
+ */
+async function fetchAllActiveJobs<T = any>(sb: any, select: string): Promise<T[]> {
+  const PAGE = 1000
+  const rows: T[] = []
+  try {
+    for (let from = 0; from < 50000; from += PAGE) {
+      const { data, error } = await sb
+        .from('jobs')
+        .select(select)
+        .eq('is_active', true)
+        .range(from, from + PAGE - 1)
+      if (error) {
+        console.error('[learning] paginated fetch error:', error.message?.slice(0, 150))
+        break
+      }
+      if (!data || data.length === 0) break
+      rows.push(...(data as T[]))
+      if (data.length < PAGE) break
+    }
+  } catch (e) {
+    console.error('[learning] paginated fetch exception:', (e instanceof Error ? e.message : String(e)).slice(0, 150))
+  }
+  return rows
+}
+
+/**
  * Populate source_intelligence from live production data.
  */
 export async function refreshSourceIntelligence(): Promise<{ updated: number }> {
@@ -197,10 +227,9 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
   const sb = createServiceClient()
 
   try {
-    const { data: jobs } = await sb
-      .from('jobs')
-      .select('source, is_open_to_africa, is_active')
-      .eq('is_active', true)
+    // [CAP-FIX] Paginated fetch — a single capped request computed learning
+    // stats on only the first 1,000 active jobs (~22% of the dataset).
+    const jobs = await fetchAllActiveJobs(sb, 'id, source, is_open_to_africa, is_active')
 
     const { data: queue } = await sb
       .from('ai_processing_queue')

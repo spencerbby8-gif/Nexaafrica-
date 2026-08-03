@@ -28,7 +28,12 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   const { pathname } = request.nextUrl
-  const isProtected = pathname.startsWith('/profile') || pathname.startsWith('/onboarding')
+  const isProtected =
+    pathname.startsWith('/profile') ||
+    pathname.startsWith('/onboarding') ||
+    // [ADMIN-HTTP] Admin pages redirect at the edge (real HTTP 307) instead of
+    // streaming a 200 loading shell with an in-flight redirect for anon users.
+    pathname.startsWith('/admin')
 
   if (isProtected && !user) {
     const redirectUrl = request.nextUrl.clone()

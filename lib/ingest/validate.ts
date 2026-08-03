@@ -93,6 +93,8 @@ const VALID_ELIGIBILITY = new Set(['explicit', 'likely', 'restricted', 'unknown'
 const PLACEHOLDER_COMPANIES = new Set([
   'name', 'company', 'companyname', 'company_name', 'title', 'unknown',
   'n/a', 'na', 'none', 'test', 'example', 'employer', 'organization', 'organisation',
+  // 'career' observed in the wild: remoteok emitted it as a company name.
+  'career',
 ])
 
 /**

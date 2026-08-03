@@ -52,9 +52,12 @@ export async function GET(req: NextRequest) {
       }
 
       case "health": {
-        const { getOrchHealth } = await import("@/lib/ai/orchestrator")
+        const { getOrchHealth, warmHealthFromDB } = await import("@/lib/ai/orchestrator")
+        // [COLD-TRUTH] Warm from the DB first: on a cold instance the in-memory
+        // health map is empty/all-healthy and contradicts ai_orch_health.
+        await warmHealthFromDB()
         const health = getOrchHealth()
-        return NextResponse.json({ success: true, health })
+        return NextResponse.json({ success: true, source: "warmed-from-ai_orch_health", health })
       }
 
       default:

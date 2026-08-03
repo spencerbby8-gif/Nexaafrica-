@@ -33,6 +33,9 @@ function verificationState(ai: JobAIIntelligenceRow | null | undefined, qs?: str
   if (qs === 'processing') return { status: 'queued' as const, label: 'Processing', tone: 'queued' }
   if (qs === 'pending') return { status: 'queued' as const, label: 'Queued', tone: 'queued' }
   if (qs === 'failed') return { status: 'failed' as const, label: 'Failed', tone: 'failed' }
+  // [INCIDENT-FIX] completed without an AI row = not verified (e.g. listing
+  // admission-rejected), never a fake "Pending"/"Error".
+  if (qs === 'completed') return { status: 'stale' as const, label: 'Not verified', tone: 'stale' }
   return { status: 'queued' as const, label: 'Pending', tone: 'queued' }
 }
 

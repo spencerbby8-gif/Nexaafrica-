@@ -506,6 +506,20 @@ export async function processAIQueue(batchSize = 100) {
             completed_at: new Date().toISOString(),
             error: `Rejected: ${decision.reason} [${decision.gate}]`
           }).eq("id", item.id)
+          // [M3] Write the admission verdict back to the jobs row so rejected
+          // jobs stop looking eligible in public lists: Africa/work-auth
+          // rejections become restricted (mirrors the region-lock gate and
+          // role-page 404 convention); dead/onsite/placeholder rejections
+          // deactivate the listing. Queue status then matches listing truth.
+          try {
+            if (decision.gate === "africa_eligibility" || decision.gate === "work_authorization") {
+              await supabase.from("jobs").update({ eligibility: "restricted", is_open_to_africa: false }).eq("id", job.id)
+            } else if (decision.gate === "onsite_only" || decision.gate === "expired" || decision.gate === "dead_url" || decision.gate === "placeholder_company") {
+              await supabase.from("jobs").update({ is_active: false }).eq("id", job.id)
+            }
+          } catch (e) {
+            console.log(JSON.stringify({ scope: "ai_engine", event: "admission_writeback_error", jobId: (job as any).id?.slice(0,8) || "", error: (e instanceof Error ? e.message : String(e)).slice(0,150) }))
+          }
           processed++
           consecutiveItemFailures = 0
           return

@@ -35,7 +35,11 @@ function intelligenceState(row: any | null | undefined, queueStatus?: string | n
   if (queueStatus === "processing") return { status: "pending", label: "Processing", tone: "amber" };
   if (queueStatus === "pending") return { status: "pending", label: "Queued", tone: "amber" };
   if (queueStatus === "failed") return { status: "failed", label: "Failed", tone: "red" };
-  if (queueStatus === "completed") return { status: "failed", label: "Error", tone: "red" };
+  // [INCIDENT-FIX] A completed queue row without an AI row is NOT an error —
+  // it means the listing was never processed (e.g. admission-rejected). A red
+  // "Error" badge on a verified job was fabricated state; this is the honest
+  // neutral label.
+  if (queueStatus === "completed") return { status: "pending", label: "Not verified", tone: "neutral" };
   return { status: "pending", label: "Pending", tone: "amber" };
 }
 function africaFitLabel(elig: string | null | undefined, fallbackElig?: string | null): { label: string; tone: 'positive' | 'caution' | 'neutral' } {
@@ -180,7 +184,7 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
 
   if (!hasAI || degraded) {
     const badgeColor = state.status === 'failed' ? 'border-red-500/20 bg-red-500/10 text-red-600' : 'border-amber-500/20 bg-amber-500/10 text-amber-600'
-    const msg = state.status === 'failed' ? 'Intelligence unavailable — processing failed' : degraded ? 'AI verification pending — showing feed data only' : 'Intelligence pending — our verifier is checking this role'
+    const msg = state.status === 'failed' ? 'Intelligence unavailable — processing failed' : state.label === 'Not verified' ? 'No verified intelligence for this listing' : degraded ? 'AI verification pending — showing feed data only' : 'Intelligence pending — our verifier is checking this role'
     return (
       <div className="mt-2.5 rounded-md border border-border/60 bg-secondary/30 px-2.5 py-2.5">
         <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">

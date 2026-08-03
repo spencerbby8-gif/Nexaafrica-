@@ -257,12 +257,17 @@ export async function getVerifiedJobs(limit = 8): Promise<JobWithAI<Job>[]> {
       .eq('is_active', true)
       .not('eligibility', 'eq', 'restricted')
       .eq('is_open_to_africa', true)
+    // [INCIDENT-FIX] Attach the REAL AI intelligence rows and the REAL queue
+    // status. The ids came from job_ai_intelligence, so the AI row exists —
+    // fabricating aiIntelligence:null + _queueStatus:'completed' made verified
+    // cards render fake red "Error" / amber "Pending" states.
+    const { aiMap, queueStatus } = await getAIIntelligenceWithQueueStatus(ids)
     // Newest by the REAL posting date — never a stale job while a newer
     // verified eligible job exists.
     return (jobs || [])
       .sort((a: any, b: any) => new Date(b.posted_at || b.created_at).getTime() - new Date(a.posted_at || a.created_at).getTime())
       .slice(0, limit)
-      .map((j: any) => ({ ...j, aiIntelligence: null, _queueStatus: 'completed' } as any))
+      .map((j: any) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null } as any))
   } catch {
     return []
   }

@@ -415,6 +415,39 @@ export async function processAIQueue(batchSize = 100) {
     console.log(JSON.stringify({ scope: "ai_engine", event: "queue_start", pending: pendingCount, batchSize }))
   } catch {}
 
+  // ── [ORPHAN HEAL] Completed+clean queue rows that never produced an AI row
+  // (pre-fix silent-upsert failures) are re-queued automatically so they get a
+  // real verification attempt instead of rendering "pending" forever. Bounded
+  // to 200 active-job rows per drain; idempotent (they only re-queue when no
+  // JAI row exists).
+  try {
+    const { data: doneClean } = await supabase
+      .from("ai_processing_queue")
+      .select("id, job_id, jobs!inner(is_active)")
+      .eq("status", "completed")
+      .is("error", null)
+      .eq("jobs.is_active", true)
+      .limit(200)
+    if (doneClean && doneClean.length > 0) {
+      const { data: jaiRows } = await supabase
+        .from("job_ai_intelligence")
+        .select("job_id")
+        .in("job_id", doneClean.map((d: any) => d.job_id))
+      const haveJai = new Set((jaiRows || []).map((r: any) => r.job_id))
+      const orphans = (doneClean as any[]).filter((d: any) => !haveJai.has(d.job_id))
+      if (orphans.length > 0) {
+        const healNow = new Date().toISOString()
+        await supabase
+          .from("ai_processing_queue")
+          .update({ status: "pending", error: "Requeued: orphan detection (no JAI row)", attempts: 0, completed_at: null, started_at: null, next_retry_at: healNow })
+          .in("id", orphans.map((o: any) => o.id))
+        console.log(JSON.stringify({ scope: "ai_engine", event: "orphan_requeued", count: orphans.length }))
+      }
+    }
+  } catch (e) {
+    console.log(JSON.stringify({ scope: "ai_engine", event: "orphan_heal_error", error: (e instanceof Error ? e.message : String(e)).slice(0,150) }))
+  }
+
   const nowIso = new Date().toISOString()
   const { data: queueItems } = await supabase
     .from("ai_processing_queue")
@@ -491,7 +524,7 @@ export async function processAIQueue(batchSize = 100) {
           const jobId8 = (job as any).id?.slice(0,8) || ''
           const existingIsMisleading = existing.model_version === "gemini-2.5-flash-v1" || existing.model_version === "rule-based-v1-fast" || existing.model_version === "template-removed-2026";
           const existingIsReal = !existingIsMisleading && existing.model_version && !existing.model_version.includes("failed-no-evidence") && (existing.model_version.includes("gemini") || existing.model_version.includes("groq") || existing.model_version.includes("cerebras") || existing.model_version.includes("openrouter") || existing.model_version.includes("cloudflare") || existing.model_version.includes("mistral") || existing.model_version.includes("nvidia") || existing.model_version.includes("github") || existing.model_version.includes("huggingface"))
-          const newIsFailed = intelligence.modelVersion.includes("failed-no-evidence") || intelligence.modelVersion.includes("no-ai-providers")
+          const newIsFailed = intelligence.modelVersion.includes("failed-no-evidence") || intelligence.modelVersion.includes("no-ai-providers") || intelligence.modelVersion.includes("verifyJobReal-threw")
 
           if (existingIsReal && newIsFailed) {
             console.log(JSON.stringify({ scope: "ai_engine", event: "protected_existing", jobId: jobId8, oldModel: existing.model_version, newModel: intelligence.modelVersion, reason: "existing_is_real_new_is_failed" }));
@@ -507,7 +540,9 @@ export async function processAIQueue(batchSize = 100) {
       }
 
       // ── [FIX #1] If all providers failed and no existing record, retry instead of completing ──
-      const allProvidersFailed = intelligence.modelVersion.includes("no-ai-providers") || intelligence.modelVersion.includes("failed-no-evidence")
+      // verifyJobReal-threw is a failed verification (the consolidated verifier
+      // threw) — it must be retried, never persisted as a completed row.
+      const allProvidersFailed = intelligence.modelVersion.includes("no-ai-providers") || intelligence.modelVersion.includes("failed-no-evidence") || intelligence.modelVersion.includes("verifyJobReal-threw")
       if (allProvidersFailed && !skipUpsert) {
         const { data: existingCheck } = await supabase.from("job_ai_intelligence").select("id").eq("job_id", job.id).maybeSingle()
         if (!existingCheck) {

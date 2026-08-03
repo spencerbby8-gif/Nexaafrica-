@@ -280,9 +280,12 @@ export async function getProofStats(): Promise<{
   const svc = createServiceClient()
   const [activeCount, aiCount, queueCount, staleCount] = await Promise.all([
     supabase.from('jobs').select('id', { count: 'exact', head: true }).eq('is_active', true),
-    svc.from('job_ai_intelligence').select('id', { count: 'exact', head: true }).like('model_version', '%:%').not('model_version', 'like', 'regex%'),
+    // [PROOF-TRUTH] Verified/rule-based counts are ACTIVE-JOBS ONLY: join
+    // through the FK so rows belonging to deactivated jobs never inflate the
+    // coverage the site claims.
+    svc.from('job_ai_intelligence').select('job_id, jobs!inner(is_active)', { count: 'exact', head: true }).like('model_version', '%:%').not('model_version', 'like', 'regex%').eq('jobs.is_active', true),
     svc.from('ai_processing_queue').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-    svc.from('job_ai_intelligence').select('id', { count: 'exact', head: true }).or('model_version.like.regex%,model_version.like.no-ai%'),
+    svc.from('job_ai_intelligence').select('job_id, jobs!inner(is_active)', { count: 'exact', head: true }).or('model_version.like.regex%,model_version.like.no-ai%').eq('jobs.is_active', true),
   ])
   const totalActive = activeCount.count ?? 0
   const verified = aiCount.count ?? 0

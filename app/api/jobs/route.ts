@@ -120,13 +120,14 @@ export async function GET(request: NextRequest) {
     let jobsWithAI = jobs || []
     if (jobsWithAI.length > 0) {
       try {
-        const { aiMap, queueStatus } = await getAIIntelligenceWithQueueStatus(
+        const { aiMap, queueStatus, queueError } = await getAIIntelligenceWithQueueStatus(
           jobsWithAI.map((j: any) => j.id)
         )
         jobsWithAI = jobsWithAI.map((j: any) => ({
           ...j,
           aiIntelligence: aiMap.get(j.id) || null,
           _queueStatus: queueStatus.get(j.id) || null,
+          _queueError: queueError.get(j.id) ?? null,
         }))
       } catch (err) {
         console.error('[api/jobs] AI fetch error:', err)

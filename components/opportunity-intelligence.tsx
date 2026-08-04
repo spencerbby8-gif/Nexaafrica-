@@ -1,6 +1,7 @@
 import { ShieldCheck, Globe, Banknote, Building2, Wrench, GraduationCap, Clock } from 'lucide-react'
 import type { JobAIIntelligenceRow } from '@/lib/ai/queries'
 import type { Job } from '@/lib/types'
+import { pipelineState } from '@/lib/ai/pipelineState'
 
 interface Props {
   intelligence: JobAIIntelligenceRow | null | undefined
@@ -11,36 +12,29 @@ interface Props {
 }
 
 
-function intelligenceState(row: any | null | undefined, queueStatus?: string | null): { status: "pending"|"complete"|"degraded"|"failed"; label: string; tone: string } {
-  // Has AI row — determine state from model_version
-  if (row) {
-    const mv = row.model_version || "";
-    // Real AI inference: contains provider:model pattern (e.g. "groq:llama-3.3-70b-versatile")
-    if (mv.includes(":") && !mv.includes("gemini-2.5-flash-v1") && !mv.includes("template-removed") && !mv.includes("rule-based")) {
-      return { status: "complete", label: "Nexa Intelligence", tone: "accent" };
-    }
-    // Regex/fallback only — no real AI
-    if (mv.startsWith("regex-") || mv === "no-ai-providers") {
-      return { status: "degraded", label: "Fallback", tone: "amber" };
-    }
-    // Old misleading constants — treated as degraded
-    if (mv === "gemini-2.5-flash-v1" || mv === "template-removed-2026" || mv === "rule-based-v1-fast") {
-      return { status: "degraded", label: "Legacy", tone: "amber" };
-    }
-    // Has data but unrecognized model
-    return { status: "complete", label: "Nexa Intelligence", tone: "accent" };
+function intelligenceState(row: any | null | undefined, queueStatus?: string | null, queueError?: string | null): { status: "pending"|"complete"|"degraded"|"failed"; label: string; tone: string } {
+  // [V3] Derive from the canonical pipeline state — one truthful mapping.
+  const st = pipelineState({ modelVersion: row?.model_version, queueStatus, queueError })
+  switch (st) {
+    case "verified":
+      return { status: "complete", label: "Nexa Intelligence", tone: "accent" }
+    case "rule_based":
+      return { status: "degraded", label: "Rule-based", tone: "amber" }
+    case "failed":
+      return { status: "failed", label: "Failed", tone: "red" }
+    case "processing":
+      return { status: "pending", label: "Processing", tone: "amber" }
+    case "retrying":
+      return { status: "pending", label: "Retrying", tone: "amber" }
+    case "queued":
+      return { status: "pending", label: "Queued", tone: "amber" }
+    case "rejected":
+      return { status: "pending", label: "Not eligible", tone: "neutral" }
+    case "not_verified":
+      return { status: "pending", label: "Not verified", tone: "neutral" }
+    default:
+      return { status: "pending", label: "Pending", tone: "amber" }
   }
-
-  // No AI row — check queue status
-  if (queueStatus === "processing") return { status: "pending", label: "Processing", tone: "amber" };
-  if (queueStatus === "pending") return { status: "pending", label: "Queued", tone: "amber" };
-  if (queueStatus === "failed") return { status: "failed", label: "Failed", tone: "red" };
-  // [INCIDENT-FIX] A completed queue row without an AI row is NOT an error —
-  // it means the listing was never processed (e.g. admission-rejected). A red
-  // "Error" badge on a verified job was fabricated state; this is the honest
-  // neutral label.
-  if (queueStatus === "completed") return { status: "pending", label: "Not verified", tone: "neutral" };
-  return { status: "pending", label: "Pending", tone: "amber" };
 }
 function africaFitLabel(elig: string | null | undefined, fallbackElig?: string | null): { label: string; tone: 'positive' | 'caution' | 'neutral' } {
   const effective = elig || fallbackElig || null
@@ -171,7 +165,7 @@ function EvidenceQuote({ text, url, allowLink = true }: { text?: string | null; 
 export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons }: Props) {
   // Always show something, even when AI missing, using job fallbacks
   const hasAI = !!intelligence
-  const state = intelligenceState(intelligence, (job as any)?._queueStatus)
+  const state = intelligenceState(intelligence, (job as any)?._queueStatus, (job as any)?._queueError)
   const degraded = hasAI && state.status === 'degraded' // regex/legacy fallback rows — not real AI output
   const africa = africaFitLabel(intelligence?.africa_eligibility, job?.eligibility)
   const remote = remoteLabel(intelligence?.remote_eligibility, job?.is_remote, intelligence?.remote_evidence)

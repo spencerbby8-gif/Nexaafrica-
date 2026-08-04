@@ -390,6 +390,30 @@ function backoffMs(attempt: number): number {
   return Math.min(15 * 60 * 1000 * Math.pow(2, attempt - 1), 12 * 60 * 60 * 1000)
 }
 
+// [V3] Durable pipeline trace — fire-and-forget (never blocks the drain).
+async function traceEvent(
+  sb: any,
+  jobId: string,
+  event: string,
+  opts: { gate?: string; reason?: string; detail?: Record<string, unknown>; provider?: string; model?: string; durationMs?: number | null; attempt?: number } = {},
+): Promise<void> {
+  try {
+    await sb.from("ai_pipeline_trace").insert({
+      job_id: jobId,
+      event,
+      gate: opts.gate ?? null,
+      reason: opts.reason ?? null,
+      detail: opts.detail ?? null,
+      provider: opts.provider ?? null,
+      model: opts.model ?? null,
+      duration_ms: opts.durationMs ?? null,
+      attempt: opts.attempt ?? 1,
+    })
+  } catch (e) {
+    console.log(JSON.stringify({ scope: "ai_engine", event: "trace_failed", jobId: String(jobId).slice(0, 8), error: (e instanceof Error ? e.message : String(e)).slice(0, 120) }))
+  }
+}
+
 export async function processAIQueue(batchSize = 100) {
   const { createServiceClient } = await import("@/lib/supabase/service")
   const supabase = createServiceClient()
@@ -486,11 +510,13 @@ export async function processAIQueue(batchSize = 100) {
       .eq("status", "pending")
       .select("id")
     if (!claimed || claimed.length === 0) { skippedClaim++; return }
+    await traceEvent(supabase, item.job_id, "claimed", { attempt: item.attempts + 1 })
 
     try {
       const { data: job } = await supabase.from("jobs").select("*").eq("id", item.job_id).maybeSingle()
       if (!job) {
         await supabase.from("ai_processing_queue").update({ status: "failed", error: "Job not found", completed_at: new Date().toISOString() }).eq("id", item.id)
+        await traceEvent(supabase, item.job_id, "failed", { reason: "Job not found", attempt: item.attempts + 1 })
         failed++
         return
       }
@@ -520,11 +546,14 @@ export async function processAIQueue(batchSize = 100) {
           } catch (e) {
             console.log(JSON.stringify({ scope: "ai_engine", event: "admission_writeback_error", jobId: (job as any).id?.slice(0,8) || "", error: (e instanceof Error ? e.message : String(e)).slice(0,150) }))
           }
+          await traceEvent(supabase, item.job_id, "rejected", { gate: (decision as any).gate, reason: decision.reason, attempt: item.attempts + 1 })
           processed++
           consecutiveItemFailures = 0
           return
         }
       } catch {}
+
+      await traceEvent(supabase, item.job_id, "accepted", { attempt: item.attempts + 1 })
 
       const aiResult = await enrichJobWithAI(job as any)
       const intelligence = aiResult.intelligence
@@ -571,6 +600,11 @@ export async function processAIQueue(batchSize = 100) {
             completed_at: exhausted ? new Date().toISOString() : null,
             next_retry_at: exhausted ? null : retryAt,
           }).eq("id", item.id)
+          await traceEvent(supabase, item.job_id, exhausted ? "failed" : "retried", {
+            reason: exhausted ? "All AI providers failed after max attempts" : "All AI providers failed — retry scheduled",
+            detail: { modelVersion: intelligence.modelVersion, backoffMs: exhausted ? null : backoffMs(attempts) },
+            attempt: attempts,
+          })
           failed++ // count as failed for this batch; will retry or stay failed
           consecutiveItemFailures++
           return
@@ -649,6 +683,10 @@ export async function processAIQueue(batchSize = 100) {
             completed_at: exhausted ? new Date().toISOString() : null,
             next_retry_at: exhausted ? null : retryAt,
           }).eq("id", item.id)
+          await traceEvent(supabase, item.job_id, exhausted ? "failed" : "retried", {
+            reason: `JAI upsert failed (${upsertErr.message?.slice(0,120)})`,
+            attempt: attempts,
+          })
           failed++
           return
         }
@@ -666,6 +704,12 @@ export async function processAIQueue(batchSize = 100) {
       await triggerSecondOpinionIfNeeded(supabase, job as any, intelligence, diags)
 
       // ── Mark queue item as completed ──────────────────────────────────
+      await traceEvent(supabase, item.job_id, "completed", {
+        provider: (intelligence as any).modelVersion?.split(":")[0] || null,
+        model: (intelligence as any).modelVersion || null,
+        durationMs: (diags as any[]).find((d: any) => d.event === "success")?.durationMs ?? null,
+        attempt: item.attempts + 1,
+      })
       await supabase.from("ai_processing_queue").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", item.id)
       processed++
       consecutiveItemFailures = 0
@@ -681,6 +725,7 @@ export async function processAIQueue(batchSize = 100) {
         completed_at: exhausted ? new Date().toISOString() : null,
         next_retry_at: exhausted ? null : retryAt,
       }).eq("id", item.id)
+      await traceEvent(supabase, item.job_id, exhausted ? "failed" : "retried", { reason: error.slice(0, 200), attempt: attempts })
       failed++
       consecutiveItemFailures++
     }

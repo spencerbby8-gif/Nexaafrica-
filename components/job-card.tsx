@@ -46,7 +46,7 @@ export function JobCard({
             <span className="shrink-0 text-xs text-muted-foreground" title={postedLabel(job.posted_at)}>
               {relativeTime(job.posted_at)}
             </span>
-            <ProofBadge intelligence={aiIntelligence ?? (job as any)?.aiIntelligence ?? null} queueStatus={(job as any)?._queueStatus ?? null} variant="compact" />
+            <ProofBadge intelligence={aiIntelligence ?? (job as any)?.aiIntelligence ?? null} queueStatus={(job as any)?._queueStatus ?? null} queueError={(job as any)?._queueError ?? null} variant="compact" />
           </div>
         </div>
 

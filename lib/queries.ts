@@ -76,8 +76,8 @@ export async function getJobBySlugWithAI(slug: string): Promise<JobWithAI<Job> |
   const job = await getJobBySlug(slug)
   if (!job) return null
   try {
-    const { aiMap, queueStatus } = await getAIIntelligenceWithQueueStatus([job.id])
-    return { ...job, aiIntelligence: aiMap.get(job.id) || null, _queueStatus: queueStatus.get(job.id) || null } as any
+    const { aiMap, queueStatus, queueError } = await getAIIntelligenceWithQueueStatus([job.id])
+    return { ...job, aiIntelligence: aiMap.get(job.id) || null, _queueStatus: queueStatus.get(job.id) || null, _queueError: queueError.get(job.id) ?? null } as any
   } catch {
     return { ...job, aiIntelligence: null, _queueStatus: null } as any
   }
@@ -117,12 +117,12 @@ export async function getJobsWithAI(filters: JobFilters = {}): Promise<JobWithAI
   const jobs = await getJobs(filters)
   if (jobs.length === 0) return []
   try {
-    const { aiMap, queueStatus } = await getAIIntelligenceWithQueueStatus(jobs.map((j) => j.id))
+    const { aiMap, queueStatus, queueError } = await getAIIntelligenceWithQueueStatus(jobs.map((j) => j.id))
     // [STABILIZATION] AI-restricted verdicts override the deterministic flag:
     // a job the AI says is restricted never appears in UI lists.
     return jobs
       .filter((j) => (aiMap.get(j.id) as any)?.africa_eligibility !== 'restricted')
-      .map((j) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null } as any))
+      .map((j) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null, _queueError: queueError.get(j.id) ?? null } as any))
   } catch {
     return jobs.map((j) => ({ ...j, aiIntelligence: null, _queueStatus: null } as any))
   }
@@ -262,13 +262,13 @@ export const getVerifiedJobs = cache(async function getVerifiedJobs(limit = 8): 
     // status. The ids came from job_ai_intelligence, so the AI row exists —
     // fabricating aiIntelligence:null + _queueStatus:'completed' made verified
     // cards render fake red "Error" / amber "Pending" states.
-    const { aiMap, queueStatus } = await getAIIntelligenceWithQueueStatus(ids)
+    const { aiMap, queueStatus, queueError } = await getAIIntelligenceWithQueueStatus(ids)
     // Newest by the REAL posting date — never a stale job while a newer
     // verified eligible job exists.
     return (jobs || [])
       .sort((a: any, b: any) => new Date(b.posted_at || b.created_at).getTime() - new Date(a.posted_at || a.created_at).getTime())
       .slice(0, limit)
-      .map((j: any) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null } as any))
+      .map((j: any) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null, _queueError: queueError.get(j.id) ?? null } as any))
   } catch {
     return []
   }

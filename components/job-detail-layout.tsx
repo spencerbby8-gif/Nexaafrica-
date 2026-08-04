@@ -334,7 +334,7 @@ export function JobDetailLayout({ companyJobCount,
 
       {/* Live Proof Layer — verification state, provider/model, provenance, liveness */}
       <div className="pt-6">
-        <ProofBadge intelligence={aiIntelligence || (job as any).aiIntelligence || null} queueStatus={(job as any)?._queueStatus} variant="full" />
+        <ProofBadge intelligence={aiIntelligence || (job as any).aiIntelligence || null} queueStatus={(job as any)?._queueStatus} queueError={(job as any)?._queueError ?? null} variant="full" />
       </div>
 
       {/* Company Intelligence */}

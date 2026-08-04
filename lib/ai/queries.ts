@@ -83,16 +83,20 @@ export async function getAIIntelligenceForJobs(jobIds: string[]): Promise<Map<st
   return getAIIntelligenceForJobsInternal(jobIds)
 }
 
-export async function getAIIntelligenceWithQueueStatus(jobIds: string[]): Promise<{ aiMap: Map<string, JobAIIntelligenceRow>; queueStatus: Map<string, string> }> {
+export async function getAIIntelligenceWithQueueStatus(jobIds: string[]): Promise<{ aiMap: Map<string, JobAIIntelligenceRow>; queueStatus: Map<string, string>; queueError: Map<string, string | null> }> {
   const aiMap = await getAIIntelligenceForJobsInternal(jobIds)
   // Fetch queue status in parallel to help UI distinguish pending vs missing
   const queueStatus = new Map<string, string>()
+  const queueError = new Map<string, string | null>()
   try {
     const supabase = createServiceClient()
-    const { data } = await supabase.from("ai_processing_queue").select("job_id, status").in("job_id", jobIds)
-    if (data) for (const row of data as any[]) queueStatus.set(row.job_id, row.status)
+    const { data } = await supabase.from("ai_processing_queue").select("job_id, status, error").in("job_id", jobIds)
+    if (data) for (const row of data as any[]) {
+      queueStatus.set(row.job_id, row.status)
+      queueError.set(row.job_id, row.error ?? null)
+    }
   } catch {}
-  return { aiMap, queueStatus }
+  return { aiMap, queueStatus, queueError }
 }
 
 async function getAIIntelligenceForJobsInternal(jobIds: string[]): Promise<Map<string, JobAIIntelligenceRow>> {

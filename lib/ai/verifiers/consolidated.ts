@@ -328,10 +328,34 @@ function numInText(n: number | null, t: string): boolean {
   return forms.some(f => t.includes(f))
 }
 
-export function enforceTruthfulness(merged: AIResp, opts: { job: Job; truth: string; hasCompanyPage: boolean }): AIResp {
-  const { job, truth, hasCompanyPage } = opts
+/**
+ * [V3] Strip platform boilerplate that causes false positives: remote boards
+ * (e.g. remoteOK) embed a generic "Regions: Worldwide, North America, Latin
+ * America, Europe, Africa, Middle East, Asia, Oceania" block on EVERY posting.
+ * That is platform filter UI text, not the employer's requirement — reading
+ * "Africa" there produced mass false "explicit" verdicts.
+ */
+const REGIONS_BOILER_RE = /Regions?[^\n]{0,200}?(Worldwide|North America|Latin America|Europe|Africa|Middle East|Asia|Oceania)[\s\S]{0,400}?Countries?[:\s]/i
+
+export function stripRegionBoilerplate(text: string): string {
+  if (!text) return text
+  const cleaned = text.replace(REGIONS_BOILER_RE, (m) => {
+    // Keep the surrounding prose, drop only the region/country list block.
+    return m.replace(/Regions?[\s\S]*?Countries?[:\s][\s\S]{0,120}/i, "")
+  })
+  return cleaned
+}
+
+export function enforceTruthfulness(merged: AIResp, opts: { job: Job; truth: string; jobTruth: string; hasCompanyPage: boolean }): AIResp {
+  const { job, truth, jobTruth, hasCompanyPage } = opts
   const out: AIResp = { ...merged }
   const t = truth.toLowerCase()
+  // [V3] Eligibility-sensitive claims (africa, visa, remote, timezone) are
+  // judged ONLY against the job posting text (description + fetched job page,
+  // boilerplate stripped). The company homepage may mention Africa as a
+  // business region without the role being open to African applicants — it
+  // must never drive eligibility. Company legitimacy still uses full truth.
+  const jt = jobTruth.toLowerCase()
 
   // 1) Evidence strings must be real quotes — else null (never keep fabrications)
   let nulled = 0
@@ -342,23 +366,23 @@ export function enforceTruthfulness(merged: AIResp, opts: { job: Job; truth: str
   }
 
   // 2) Visa: page must prove it (hostile audit: 27% precision before)
-  if (out.visa_sponsorship === "available" && !TR.visaYes.test(truth)) {
+  if (out.visa_sponsorship === "available" && !TR.visaYes.test(jt)) {
     out.visa_sponsorship = "unknown"; out.visa_confidence = 0
-  } else if (out.visa_sponsorship === "not_available" && !TR.visaNo.test(truth)) {
+  } else if (out.visa_sponsorship === "not_available" && !TR.visaNo.test(jt)) {
     out.visa_sponsorship = "unknown"; out.visa_confidence = 0
   }
 
   // 3) Africa: every tier needs textual support, otherwise abstain
-  if (out.africa_eligibility === "explicit" && !TR.africa.test(truth)) {
+  if (out.africa_eligibility === "explicit" && !TR.africa.test(jt)) {
     out.africa_eligibility = "unknown"; out.africa_confidence = 0; out.africa_evidence = null
-  } else if (out.africa_eligibility === "restricted" && !TR.restrict.test(truth)) {
+  } else if (out.africa_eligibility === "restricted" && !TR.restrict.test(jt)) {
     out.africa_eligibility = "unknown"; out.africa_confidence = 0; out.africa_evidence = null
-  } else if (out.africa_eligibility === "likely" && !TR.worldwide.test(truth) && !TR.africa.test(truth)) {
+  } else if (out.africa_eligibility === "likely" && !TR.worldwide.test(jt) && !TR.africa.test(jt)) {
     out.africa_eligibility = "unknown"; out.africa_confidence = 0; out.africa_evidence = null
   }
 
   // 4) Remote: metadata-backed stays; text-required otherwise
-  if (out.remote_eligibility === "hybrid" && !TR.hybrid.test(truth)) {
+  if (out.remote_eligibility === "hybrid" && !TR.hybrid.test(jt)) {
     out.remote_eligibility = job.is_remote ? "fully_remote" : "unknown"
     out.remote_confidence = job.is_remote ? Math.min(out.remote_confidence, 50) : 0
     if (!job.is_remote) out.remote_evidence = null
@@ -395,19 +419,19 @@ export function enforceTruthfulness(merged: AIResp, opts: { job: Job; truth: str
 
   // 6b) Timezone: a stated timezone requirement must be backed by timezone
   // language in the source text — else drop it (never infer).
-  if (out.timezone_requirements && !TR.tz.test(truth)) {
+  if (out.timezone_requirements && !TR.tz.test(jt)) {
     out.timezone_requirements = null
   }
 
   // 6c) On-site claims need on-site language; metadata remote stays remote.
-  if (out.remote_eligibility === "onsite" && !TR.onsite.test(truth)) {
+  if (out.remote_eligibility === "onsite" && !TR.onsite.test(jt)) {
     out.remote_eligibility = job.is_remote ? "fully_remote" : "unknown"
     out.remote_confidence = job.is_remote ? Math.min(out.remote_confidence, 50) : 0
     if (!job.is_remote) out.remote_evidence = null
   }
 
   // 7) Experience: only downgrade hard contradictions (junior text vs senior claim)
-  if ((out.experience_level === "senior" || out.experience_level === "executive") && TR.entry.test(truth) && !TR.senior.test(truth)) {
+  if ((out.experience_level === "senior" || out.experience_level === "executive") && TR.entry.test(jt) && !TR.senior.test(jt)) {
     out.experience_level = "unknown"; out.experience_confidence = 0
   }
 
@@ -431,7 +455,9 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
   const pageStatus = pageResult.status
   
   // [FIX #8] Increase description limit to 6000 chars to capture more salary/requirements info
-  const combined = (job.description_md + "\n\n" + pageText).slice(0, 6000)
+  // [V3] Strip remote-board region boilerplate BEFORE extraction — the
+  // generic "Regions: … Africa …" block caused mass false explicits.
+  const combined = stripRegionBoilerplate((job.description_md + "\n\n" + pageText)).slice(0, 6000)
 
   // Build prompt with company context if available
   const companyContext = companyText.length > 100 
@@ -567,7 +593,11 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
 
   const hardened = enforceTruthfulness(merged, {
     job,
+    // Full truth (incl. company page) is used for company legitimacy and
+    // verbatim evidence checks…
     truth: combined + "\n" + companyText + "\n" + (job.salary_range || ""),
+    // …but eligibility claims are judged against the JOB posting text only.
+    jobTruth: combined + "\n" + (job.salary_range || ""),
     hasCompanyPage: companyText.length >= 100,
   })
   return { ai: hardened, diags, modelVersion, pageFetched: pageText.length > 0, pageLen: pageText.length, pageStatus, aiUsed, companyPageFetched: companyText.length > 0, companyPageLen: companyText.length }

@@ -1,10 +1,12 @@
 import { ShieldCheck, Clock, Loader2, AlertCircle, Globe, FileText, Building2, Zap } from 'lucide-react'
 import type { JobAIIntelligenceRow } from '@/lib/ai/queries'
 import { relativeTime } from '@/lib/format'
+import { pipelineState } from '@/lib/ai/pipelineState'
 
 interface ProofBadgeProps {
   intelligence?: JobAIIntelligenceRow | null
   queueStatus?: string | null
+  queueError?: string | null
   variant?: 'compact' | 'full'
 }
 
@@ -19,24 +21,30 @@ interface ProofBadgeProps {
  *   failed     — queue processing exhausted with errors
  */
 
-function verificationState(ai: JobAIIntelligenceRow | null | undefined, qs?: string | null) {
-  if (ai) {
-    const mv = ai.model_version || ''
-    if (mv.includes(':') && !mv.startsWith('regex') && !mv.includes('no-ai')) {
+function verificationState(ai: JobAIIntelligenceRow | null | undefined, qs?: string | null, qErr?: string | null) {
+  // [V3] Single canonical mapping — every visible state derives from a real
+  // pipeline decision (AI row + queue row), never fabricated.
+  const st = pipelineState({ modelVersion: ai?.model_version, queueStatus: qs, queueError: qErr })
+  switch (st) {
+    case 'verified':
       return { status: 'verified' as const, label: 'Nexa Intelligence', tone: 'verified' }
-    }
-    if (mv.startsWith('regex') || mv.includes('no-ai')) {
+    case 'rule_based':
       return { status: 'stale' as const, label: 'Rule-based', tone: 'stale' }
-    }
-    return { status: 'stale' as const, label: 'Unverified', tone: 'stale' }
+    case 'failed':
+      return { status: 'failed' as const, label: 'Failed', tone: 'failed' }
+    case 'processing':
+      return { status: 'queued' as const, label: 'Processing', tone: 'queued' }
+    case 'retrying':
+      return { status: 'queued' as const, label: 'Retrying', tone: 'queued' }
+    case 'queued':
+      return { status: 'queued' as const, label: 'Queued', tone: 'queued' }
+    case 'rejected':
+      return { status: 'stale' as const, label: 'Not eligible', tone: 'stale' }
+    case 'not_verified':
+      return { status: 'stale' as const, label: 'Not verified', tone: 'stale' }
+    default:
+      return { status: 'queued' as const, label: 'Queued', tone: 'queued' }
   }
-  if (qs === 'processing') return { status: 'queued' as const, label: 'Processing', tone: 'queued' }
-  if (qs === 'pending') return { status: 'queued' as const, label: 'Queued', tone: 'queued' }
-  if (qs === 'failed') return { status: 'failed' as const, label: 'Failed', tone: 'failed' }
-  // [INCIDENT-FIX] completed without an AI row = not verified (e.g. listing
-  // admission-rejected), never a fake "Pending"/"Error".
-  if (qs === 'completed') return { status: 'stale' as const, label: 'Not verified', tone: 'stale' }
-  return { status: 'queued' as const, label: 'Pending', tone: 'queued' }
 }
 
 const toneStyles = {
@@ -54,7 +62,7 @@ const provenanceLabel: Record<string, { label: string; icon: typeof Globe }> = {
 }
 
 export function ProofBadge({ intelligence, queueStatus, variant = 'compact' }: ProofBadgeProps) {
-  const state = verificationState(intelligence, queueStatus)
+  const state = verificationState(intelligence, queueStatus, (intelligence as any)?._queueError ?? null)
   const ToneClass = toneStyles[state.tone as keyof typeof toneStyles]
 
   const Icon = state.status === 'verified' ? ShieldCheck

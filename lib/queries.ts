@@ -306,3 +306,41 @@ export const getProofStats = cache(async function getProofStats(): Promise<{
     queueDepth: queued,
   }
 })
+
+/**
+ * [V2.1] Company learning row for the role page (company_intelligence).
+ * Read-only lookup — returns null when the learning layer has no row.
+ */
+export async function getCompanyIntel(company: string): Promise<Record<string, any> | null> {
+  if (!company) return null
+  try {
+    const svc = createServiceClient()
+    const { data } = await svc
+      .from('company_intelligence')
+      .select('*')
+      .eq('company', company)
+      .maybeSingle()
+    return (data as Record<string, any>) || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * [V2.1] Source learning row for the role page (source_intelligence).
+ * Read-only lookup — returns null when the learning layer has no row.
+ */
+export async function getSourceIntel(source: string | null | undefined): Promise<Record<string, any> | null> {
+  if (!source) return null
+  try {
+    const svc = createServiceClient()
+    const { data } = await svc
+      .from('source_intelligence')
+      .select('*')
+      .eq('source', source)
+      .maybeSingle()
+    return (data as Record<string, any>) || null
+  } catch {
+    return null
+  }
+}

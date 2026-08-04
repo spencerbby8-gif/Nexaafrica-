@@ -2,7 +2,8 @@ import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { SiteShell } from '@/components/site-shell'
 import { JobDetailLayout } from '@/components/job-detail-layout'
-import { getJobBySlug, getJobBySlugWithAI, getRelatedJobsWithAI, getRelatedJobs } from '@/lib/queries'
+import { getJobBySlug, getJobBySlugWithAI, getRelatedJobsWithAI, getRelatedJobs, getCompanyIntel, getSourceIntel } from '@/lib/queries'
+import { CompanyIntelPanel } from '@/components/company-intel-panel'
 import { isJobSaved } from '@/lib/saved-jobs'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
@@ -220,6 +221,12 @@ export default async function RolePage({ params }: { params: Promise<Params> }) 
       ? AFRICA_COUNTRIES.map((name) => ({ '@type': 'Country', name }))
       : [{ '@type': 'Country', name: job.country || 'Worldwide' }]
 
+  // [V2.1] Learning-layer data for the Company Intelligence panel.
+  const [companyIntel, sourceIntel] = await Promise.all([
+    getCompanyIntel(job.company),
+    getSourceIntel(job.source),
+  ])
+
   // Determine apply gate state.
   const supabase = await createClient()
   const {
@@ -289,6 +296,10 @@ export default async function RolePage({ params }: { params: Promise<Params> }) 
         aiIntelligence={aiIntelligence}
         companyJobCount={companyJobCount}
       />
+
+      <div className="mx-auto mt-6 max-w-6xl px-4 sm:px-6">
+        <CompanyIntelPanel companyIntel={companyIntel} sourceIntel={sourceIntel} company={job.company} />
+      </div>
     </SiteShell>
   )
 }

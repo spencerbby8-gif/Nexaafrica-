@@ -328,7 +328,7 @@ export function JobDetailLayout({ companyJobCount,
             // Unified: listing legitimacy blended with AI opportunity-evidence.
             const aiConf = (aiIntelligence as any)?.overall_confidence ?? null
             const trust = { ...(detTrust as any), score: unifiedTrustScore(job, aiIntelligence as any) }
-            const capNote = unifiedCapNote((aiIntelligence as any)?.africa_eligibility ?? null)
+            const capNote = unifiedCapNote((aiIntelligence as any)?.africa_eligibility ?? null, (job as any).evidence_state ?? null)
             return (
               <>
                 <TrustCard trust={trust as any} legitimacyScore={(job as any).trust_score ?? detTrust.score} aiConfidence={aiConf} capNote={capNote} />
@@ -351,6 +351,20 @@ export function JobDetailLayout({ companyJobCount,
       {/* Live Proof Layer — verification state, provider/model, provenance, liveness */}
       <div className="pt-6">
         <ProofBadge intelligence={aiIntelligence || (job as any).aiIntelligence || null} queueStatus={(job as any)?._queueStatus} queueError={(job as any)?._queueError ?? null} variant="full" />
+        {(() => {
+          // [V1] Crawler state — surfaced truthfully (queued|fetching|fetched|
+          // blocked|partial|verified|failed|stale). Only shown when set.
+          const evState = (job as any).evidence_state ?? null
+          if (!evState) return null
+          const tone = evState === 'blocked' ? 'text-red-400' : evState === 'verified' || evState === 'fetched' ? 'text-green-400' : evState === 'failed' ? 'text-red-400' : 'text-amber-400'
+          const label = evState === 'blocked' ? 'Page blocked — evidence unavailable, retrying later' : `Evidence: ${evState}`
+          return (
+            <div className="mt-1 text-[11px]">
+              <span className="font-medium text-foreground/70">Crawler:</span>{' '}
+              <span className={tone}>{label}</span>
+            </div>
+          )
+        })()}
       </div>
 
       {/* Company Intelligence */}

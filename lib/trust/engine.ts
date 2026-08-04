@@ -103,7 +103,7 @@ export function calculateTrustScore(job: Job, ctx?: TrustContext): TrustResult {
  */
 export function unifiedTrustScore(
   job: Job,
-  ai?: { overall_confidence?: number | null; africa_eligibility?: string | null } | null,
+  ai?: { overall_confidence?: number | null; africa_eligibility?: string | null; last_verified_at?: string | null; evidence_refs?: any; evidence_provenance?: string | null; page_status?: number | null } | null,
 ): number {
   const legitimacyRaw = (job as any).trust_score
   const legitimacy =
@@ -111,10 +111,41 @@ export function unifiedTrustScore(
       ? legitimacyRaw
       : (calculateTrustScore(job).score ?? 50)
   const evidence = ai?.overall_confidence
-  const score =
+  let score =
     evidence == null
       ? Math.round(legitimacy * 0.4)
       : Math.round(legitimacy * 0.4 + evidence * 0.6)
+
+  // [V1] Dynamic evidence adjustments — every delta derives from stored
+  // fields, never static. The same job's score moves as its evidence ages,
+  // grows, or gets blocked.
+  //  a) Evidence freshness: verification older than 7d loses a little,
+  //     older than 30d loses more (stale evidence = weaker trust).
+  const verifiedMs = ai?.last_verified_at ? Date.now() - new Date(ai.last_verified_at).getTime() : Infinity
+  const verifiedDays = verifiedMs / 86_400_000
+  if (verifiedDays > 30) score -= 8
+  else if (verifiedDays > 7) score -= 4
+
+  //  b) Evidence richness: more dimensions with stored evidence => +2
+  //     (capped), from evidence_refs.dimensionCount when present.
+  const dimCount = Number(ai?.evidence_refs?.dimensionCount) || 0
+  if (dimCount >= 5) score += 2
+  else if (dimCount >= 3) score += 1
+
+  //  c) Evidence quality: page-level verification provenance adds a small
+  //     confidence bonus; dead pages (404/410) reduce trust.
+  const prov = ai?.evidence_provenance ?? null
+  if (prov === "company_page" || prov === "page") score += 2
+  const pageStatus = Number(ai?.page_status) || 0
+  if (pageStatus === 404 || pageStatus === 410) score -= 10
+
+  //  d) Job-level crawler state: a blocked page caps trust (evidence
+  //     couldn't be read — never pretend otherwise).
+  const evState = (job as any).evidence_state ?? null
+  if (evState === "blocked") score = Math.min(score, 59)
+
+  score = Math.max(0, Math.min(100, score))
+
   // [STABILIZATION] Trust and Nexa Intelligence must agree: when the AI
   // verdict says Africa eligibility is unknown or restricted, the job can
   // never display as Trusted/Highly Trusted for an African audience —
@@ -126,7 +157,8 @@ export function unifiedTrustScore(
 
 
 /** [V3] Why the unified trust score was capped (if it was). */
-export function unifiedCapNote(africa: string | null | undefined): string | null {
+export function unifiedCapNote(africa: string | null | undefined, evidenceState?: string | null): string | null {
+  if (evidenceState === 'blocked') return 'Capped: the job page is blocked — trust cannot exceed Moderate until fresh evidence is collected.'
   if (africa === 'unknown') return 'Capped: Africa eligibility is unverified — trust cannot exceed Moderate until the AI verifies the role.'
   if (africa === 'restricted') return 'Capped: the AI judged this role restricted for African applicants.'
   return null

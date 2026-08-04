@@ -555,6 +555,16 @@ export async function processAIQueue(batchSize = 100) {
 
       await traceEvent(supabase, item.job_id, "accepted", { attempt: item.attempts + 1 })
 
+      // [V1] Collect page evidence BEFORE the AI call: every decision links
+      // back to real page evidence; blocked pages are recorded truthfully
+      // (the verifier then abstains rather than guessing).
+      try {
+        const { collectPageEvidence } = await import("./evidence")
+        await collectPageEvidence(supabase, job as any)
+      } catch (e) {
+        console.log(JSON.stringify({ scope: "ai_engine", event: "evidence_collect_error", jobId: (job as any).id?.slice(0,8) || "", error: (e instanceof Error ? e.message : String(e)).slice(0,120) }))
+      }
+
       const aiResult = await enrichJobWithAI(job as any)
       const intelligence = aiResult.intelligence
       const diags = (aiResult as any).diags || []
@@ -665,6 +675,17 @@ export async function processAIQueue(batchSize = 100) {
             ...(intelligence.remote.sourceUrls || []),
             job.apply_url,
           ])).slice(0, 20),
+          // [V1] Per-dimension evidence provenance — what each verdict used.
+          evidence_refs: {
+            provenance: (aiResult as any).diags?._evidenceProvenance ?? null,
+            pageStatus: (aiResult as any).diags?._pageStatus ?? null,
+            sources: Array.from(new Set<string>([
+              job.apply_url,
+              ...(intelligence.africa.sourceUrls || []),
+              ...(intelligence.company.sourceUrls || []),
+            ])).slice(0, 8),
+            dimensionCount: Object.values(intelligence).filter((v: any) => v && Array.isArray(v.evidence) && v.evidence.length > 0).length,
+          },
           last_verified_at: new Date().toISOString(),
           // P6: liveness + provenance
           page_status: (aiResult as any).diags?._pageStatus ?? ((aiResult as any).intelligence as any)?._pageStatus ?? null,

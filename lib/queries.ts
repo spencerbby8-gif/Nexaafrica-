@@ -262,12 +262,14 @@ export const getVerifiedJobs = cache(async function getVerifiedJobs(limit = 8): 
     // status. The ids came from job_ai_intelligence, so the AI row exists —
     // fabricating aiIntelligence:null + _queueStatus:'completed' made verified
     // cards render fake red "Error" / amber "Pending" states.
-    const { aiMap, queueStatus, queueError } = await getAIIntelligenceWithQueueStatus(ids)
-    // Newest by the REAL posting date — never a stale job while a newer
-    // verified eligible job exists.
-    return (jobs || [])
+    // [PERF] Newest by the REAL posting date — never a stale job while a newer
+    // verified eligible job exists. Slice FIRST so the AI/queue fetch covers
+    // only the final `limit` jobs instead of the full candidate pool.
+    const finalJobs = (jobs || [])
       .sort((a: any, b: any) => new Date(b.posted_at || b.created_at).getTime() - new Date(a.posted_at || a.created_at).getTime())
       .slice(0, limit)
+    const { aiMap, queueStatus, queueError } = await getAIIntelligenceWithQueueStatus(finalJobs.map((j: any) => j.id))
+    return finalJobs
       .map((j: any) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null, _queueError: queueError.get(j.id) ?? null } as any))
   } catch {
     return []

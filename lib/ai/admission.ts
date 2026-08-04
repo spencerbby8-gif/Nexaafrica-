@@ -367,7 +367,10 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
         avg_quality_score: s.qualityN > 0 ? Math.round(s.qualitySum / s.qualityN) : 0,
         avg_freshness_days: s.total > 0 ? Math.round(s.freshDays / s.total) : 0,
         trust_score: trustScore,
-        crawl_priority: s.total > 10 && (s.africa / s.total < 0.25 || s.dup / s.total >= 0.3) ? 0 : 1,
+        // [V3] Adaptive: a measured low composite trust (with enough runs to
+        // be meaningful) disables crawling, in addition to the existing
+        // Africa/duplicate heuristic.
+        crawl_priority: (s.total > 10 && (s.africa / s.total < 0.25 || s.dup / s.total >= 0.3)) || ((runs?.total ?? 0) >= 5 && trustScore < 35) ? 0 : 1,
         last_updated: new Date().toISOString(),
       }
     })

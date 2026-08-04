@@ -125,6 +125,13 @@ export function unifiedTrustScore(
 }
 
 
+/** [V3] Why the unified trust score was capped (if it was). */
+export function unifiedCapNote(africa: string | null | undefined): string | null {
+  if (africa === 'unknown') return 'Capped: Africa eligibility is unverified — trust cannot exceed Moderate until the AI verifies the role.'
+  if (africa === 'restricted') return 'Capped: the AI judged this role restricted for African applicants.'
+  return null
+}
+
 export function getTrustLabel(score: number): { label: string; tone: "positive" | "caution" | "warning"; color: string } {
   if (score >= 80) return { label: "Highly Trusted", tone: "positive", color: "text-green-400 border-green-500/30 bg-green-500/10" }
   if (score >= 60) return { label: "Trusted", tone: "positive", color: "text-emerald-300 border-emerald-500/30 bg-emerald-500/10" }

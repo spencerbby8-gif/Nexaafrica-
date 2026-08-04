@@ -10,7 +10,7 @@ import { RoleViewTracker } from '@/components/role-view-tracker'
 import { EvidencePanel } from '@/components/evidence-panel'
 import { TrustCard } from '@/components/trust/trust-card'
 import { ReportButton } from '@/components/trust/report-button'
-import { calculateTrustScore, unifiedTrustScore } from '@/lib/trust/engine'
+import { calculateTrustScore, unifiedTrustScore, unifiedCapNote } from '@/lib/trust/engine'
 import { employmentLabel, isFresh, postedLabel } from '@/lib/format'
 import { cleanDescription, getCleanMarkdownForRender } from '@/lib/cleanDescription'
 import type { Job } from '@/lib/types'
@@ -313,9 +313,10 @@ export function JobDetailLayout({ companyJobCount,
             // Unified: listing legitimacy blended with AI opportunity-evidence.
             const aiConf = (aiIntelligence as any)?.overall_confidence ?? null
             const trust = { ...(detTrust as any), score: unifiedTrustScore(job, aiIntelligence as any) }
+            const capNote = unifiedCapNote((aiIntelligence as any)?.africa_eligibility ?? null)
             return (
               <>
-                <TrustCard trust={trust as any} legitimacyScore={(job as any).trust_score ?? detTrust.score} aiConfidence={aiConf} />
+                <TrustCard trust={trust as any} legitimacyScore={(job as any).trust_score ?? detTrust.score} aiConfidence={aiConf} capNote={capNote} />
                 <div className="mt-4 flex justify-end">
                   <ReportButton jobId={job.id} jobSlug={job.slug} />
                 </div>

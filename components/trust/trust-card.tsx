@@ -5,7 +5,7 @@ import type { TrustResult } from "@/lib/trust/types"
 import { getTrustLabel } from "@/lib/trust/engine"
 import { ShieldCheck, AlertTriangle, ChevronDown, Info, Check, AlertCircle } from "lucide-react"
 
-export function TrustCard({ trust, legitimacyScore, aiConfidence }: { trust: TrustResult; legitimacyScore?: number | null; aiConfidence?: number | null }) {
+export function TrustCard({ trust, legitimacyScore, aiConfidence, capNote }: { trust: TrustResult; legitimacyScore?: number | null; aiConfidence?: number | null; capNote?: string | null }) {
   const [expanded, setExpanded] = useState(false)
   const { label, tone, color } = getTrustLabel(trust.score)
 
@@ -34,6 +34,11 @@ export function TrustCard({ trust, legitimacyScore, aiConfidence }: { trust: Tru
               <p className="mt-1 text-[12px] text-zinc-400">
                 {legitimacyScore != null || aiConfidence != null ? (<>Listing legitimacy {legitimacyScore ?? trust.score} · Opportunity evidence {aiConfidence != null ? `${aiConfidence}%` : "pending"} · unified {trust.score}</>) : (<><span className="capitalize">{trust.confidence}</span> legitimacy · {trust.signals.length} signals checked</>)}
               </p>
+              {capNote && (
+                <p className="mt-2 rounded-md border border-amber-500/20 bg-amber-500/[0.06] px-2.5 py-1.5 text-[11px] leading-snug text-amber-300/90">
+                  {capNote}
+                </p>
+              )}
             </div>
           </div>
           {trust.isFlagged && (

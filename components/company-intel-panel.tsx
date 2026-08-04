@@ -29,8 +29,13 @@ export function CompanyIntelPanel({ companyIntel, sourceIntel, company }: Props)
   const duplicates = Number(companyIntel?.duplicate_count) || 0
 
   const sourceTrust = Number(sourceIntel?.trust_score) || 0
-  const sourceReliability = pct(sourceIntel?.reliability_score)
-  const sourceVerified = pct(sourceIntel?.verification_rate)
+  // Only surface reliability/verification percentages when they have actually
+  // been measured (>0) — a 0 default before the learning refresh is not a
+  // real measurement and must not render as "0%".
+  const hasSourceReliability = Number(sourceIntel?.reliability_score) > 0
+  const hasSourceVerified = Number(sourceIntel?.verification_rate) > 0
+  const sourceReliability = hasSourceReliability ? pct(sourceIntel?.reliability_score) : null
+  const sourceVerified = hasSourceVerified ? pct(sourceIntel?.verification_rate) : null
 
   return (
     <section aria-label="Company Intelligence" className="rounded-lg border border-border/60 bg-secondary/20 p-4">

@@ -122,6 +122,12 @@ export async function refreshCompanyIntelligence(): Promise<{ updated: number }>
       duplicate_count: c.duplicate_count ?? 0,
       scam_reports: c.scam_reports ?? 0,
       avg_ai_confidence: c.avg_ai_confidence ?? null,
+      // [V4] long-term hiring behavior + remote friendliness
+      first_posted_at: c.first_posted_at ?? null,
+      last_posted_at: c.last_posted_at ?? null,
+      active_months: c.active_months ?? 0,
+      distinct_months: c.distinct_months ?? 0,
+      remote_friendliness: c.remote_friendliness ?? 0,
       priority: (c.total_jobs ?? 0) > 5 && ((c.rejection_rate ?? 0) >= 0.4 || (c.africa_rate ?? 1) < 0.2) ? 0 : 1,
       last_updated: new Date().toISOString(),
     }))
@@ -270,7 +276,7 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
 
     const queue = await fetchAllRows<any>(sb, 'ai_processing_queue', 'job_id, status, error')
     const logs = await fetchAllRows<any>(sb, 'ai_provider_log', 'job_id')
-    const jai = await fetchAllRows<any>(sb, 'job_ai_intelligence', 'job_id, quality_score')
+    const jai = await fetchAllRows<any>(sb, 'job_ai_intelligence', 'job_id, quality_score, africa_eligibility')
 
     // Ingest-run history for reliability: source column is like
     // "greenhouse:stripe" or "remoteok:api" — key by the prefix.
@@ -315,14 +321,25 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
     const queueMap = new Map<string, any>()
     for (const r of (queue || [])) queueMap.set(r.job_id, r)
     const jaiQuality = new Map<string, number | null>()
-    for (const r of (jai || [])) jaiQuality.set(r.job_id, r.quality_score ?? null)
+    const jaiElig = new Map<string, string | null>()
+    for (const r of (jai || [])) {
+      jaiQuality.set(r.job_id, r.quality_score ?? null)
+      jaiElig.set(r.job_id, r.africa_eligibility ?? null)
+    }
 
     const stats = new Map<string, any>()
     const now = Date.now()
     for (const job of (jobs || [])) {
       const src = job.source || 'unknown'
-      const s = stats.get(src) || { source: src, total: 0, accepted: 0, africa: 0, verified: 0, dead: 0, dup: 0, quota: 0, expired: 0, freshDays: 0, qualitySum: 0, qualityN: 0, rejected: 0 }
+      const s = stats.get(src) || { source: src, total: 0, accepted: 0, africa: 0, verified: 0, dead: 0, dup: 0, quota: 0, expired: 0, freshDays: 0, qualitySum: 0, qualityN: 0, rejected: 0, agree: 0, agreeN: 0 }
       s.total++
+      // [V4] AI agreement: AI eligibility verdict vs deterministic flag
+      const aiElig = jaiElig.get((job as any).id)
+      if (aiElig && (aiElig === 'explicit' || aiElig === 'likely' || aiElig === 'restricted')) {
+        const aiOpen = aiElig !== 'restricted'
+        if (aiOpen === Boolean((job as any).is_open_to_africa)) s.agree++
+        s.agreeN++
+      }
       if (job.is_open_to_africa) { s.africa++; s.accepted++ }
       const q = queueMap.get((job as any).id)
       const isRejected = q?.status === 'failed' || (q?.status === 'completed' && (q?.error?.startsWith('Skipped') || q?.error?.startsWith('Rejected')))
@@ -359,6 +376,8 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
         acceptance_rate: s.total > 0 ? s.accepted / s.total : 0,
         africa_rate: s.total > 0 ? s.africa / s.total : 0,
         verification_rate: s.total > 0 ? s.verified / s.total : 0,
+        // [V4] share of AI verdicts that agree with the deterministic tier
+        ai_agreement: s.agreeN > 0 ? s.agree / s.agreeN : 0,
         // [V2] reliability / freshness / expired / quality / composite trust
         reliability_score: reliability,
         runs_count: runs?.total ?? 0,
@@ -370,7 +389,7 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
         // [V3] Adaptive: a measured low composite trust (with enough runs to
         // be meaningful) disables crawling, in addition to the existing
         // Africa/duplicate heuristic.
-        crawl_priority: (s.total > 10 && (s.africa / s.total < 0.25 || s.dup / s.total >= 0.3)) || ((runs?.total ?? 0) >= 5 && trustScore < 35) ? 0 : 1,
+        crawl_priority: (s.total > 10 && (s.africa / s.total < 0.25 || s.dup / s.total >= 0.3)) || ((runs?.total ?? 0) >= 5 && trustScore < 35) || (s.agreeN >= 8 && s.agree / s.agreeN < 0.5) ? 0 : 1,
         last_updated: new Date().toISOString(),
       }
     })

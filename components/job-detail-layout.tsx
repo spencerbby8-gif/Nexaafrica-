@@ -235,7 +235,16 @@ export function JobDetailLayout({ companyJobCount,
           </li>
           <li className="flex items-center gap-2">
             <Globe className="h-3.5 w-3.5" aria-hidden />
-            {job.is_remote ? 'Remote worldwide' : 'On-site'}
+            {(() => {
+              // [V4] Truthful remote display: the AI verdict (from stored
+              // evidence) overrides the feed flag when they disagree — an
+              // onsite role must never show as "Remote worldwide".
+              const aiRemote = (aiIntelligence as any)?.remote_eligibility
+              if (aiRemote === 'onsite') return 'On-site'
+              if (aiRemote === 'hybrid') return 'Hybrid'
+              if (aiRemote === 'fully_remote') return 'Remote worldwide'
+              return job.is_remote ? 'Remote worldwide' : 'On-site'
+            })()}
           </li>
           <li className="flex items-center gap-2">
             <Building2 className="h-3.5 w-3.5" aria-hidden />
@@ -245,6 +254,12 @@ export function JobDetailLayout({ companyJobCount,
             <Clock className="h-3.5 w-3.5" aria-hidden />
             {postedLabel(job.posted_at)}
           </li>
+          {((aiIntelligence as any)?.country_restrictions?.length ?? 0) > 0 && (
+            <li className="flex items-center gap-2">
+              <MapPin className="h-3.5 w-3.5" aria-hidden />
+              <span>Open in: {((aiIntelligence as any).country_restrictions as string[]).join(', ')}</span>
+            </li>
+          )}
         </ul>
 
         <div className="flex flex-wrap items-center gap-1.5">

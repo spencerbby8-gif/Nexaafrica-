@@ -28,6 +28,12 @@ export function CompanyIntelPanel({ companyIntel, sourceIntel, company }: Props)
   const scamReports = Number(companyIntel?.scam_reports) || 0
   const duplicates = Number(companyIntel?.duplicate_count) || 0
 
+  // [V4] long-term hiring behavior + remote friendliness (measured only)
+  const activeMonths = Number(companyIntel?.active_months) || 0
+  const distinctMonths = Number(companyIntel?.distinct_months) || 0
+  const remoteFriendliness = companyIntel?.remote_friendliness != null && Number(companyIntel.remote_friendliness) > 0
+    ? Math.round(Number(companyIntel.remote_friendliness) * 100) : null
+
   const sourceTrust = Number(sourceIntel?.trust_score) || 0
   // Only surface reliability/verification percentages when they have actually
   // been measured (>0) — a 0 default before the learning refresh is not a
@@ -56,6 +62,20 @@ export function CompanyIntelPanel({ companyIntel, sourceIntel, company }: Props)
             <span className="text-muted-foreground">Roles posted in last 30 days:</span>
             <span className="ml-auto font-medium">{velocity}</span>
           </div>
+          {activeMonths > 1 && (
+            <div className="flex items-center gap-2">
+              <Globe2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="text-muted-foreground">Hiring for over:</span>
+              <span className="ml-auto font-medium">{activeMonths} months</span>
+            </div>
+          )}
+          {remoteFriendliness != null && (
+            <div className="flex items-center gap-2">
+              <Globe2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="text-muted-foreground">Remote roles share:</span>
+              <span className="ml-auto font-medium">{remoteFriendliness}%</span>
+            </div>
+          )}
           {salaryConsistency && (
             <div className="flex items-center gap-2">
               <Banknote className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />

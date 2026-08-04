@@ -192,6 +192,14 @@ export function scoreJob(job: Job, signals: MatchSignals): MatchedJob | null {
     if (reasons.length === 0) reasons.push('Remote-ready fit')
   }
 
+  // [V4] Verified AI confidence — only when a real AI row exists (the pool
+  // is verified-only, so job.aiIntelligence carries a real provider verdict).
+  const aiConf = (job as any).aiIntelligence?.overall_confidence
+  if (typeof aiConf === 'number' && aiConf >= 50) {
+    score += 1
+    if (reasons.length === 0) reasons.push('High verification confidence')
+  }
+
   // [V2] Real listing-quality factors (all from persisted job data — never
   // fabricated): verified trust, salary disclosure, explicit Africa tier.
   const trustRaw = (job as any).trust_score

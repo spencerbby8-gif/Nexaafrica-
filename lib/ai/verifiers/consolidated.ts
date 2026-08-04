@@ -179,7 +179,10 @@ function regexAfrica(text: string, job: Job): Partial<AIResp> {
   const af = AFRICA_RE.exec(text)
   if (af) return { africa_eligibility: "explicit", africa_confidence: 75, africa_evidence: extractCtx(text, AFRICA_RE) }
   // Hard restriction language — restricted before any "likely" inference.
-  if (RESTRICT_RE.test(t)) return { africa_eligibility: "restricted", africa_confidence: 70, africa_evidence: extractCtx(text, RESTRICT_RE) }
+  if (RESTRICT_RE.test(t)) return {
+    africa_eligibility: "restricted", africa_confidence: 70, africa_evidence: extractCtx(text, RESTRICT_RE),
+    country_restrictions: extractRestrictions(text),
+  }
   // Location lock: the posting is located in a restricted region with no
   // global-outreach language anywhere (reduces false "unknown").
   const locText = `${job.country || ""} ${job.location || ""}`.trim()
@@ -261,6 +264,25 @@ function regexTimezone(text: string): Partial<AIResp> {
   return {
     timezone_requirements: tz.length <= 80 ? tz : tz.slice(0, 77) + "...",
   }
+}
+
+// [V4] Extract hiring-location restrictions (countries/regions) from
+// restriction language — feeds country_restrictions so the UI can show WHERE
+// a role is open. Only regions explicitly named in restriction context.
+const RESTRICT_COUNTRY_RE = /\b(?:US|USA|United States|UK|U\.K\.|United Kingdom|Canada|EU|Europe|Germany|France|Spain|Italy|Netherlands|Poland|Sweden|Norway|Denmark|Finland|Belgium|Austria|Switzerland|Ireland|Portugal|Australia|New Zealand|India|Singapore|Japan|Israel|UAE|Dubai|Qatar|Saudi Arabia|Brazil|Mexico|Argentina|Colombia|Chile|Philippines|Indonesia|Vietnam|Thailand|Malaysia|South Korea|Taiwan|Hong Kong)\b/gi
+
+function extractRestrictions(text: string): string[] {
+  if (!text) return []
+  const found = new Set<string>()
+  const lower = text
+  const m = lower.match(RESTRICT_COUNTRY_RE)
+  if (!m) return []
+  for (const raw of m) {
+    const norm = raw.trim()
+    if (norm.length <= 3) found.add(norm.toUpperCase())
+    else found.add(norm.replace(/\s+/g, ' '))
+  }
+  return Array.from(found).slice(0, 8)
 }
 
 // [V2] Experience level from explicit evidence: years of experience or
@@ -524,7 +546,8 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
       merged.africa_eligibility = aiResp.africa_eligibility
       merged.africa_confidence = aiResp.africa_confidence
       merged.africa_evidence = aiResp.africa_evidence
-      merged.country_restrictions = aiResp.country_restrictions
+      // [V4] Union regex + AI restrictions (both are text-derived).
+      merged.country_restrictions = Array.from(new Set([...(merged.country_restrictions || []), ...(aiResp.country_restrictions || [])])).slice(0, 8)
     }
     
     // Visa: always use AI value (regex doesn't extract visa)

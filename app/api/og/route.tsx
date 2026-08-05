@@ -2,10 +2,15 @@ import { ImageResponse } from 'next/og'
 import type { NextRequest } from 'next/server'
 import { siteHost } from '@/lib/site'
 
-export const runtime = 'edge'
-// 24h cache + immutable for crawlers; the URL embeds enough state to
-// invalidate naturally when content changes.
-export const revalidate = 86400
+// [TRUTH LAYER v1] Node runtime + force-dynamic. The route was edge and
+// carried `revalidate`, which makes Next attempt a build-time prerender of a
+// request-dependent handler — every deployment served a cached build-time
+// failure (persistent HTTP 500 regardless of code fixes; observed on BOTH the
+// production and preview deployments, with two different render codebases).
+// Node runtime matches the probe-proven render path; CDN caching is carried
+// by the explicit Cache-Control header on the response below.
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 const WIDTH = 1200
 const HEIGHT = 630

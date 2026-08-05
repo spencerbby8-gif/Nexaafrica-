@@ -105,7 +105,7 @@ const PERSISTED_LEARNING_IDS = new Set(["company_history", "company_learning", "
  *     so the number on the card ALWAYS sums to the signals listed beneath
  *     it. No hidden clamps, no stale weights, no fabricated freshness.
  */
-export function correctedTrustSignals(job: Job, ctx?: TrustContext): { signals: TrustSignal[]; score: number } {
+export function correctedTrustSignals(job: Job, ctx?: TrustContext): { signals: TrustSignal[]; score: number; rawSum: number } {
   let fresh: TrustSignal[] = []
   try {
     fresh = calculateTrustScore(job, ctx).signals
@@ -122,8 +122,12 @@ export function correctedTrustSignals(job: Job, ctx?: TrustContext): { signals: 
     const freshIds = new Set(fresh.map((s) => s.id))
     signals = [...fresh, ...keptLearning.filter((s) => !freshIds.has((s as any).id))] as TrustSignal[]
   }
-  const score = Math.max(0, Math.min(100, Math.round(50 + signals.reduce((acc, s) => acc + (Number((s as any).scoreImpact) || 0), 0))))
-  return { signals, score }
+  // rawSum is kept visible so the UI can mark the ceiling HONESTLY when the
+  // signal sum overruns the 0-100 scale, instead of quietly clamping away
+  // exactly the differences the trust plane exists to show.
+  const rawSum = Math.round(50 + signals.reduce((acc, s) => acc + (Number((s as any).scoreImpact) || 0), 0))
+  const score = Math.max(0, Math.min(100, rawSum))
+  return { signals, score, rawSum }
 }
 
 /** Listing legitimacy at read time: corrected signal set summed live. */

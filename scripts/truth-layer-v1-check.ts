@@ -299,3 +299,11 @@ if (failed > 0) {
   console.log("FAILURES:", failures.join(" | "))
   process.exit(1)
 }
+
+// 7i · ceiling honesty: rich-signal listings report their overrun out loud
+{
+  const rich = correctedTrustSignals(mkJob({}) as any)
+  check("clamped score stays ≤ 100", rich.score <= 100, rich.score)
+  check("rawSum exposed for ceiling marking", typeof rich.rawSum === "number")
+  check("score equals min(100, rawSum)", rich.score === Math.min(100, Math.max(0, rich.rawSum)), { score: rich.score, rawSum: rich.rawSum })
+}

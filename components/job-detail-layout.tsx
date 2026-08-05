@@ -332,8 +332,10 @@ export function JobDetailLayout({ companyJobCount,
             // persisted set, score = 50 + sum(displayed signals). The number
             // always matches the list beneath it; nothing stale or clamp-hidden.
             let detTrust: any
+            let legitimacyRaw: number | null = null
             try {
               const corrected = correctedTrustSignals(job)
+              legitimacyRaw = corrected.rawSum
               detTrust = {
                 score: corrected.score,
                 confidence: (job as any).trust_confidence || "medium",
@@ -352,7 +354,7 @@ export function JobDetailLayout({ companyJobCount,
             const capNote = unifiedCapNote((aiIntelligence as any)?.africa_eligibility ?? null, (job as any).evidence_state ?? null)
             return (
               <>
-                <TrustCard trust={trust as any} legitimacyScore={detTrust.score} aiConfidence={aiConf} capNote={capNote} />
+                <TrustCard trust={trust as any} legitimacyScore={detTrust.score} legitimacyRaw={typeof legitimacyRaw === 'number' ? legitimacyRaw : null} aiConfidence={aiConf} capNote={capNote} />
                 <div className="mt-4 flex justify-end">
                   <ReportButton jobId={job.id} jobSlug={job.slug} />
                 </div>

@@ -199,3 +199,38 @@ Persisted skills-as-JSON (8 objects on micro1) · salary split (badge USD70–11
 **Live verification on preview (2026-08-05, final):** micro1 unified 59 → **52** with "Listing signals 100" + honest logo copy visible; audit-leader (explicit) unified stays **75** (legitimacy at ceiling — now MARKED "(at ceiling — signal sum N)", plateau-at-ceiling is truthful identical-evidence, not flattening); queued hubs differ ACROSS employers (MongoDB hub Low **30** vs OpenAI hub Low **32**) while same-company same-feed cards match — identical evidence, identical number, exactly the clause under which the mandate permits equality. Cross-plane copy: "Listing signals" now disambiguates the deterministic plane from the AI "Company Legitimacy" verdict.
 
 **Expected live deltas on preview (same prod DB):** micro1: unified 59 → ~51 (blocked & unknown still cap, evidence 63% now reads); audit-leader (explicit): ~73; queued hub cards: 30–36 varying by employer evidence; any source without real posting dates loses the "Fresh • 0 days" badge for an honest "no date from source" entry.
+
+---
+
+## 12 · Evidence Intelligence V1.1 (preview-lane increment, 2026-08-05 — crawler/store/state integrity)
+
+**Scope:** continues the Evidence Intelligence V1 scaffold (base `3d2dc90`): evidence crawler, evidence store, browser worker, crawler states, intelligence integration. Preview lane only; no production touched; no backfills run.
+
+**Defects found (code-verified against live-rendered behavior; each maps to a fixture):**
+1. **Out-of-vocabulary crawler state** — `scripts/evidence-worker.ts` wrote `evidence_state='timeout'` on navigation timeout: `blockedBy("timeout") || classifyBlockStatus(...)` flowed straight into the row. "timeout" is not one of the 8 migrated states → the UI would render raw jargon (`Evidence: timeout`), and the trust layer's `blocked` handling would silently skip the SAME real-world condition a 403 gets capped for. Honest state + lost cause: the timeout detail belonged in `detail`, not in the state field.
+2. **Crawler ignored its own retry schedule** — `collectPageEvidence` re-fetched every live page on every AI verification run regardless of the `retry_at` it had itself written (+6h for blocked/failed). A page that refused us (Cloudflare/403/429) was re-hit on every drain and every refusal inserted ANOTHER identical evidence row — impolite to hosts that explicitly refused, and the store filled with echo rows restating one fact.
+3. **Evidence store kept echoes, not versions** — every run re-inserted `ats_api` (and `structured_data`) rows with the same content hash. `content_hash` existed but was never read; the store recorded *runs*, not *content versions*.
+4. **Raw enum rendering** — `components/job-detail-layout.tsx` rendered `Evidence: {state}` verbatim for every non-blocked state (`Evidence: partial`, `Evidence: verified`, …) — internal vocabulary as user-facing copy. (Live on preview: the blocked branch was the only hand-written one; every other state leaked the enum the moment it appeared.)
+5. **Wedged `fetching` rows were unreachable** — a worker crash left `evidence_state='fetching'` forever; both worker selection queries excluded it.
+
+**Fixes (all state writes keep legal vocabulary; no verdicts invented; render-plane change is copy-only):**
+- `lib/ai/evidence.ts`: `EVIDENCE_STATES` vocabulary + `isEvidenceState` guard; `workerStateFor(navFailure,status,text)` — nav timeout/abort ⇒ `failed` (cause preserved in `detail.blockedBy`); `shouldDeferLiveFetch` — blocked/failed + future `retry_at` ⇒ reuse stored state truthfully, no re-hit, no echo row (fail-open if the read fails); `sameContentHash` dedupe on `ats_api`/`structured_data` inserts; `crawlerStateLabel` — shared honest copy for all 8 states ("Page could not be read — retry is scheduled" etc.), unknown values degrade to "Page evidence state not recorded", never to jargon.
+- `scripts/evidence-worker.ts`: uses `workerStateFor`; selection queries include `fetching` (worker-owned state, serial operator runs — wedged rows are recoverable).
+- `components/job-detail-layout.tsx`: renders `crawlerStateLabel` copy+tone; the blocked string is byte-identical to before (regression-locked by fixture).
+
+**Truth Audit (mandatory gate):**
+- *Fabricated data?* No — defer-path reuses the stored state it reports (and says nothing more); dedupe only suppresses redundant rows; no new claims anywhere; the timeout fix records strictly MORE truth (state `failed` + cause in detail) than the old `timeout`.
+- *Contradictory UI?* No — one label map now feeds every crawler-state mention; blocked copy unchanged; trust numbers untouched.
+- *Static trust?* Untouched by design — the V1.1 increment changes evidence-collection integrity and state copy, not scores. Regression-verified live (below).
+- *Misleading labels?* Fixed precisely here — raw enums replaced by human copy; "retrying later" (blocked) and "retry is scheduled" (failed) are backed by the actual `retry_at` column the writer sets, and 8d fixtures prove the deference logic consumes it.
+- *Evidence inconsistencies?* The store now versions by content hash — two rows with identical hashes can no longer exist from the same run class; states are confined to the migrated vocabulary.
+
+**Gates:** `tsc` PASS · harness **90/90** (suite 8 = +39 fixtures: vocabulary legality, timeout→failed, label honesty incl. "not the raw enum" per state, retry-window deference matrix, hash-version semantics).
+
+**Live verification on preview (deployment `HPc9Juwf242kkuihZxTcncBP92X7`, 2026-08-05, commit `92c1191`):**
+- micro1 role: "Crawler: **Page blocked — evidence unavailable, retrying later**" — byte-identical (label-map regression pass); trust plane unchanged — "Listing signals 100 (at ceiling — signal sum 108) · Opportunity evidence 63% · unified **52** · Moderate" + blocked cap note verbatim.
+- audit-leader role: "Listing signals 100 (at ceiling — signal sum 144) · Opportunity evidence 55% · unified **75** · Trusted" — unchanged.
+- OpenAI hub queued cards: all "Low **32**"; MongoDB hub: "Low **30**" (verified earlier same-day on the prior build; nothing in this diff touches the compute path) — cross-employer variance preserved.
+- Collector-side improvements (retry deference, hash versioning) take effect on the next drain/worker run against existing rows — write-plane, same expected-stale rule as §6; preview render-plane behavior verified above.
+
+**Deferred (documented, not skipped):** the `stale` state remains reserved-but-unused — nothing fabricates it; age-based trust decay already runs off `last_verified_at`. A stale-marker belongs with drain-side scheduling, post-merge, with DB-plane verification tooling.

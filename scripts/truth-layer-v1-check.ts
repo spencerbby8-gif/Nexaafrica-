@@ -25,6 +25,17 @@ let passed = 0
 let failed = 0
 const failures: string[] = []
 
+// Tally prints on process exit — suite blocks may be appended anywhere in
+// this file without ever stranding the summary above them again.
+process.on("exit", () => {
+  console.log(`\n${"═".repeat(60)}`)
+  console.log(`Truth Layer v1 fixtures: ${passed} passed, ${failed} failed`)
+  if (failed > 0) {
+    console.log("FAILURES:", failures.join(" | "))
+    process.exitCode = 1
+  }
+})
+
 function check(name: string, cond: boolean, detail?: unknown) {
   if (cond) {
     passed++
@@ -293,12 +304,6 @@ function mkJob(over: Record<string, any>): any {
   check("queued rows differentiate by evidence (a ≠ b)", a !== b, { a, b })
 }
 
-console.log(`\n${"═".repeat(60)}`)
-console.log(`Truth Layer v1 fixtures: ${passed} passed, ${failed} failed`)
-if (failed > 0) {
-  console.log("FAILURES:", failures.join(" | "))
-  process.exit(1)
-}
 
 // 7i · ceiling honesty: rich-signal listings report their overrun out loud
 {

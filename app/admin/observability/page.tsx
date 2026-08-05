@@ -20,8 +20,13 @@ export default async function ObservabilityPage() {
 
   const sb = createServiceClient()
 
+  // [TRUTH LAYER v1] 15 queries ⇄ 15 names. Previously 13 names were
+  // destructured from 15 queries, shifting EVERY panel from position 2
+  // (provider analytics rendered the queue-completed COUNT as rows, the
+  // JAI coverage count read ai_orch_health, etc.) and queue.completed
+  // displayed the pending count. The dashboard was reporting nonsense.
   const [
-    queueRes, providerAnalytics, providerLogRecent, orchHealth,
+    queuePendingRes, queueCompletedRes, queueFailedDupRes, providerAnalytics, providerLogRecent, orchHealth,
     coverageRes, jaiRes, ingestRuns, sourceHealth, costStats, rejectsRes, failedRes, stalePageRes, stuckRes,
   ] = await Promise.all([
     sb.from("ai_processing_queue").select("status", { count: "exact", head: true }).eq("status", "pending"),
@@ -42,9 +47,9 @@ export default async function ObservabilityPage() {
   ])
 
   const queue = {
-    pending: queueRes.count ?? 0,
-    completed: queueRes.count ?? 0,
-    failed: failedRes.count ?? 0,
+    pending: queuePendingRes.count ?? 0,
+    completed: queueCompletedRes.count ?? 0,
+    failed: failedRes.count ?? queueFailedDupRes.count ?? 0,
     processing: stuckRes.count ?? 0,
   }
   const totalActive = coverageRes.count ?? 0

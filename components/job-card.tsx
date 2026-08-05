@@ -91,7 +91,16 @@ export function JobCard({
             }
           })()}
           
-          {job.is_remote && <TrustBadge variant="remote" />}
+          {(() => {
+            // [TRUTH LAYER v1] Remote badge follows the verified verdict; the
+            // feed flag is only a fallback. A hybrid SF role never shows a
+            // bare "Remote" chip again.
+            const aiRemote = (aiIntelligence as any)?.remote_eligibility
+            if (aiRemote === 'hybrid') return <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Hybrid</span>
+            if (aiRemote === 'onsite') return <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-muted-foreground">On-site</span>
+            if (job.is_remote) return <TrustBadge variant="remote" />
+            return null
+          })()}
           {salary.isExplicit ? (
             <TrustBadge variant="usd" label={salary.label} />
           ) : (
@@ -107,7 +116,15 @@ export function JobCard({
             // language — the system's own flag wins.
             if (job.is_open_to_africa === false) return null
             if (effective === 'explicit') return <TrustBadge variant="verified" label="Open to Africa" />
-            if (effective === 'likely') return <TrustBadge variant="verified" label="Likely open" />
+            // [TRUTH LAYER v1] "likely" earns the verified (green) badge ONLY
+            // when the AI layer produced it. Ingest-tier 'likely' (no AI row)
+            // is an informed read and renders as neutral, labeled unverified —
+            // never the brand-trust green check.
+            if (effective === 'likely') {
+              return aiElig
+                ? <TrustBadge variant="verified" label="Likely open" />
+                : <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Likely open · unverified</span>
+            }
             return null
           })()}
           {employmentLabel(job.employment_type) && (

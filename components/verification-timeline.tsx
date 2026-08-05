@@ -84,7 +84,9 @@ export function VerificationTimeline({
                 <p className="text-sm font-medium leading-snug text-foreground">{step.label}</p>
                 <p className="mt-0.5 text-[12px] text-muted-foreground">{step.detail}</p>
                 {step.time && (
-                  <p className="mt-0.5 text-[11px] text-muted-foreground/70">{relativeTime(step.time)} ago</p>
+                  // relativeTime already returns the "ago" suffix — the old
+                  // template produced "12h ago ago" on every timeline.
+                  <p className="mt-0.5 text-[11px] text-muted-foreground/70">{relativeTime(step.time)}</p>
                 )}
               </div>
             </li>

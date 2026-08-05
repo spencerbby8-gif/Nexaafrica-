@@ -96,12 +96,20 @@ export type SalaryDisplay = {
   isExplicit: boolean
 }
 
+/**
+ * [TRUTH LAYER v1] Machine-broken salary strings are NOT a published salary.
+ * Proven live: "USD0.013k - USD0.036k" (hourly rate k-collapsed by a legacy
+ * formatter) and "USD 0 – 0" were rendered as fact on cards and detail
+ * pages. These patterns are treated as absent → honest fallback copy.
+ */
+const MACHINE_JUNK_SALARY_RE = /0\.\d+k|(?:usd|\$|€|£)\s*0\s*[–—-]\s*(?:usd|\$|€|£)?\s*0\b/i
+
 export function salaryDisplay(
   raw: string | null | undefined,
   opts: { openToAfrica?: boolean } = {},
 ): SalaryDisplay {
   const trimmed = (raw ?? '').trim()
-  if (trimmed) {
+  if (trimmed && !MACHINE_JUNK_SALARY_RE.test(trimmed)) {
     // Light cleanup: collapse whitespace, strip trailing punctuation.
     const cleaned = trimmed.replace(/\s+/g, ' ').replace(/[\s.;,]+$/g, '')
     return { label: cleaned, isExplicit: true }

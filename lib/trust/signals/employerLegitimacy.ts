@@ -24,13 +24,18 @@ export function employerLegitimacySignal(job: Job): TrustSignal | null {
   }
 
   if (hasLogo) {
+    // [TRUTH LAYER v1] A logo is branding metadata, NOT evidence of
+    // legitimacy. Proven live: a first-seen recruiting agency reached raw
+    // trust_score 100 partly via "+8 logo indicates legitimate employer
+    // presence". Logos are trivially copyable by scammers; they earn a
+    // small presentation-quality point with honest copy, nothing more.
     return {
       id: "employer_legitimacy",
-      label: "Employer with logo",
-      scoreImpact: 8,
-      confidence: "medium",
-      tone: "positive",
-      explanation: `Listing includes company logo and uses official ATS source (${job.source || "direct"}), indicating legitimate employer presence.`,
+      label: "Employer branding present",
+      scoreImpact: 3,
+      confidence: "low",
+      tone: "neutral",
+      explanation: `Listing includes a company logo via the ${job.source || "source"} feed. A logo is cosmetic metadata — it is not proof that the employer is legitimate.`,
       evidence: job.company_logo || undefined,
       source: "company",
     }

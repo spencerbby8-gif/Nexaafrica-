@@ -50,7 +50,8 @@ export async function GET(req: NextRequest) {
     default: 'Nexa',
   }
 
-  return new ImageResponse(
+  try {
+    return new ImageResponse(
     (
       <div
         style={{
@@ -74,7 +75,7 @@ export async function GET(req: NextRequest) {
             width: 600,
             height: 600,
             borderRadius: 9999,
-            background: `radial-gradient(circle, ${ACCENT}22 0%, transparent 70%)`,
+            background: 'rgba(52, 211, 153, 0.08)',
             display: 'flex',
           }}
         />
@@ -232,4 +233,12 @@ export async function GET(req: NextRequest) {
       },
     },
   )
+  } catch (err) {
+    // Minimal brand card fallback — satori failures must degrade, not 500.
+    console.error('[og] ImageResponse failed', (err as Error)?.message)
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}"><rect width="100%" height="100%" fill="${BG}"/><text x="72" y="${HEIGHT / 2}" fill="${FG}" font-family="system-ui, sans-serif" font-size="64" font-weight="700">Nexa</text><text x="72" y="${HEIGHT / 2 + 56}" fill="${MUTED}" font-family="system-ui, sans-serif" font-size="28">Remote work for African talent</text></svg>`
+    return new Response(svg, {
+      headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=3600' },
+    })
+  }
 }

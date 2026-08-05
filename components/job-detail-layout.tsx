@@ -263,7 +263,16 @@ export function JobDetailLayout({ companyJobCount,
         </ul>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          {job.is_remote && <TrustBadge variant="remote" />}
+          {(() => {
+              // [TRUTH LAYER v1] Remote badge follows the verified verdict —
+              // hybrid/onsite JAI verdicts override the feed flag on the
+              // page itself (the card/page contradiction proven in audit).
+              const aiRemote = ((aiIntelligence as any)?.remote_eligibility) as string | undefined
+              if (aiRemote === 'hybrid') return <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Hybrid</span>
+              if (aiRemote === 'onsite') return <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-muted-foreground">On-site</span>
+              if (job.is_remote) return <TrustBadge variant="remote" />
+              return null
+            })()}
           {job.salary_range && <TrustBadge variant="usd" label={job.salary_range} />}
           {(() => {
             const aiElig = (aiIntelligence as any)?.africa_eligibility
@@ -272,7 +281,12 @@ export function JobDetailLayout({ companyJobCount,
             // display an open-to-Africa badge, even if AI found Africa language.
             if (job.is_open_to_africa === false) return null
             if (effective === 'explicit') return <TrustBadge variant="verified" label="Open to Africa" />
-            if (effective === 'likely') return <TrustBadge variant="verified" label="Likely open to Africa" />
+            // [TRUTH LAYER v1] green badge only for the AI-produced tier.
+            if (effective === 'likely') {
+              return aiElig
+                ? <TrustBadge variant="verified" label="Likely open to Africa" />
+                : <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Likely open · unverified</span>
+            }
             return null
           })()}
           {employment && (
@@ -491,7 +505,12 @@ export function JobDetailLayout({ companyJobCount,
                   // [REGION-LOCK] Share text must never claim open-to-Africa
                   // for listings the system marks as not open to Africa.
                   if (job.is_open_to_africa === false) return job.country
-                  return effective === 'explicit' || effective === 'likely' ? 'Open to Africa' : job.country
+                  // [TRUTH LAYER v1] share text claims "Open to Africa" only
+                  // for verified explicit, and "Likely open" only when the AI
+                  // layer produced the tier — ingest-likely stays the country.
+                  if (effective === 'explicit') return 'Open to Africa'
+                  if (aiElig && effective === 'likely') return 'Likely open to Africa'
+                  return job.country
                 })(),
                 job.salary_range,
               ]

@@ -3,6 +3,8 @@ import type { Job } from "@/lib/types"
 import { AI_MODEL_VERSION, AI_INTELLIGENCE_VERSION, type JobAIIntelligence } from "./types"
 import type { ProviderCallDiag } from "./gateway"
 import { PROVIDERS } from "./providers/types"
+import { asInt, clamp100, asEnum, asStringOrNull, asStringArray, asSkillList, cleanEvidenceText } from "./normalize"
+import { formatSalary } from "@/lib/intelligence"
 
 
 
@@ -314,24 +316,24 @@ async function triggerSecondOpinionIfNeeded(
       const updateRow: Record<string, unknown> = {}
       if (r.africa_eligibility && r.africa_eligibility !== "unknown") updateRow.africa_eligibility = r.africa_eligibility
       if (r.africa_confidence && r.africa_confidence > 0) updateRow.africa_confidence = clamp100(r.africa_confidence)
-      if (r.africa_evidence) updateRow.africa_evidence = r.africa_evidence
+      const _ae = cleanEvidenceText(r.africa_evidence); if (_ae) updateRow.africa_evidence = _ae
       if (r.remote_eligibility && r.remote_eligibility !== "unknown") updateRow.remote_eligibility = r.remote_eligibility
       if (r.remote_confidence && r.remote_confidence > 0) updateRow.remote_confidence = clamp100(r.remote_confidence)
-      if (r.remote_evidence) updateRow.remote_evidence = r.remote_evidence
+      const _re = cleanEvidenceText(r.remote_evidence); if (_re) updateRow.remote_evidence = _re
       if (r.salary_transparency && r.salary_transparency !== "unknown") updateRow.salary_transparency = r.salary_transparency
       if (r.salary_confidence && r.salary_confidence > 0) updateRow.salary_confidence = clamp100(r.salary_confidence)
-      if (r.salary_evidence) updateRow.salary_evidence = r.salary_evidence
+      const _se = cleanEvidenceText(r.salary_evidence); if (_se) updateRow.salary_evidence = _se
       if (r.company_legitimacy && r.company_legitimacy !== "unknown") updateRow.company_legitimacy = r.company_legitimacy
       if (r.company_confidence && r.company_confidence > 0) updateRow.company_confidence = clamp100(r.company_confidence)
-      if (r.company_evidence) updateRow.company_evidence = r.company_evidence
+      const _ce = cleanEvidenceText(r.company_evidence); if (_ce) updateRow.company_evidence = _ce
       if (r.experience_level && r.experience_level !== "unknown") updateRow.experience_level = r.experience_level
       if (r.experience_confidence && r.experience_confidence > 0) updateRow.experience_confidence = clamp100(r.experience_confidence)
       if (r.job_quality && r.job_quality !== "unknown") updateRow.job_quality = r.job_quality
       if (r.job_quality_confidence && r.job_quality_confidence > 0) updateRow.job_quality_confidence = clamp100(r.job_quality_confidence)
-      if (r.job_quality_evidence) updateRow.job_quality_evidence = r.job_quality_evidence
-      if (Array.isArray(r.required_skills) && r.required_skills.length > 0) updateRow.required_skills = r.required_skills
-      if (Array.isArray(r.transferable_skills) && r.transferable_skills.length > 0) updateRow.transferable_skills = r.transferable_skills
-      if (Array.isArray(r.missing_skills)) updateRow.missing_skills = r.missing_skills
+      const _qe = cleanEvidenceText(r.job_quality_evidence); if (_qe) updateRow.job_quality_evidence = _qe
+      const _req = asSkillList(r.required_skills); if (_req.length > 0) updateRow.required_skills = _req
+      const _tra = asSkillList(r.transferable_skills); if (_tra.length > 0) updateRow.transferable_skills = _tra
+      updateRow.missing_skills = asSkillList(r.missing_skills)
 
       if (Object.keys(updateRow).length > 0) {
         updateRow.last_verified_at = new Date().toISOString()
@@ -356,23 +358,10 @@ async function triggerSecondOpinionIfNeeded(
 //      confidence / invalid enum emitted by a model)
 // AI output is untrusted input: round, clamp, whitelist, or drop — never
 // pass through, never invent replacements.
-const asInt = (v: unknown): number | null => {
-  if (v === null || v === undefined) return null
-  const n = typeof v === "number" ? v : Number(v)
-  return Number.isFinite(n) ? Math.round(n) : null
-}
-const clamp100 = (v: unknown): number | null => {
-  const n = asInt(v)
-  if (n === null) return null
-  return Math.max(0, Math.min(100, n))
-}
-const asEnum = <T extends string>(v: unknown, allowed: readonly T[]): T =>
-  (allowed as readonly unknown[]).includes(v) ? (v as T) : ("unknown" as T)
-const asStringOrNull = (v: unknown): string | null =>
-  typeof v === "string" && v.length > 0 ? v : null
-const asStringArray = (v: unknown): string[] =>
-  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0) : []
-
+// [TRUTH LAYER v1] Normalization helpers moved to shared module ./normalize
+// (pure, no env) so the backfill route and the fixture harness share the
+// exact persistence boundary. asStringArray is now skills-aware (object
+// extraction + markdown unescape + case-insensitive dedupe).
 const AFRICA_ENUM = ["explicit", "likely", "restricted", "unknown"] as const
 const REMOTE_ENUM = ["fully_remote", "hybrid", "onsite", "unknown"] as const
 const VISA_ENUM = ["available", "not_available", "unknown", "conditional"] as const
@@ -635,17 +624,17 @@ export async function processAIQueue(batchSize = 100) {
           model_version: intelligence.modelVersion,
           africa_eligibility: asEnum(intelligence.africa.value, AFRICA_ENUM),
           africa_confidence: clamp100(intelligence.africa.confidence),
-          africa_evidence: intelligence.africa.evidence[0]?.text || null,
+          africa_evidence: cleanEvidenceText(intelligence.africa.evidence[0]?.text),
           africa_source_urls: asStringArray(intelligence.africa.sourceUrls),
           country_restrictions: asStringArray(intelligence.africa.countryRestrictions),
           visa_sponsorship: asEnum(intelligence.visa.value, VISA_ENUM),
           visa_confidence: clamp100(intelligence.visa.confidence),
-          visa_evidence: intelligence.visa.evidence?.[0]?.text ?? null,
+          visa_evidence: cleanEvidenceText(intelligence.visa.evidence?.[0]?.text),
           timezone_requirements: intelligence.remote.timezoneRequirements || null,
           timezone_confidence: clamp100(intelligence.remote.confidence),
           remote_eligibility: asEnum(intelligence.remote.value, REMOTE_ENUM),
           remote_confidence: clamp100(intelligence.remote.confidence),
-          remote_evidence: intelligence.remote.evidence?.[0]?.text ?? null,
+          remote_evidence: cleanEvidenceText(intelligence.remote.evidence?.[0]?.text),
           required_skills: asStringArray(intelligence.skills.required.value),
           transferable_skills: asStringArray(intelligence.skills.transferable.value),
           missing_skills: asStringArray(intelligence.skills.missing.value),
@@ -657,14 +646,14 @@ export async function processAIQueue(batchSize = 100) {
           salary_period: asStringOrNull(intelligence.salary.value.period),
           salary_is_estimated: intelligence.salary.value.isEstimated === true,
           salary_transparency: asEnum(intelligence.salary.value.transparency, TRANSPARENCY_ENUM),
-          salary_evidence: intelligence.salary.evidence?.[0]?.text ?? null,
+          salary_evidence: cleanEvidenceText(intelligence.salary.evidence?.[0]?.text),
           salary_confidence: clamp100(intelligence.salary.confidence),
           company_legitimacy: asEnum(intelligence.company.value, LEGITIMACY_ENUM),
           company_confidence: clamp100(intelligence.company.confidence),
-          company_evidence: intelligence.company.evidence?.[0]?.text ?? null,
+          company_evidence: cleanEvidenceText(intelligence.company.evidence?.[0]?.text),
           job_quality: asEnum(intelligence.quality.value, QUALITY_ENUM),
           job_quality_confidence: clamp100(intelligence.quality.confidence),
-          job_quality_evidence: intelligence.quality.evidence?.[0]?.text ?? null,
+          job_quality_evidence: cleanEvidenceText(intelligence.quality.evidence?.[0]?.text),
           application_difficulty: asEnum(intelligence.applicationDifficulty.value, DIFFICULTY_ENUM),
           hiring_urgency: asEnum(intelligence.hiringUrgency.value, URGENCY_ENUM),
           overall_confidence: clamp100(intelligence.overallConfidence),
@@ -714,6 +703,49 @@ export async function processAIQueue(batchSize = 100) {
       }
 
       // ── Post-upsert: always run these for every processed item ────────
+
+      // [TRUTH LAYER v1] Salary fact-authority: a verified-disclosed AI
+      // salary owns the jobs-table salary fields. The old DB-side sync only
+      // wrote when jobs.salary_min IS NULL — wrong ingest values were
+      // protected forever (live-proven: micro1 badge USD70k–110k beside the
+      // AI-verified USD50k–70k on the same page). Verified AI now overwrites;
+      // undisclosed AI never nulls existing values. 0–0 is not a salary.
+      if (!skipUpsert) {
+        try {
+          const jobIdShort = (job as any).id?.slice(0, 8) || ""
+          const transp = asEnum(intelligence.salary.value.transparency, TRANSPARENCY_ENUM)
+          let sMin = asInt(intelligence.salary.value.min)
+          let sMax = asInt(intelligence.salary.value.max)
+          if (sMin !== null && sMax !== null && sMax < sMin) { const t0 = sMin; sMin = sMax; sMax = t0 }
+          if (transp === "disclosed" && sMax !== null && sMax > 0) {
+            const currency = asStringOrNull(intelligence.salary.value.currency) ?? "USD"
+            const period = (asStringOrNull(intelligence.salary.value.period) ?? "year") as any
+            const range = formatSalary({ min: sMin, max: sMax, currency, period, raw: "" })
+            const { error: salErr } = await supabase.from("jobs").update({
+              salary_min: sMin,
+              salary_max: sMax,
+              salary_currency: currency,
+              salary_period: period,
+              ...(range ? { salary_range: range } : {}),
+            }).eq("id", (job as any).id)
+            if (salErr) {
+              console.log(JSON.stringify({ scope: "ai_engine", event: "salary_authority_failed", jobId: jobIdShort, error: salErr.message?.slice(0, 160) }))
+            } else {
+              console.log(JSON.stringify({ scope: "ai_engine", event: "salary_authority_applied", jobId: jobIdShort, min: sMin, max: sMax, currency, period }))
+            }
+          } else if (sMax !== null && sMax <= 0) {
+            // 0–0 must never count as disclosed anywhere in the system.
+            const { error: salErr } = await supabase.from("jobs").update({ salary_min: null, salary_max: null, salary_range: null }).eq("id", (job as any).id).eq("salary_max", 0)
+            if (salErr) {
+              console.log(JSON.stringify({ scope: "ai_engine", event: "salary_zero_clear_failed", jobId: jobIdShort, error: salErr.message?.slice(0, 160) }))
+            } else {
+              console.log(JSON.stringify({ scope: "ai_engine", event: "salary_zero_cleared", jobId: jobIdShort }))
+            }
+          }
+        } catch (e) {
+          console.log(JSON.stringify({ scope: "ai_engine", event: "salary_authority_error", jobId: (job as any).id?.slice(0, 8) || "", error: (e instanceof Error ? e.message : String(e)).slice(0, 120) }))
+        }
+      }
 
       // [FIX #7] Persist provider diagnostics (awaited, not fire-and-forget)
       await persistProviderDiags(supabase, job.id, diags)

@@ -176,3 +176,24 @@ Persisted skills-as-JSON (8 objects on micro1) · salary split (badge USD70–11
 ## 10b · Deferred debt (documented, not silently skipped)
 
 `posted_at = ingest_time` freshness fabrication is **DB-trigger-enforced** (`20260530154519` coalesces null→created_at) — fixing it needs a migration + adapter-dates plumbing: deliberately out of this PR. Also deferred (all listed in Truth Report §4/P2–P3 with live evidence): trust-score plateaus (partially mitigated by §2 signal honesty), seo-status 1000 caps, build-time sitemap lastmod, `npm run lint` config absence, in-memory rate limiter, dead subsystems (council `Math.random`, 18 superseded `real*AI` verifiers), duplicate migration versions (needs DB-plane access to reconcile), admin in-page authZ (authN verified live).
+
+---
+
+## 11 · Trust de-flattening (preview-lane feature, 2026-08-05 — mandate: UI trust must not be static unless truthful)
+
+**Problem (live evidence):** the unified trust plane quantized reality — any JAI row with Africa `unknown|restricted` hard-clamped to exactly **59** (~30/30 sampled cards identical); queued rows flattened via `legitimacy×0.4` to identical **Low 32** (10+ MongoDB hub cards); first-seen recruiters carried clamped raw **100**. Evidence 19% and evidence 95% rendered the same number — a score with zero discriminating power is a label pretending to be a measurement.
+
+**Fix (render-plane only, zero writes — all corrections surface on the existing stored rows):**
+1. **Soft cap replaces hard clamp** (`lib/trust/engine.ts:softCapTrust`): capped conditions (Africa unknown/restricted; blocked page) now compress above-cap scores into the sub-59 band (`score' = 59 − (100−score)×0.35`, monotone, ceiling preserved). Unknown/restricted still cannot read as Trusted — but evidence depth differentiates *within* the cap.
+2. **Corrected read-time legitimacy** (`correctedTrustSignals`): stateless signals recomputed with current weights at read time (logo +3 not +8, board-host honesty), fabricated freshness zeroed, ctx-dependent **learning entries kept from the persisted set** (real measured history, not discarded); legitimacy = `50 + Σ(displayed impacts)` — **the number always sums to the list shown beneath it**. Detail page + card chips both consume this single plane.
+3. **Fabricated-freshness honesty** (`postingFreshnessSignal`): `posted_at == created_at` (the coalesce signature) no longer mints "+12 Fresh • 0 days" — renders neutral 0-impact "**Listed recently · no date from source**" with the reason in the explanation. Real dated jobs keep their real-date freshness math unchanged.
+4. **Cross-plane disambiguation:** trust card line "Listing legitimacy {N}" → "Listing signals {N}" — the deterministic listing-level number no longer masquerades as the AI's employer-level "Company Legitimacy" verdict (kills the 100-vs-0 reading).
+
+**Truth Audit (mandatory gate for this feature):**
+- *Fabricated data?* No — every displayed number sums exactly to the signals listed on the same card; freshness fabrication deleted; soft cap is order-preserving compression, not new data.
+- *Contradictory UI?* No — one legitimacy plane feeds the headline number, the legitimacy line, and every chip; admin pages intentionally show the stored write-plane value (moderation context).
+- *Static trust?* Fixtures: evidence 19 vs 95 → different scores; raws 73 vs 80 → different under cap; explicit > unknown at equal evidence; queued rows differentiate. 18 new fixtures, **48/48 total PASS**.
+- *Misleading labels?* Freshness illusion labeled honestly; listing-vs-company planes disambiguated; cap note copy remains accurate ("cannot exceed Moderate" still true — the band itself now resolves).
+- *Evidence inconsistencies?* Learning entries are marked as the persisted set; stateless entries are current-weight recomputes; the merger is documented inline in `engine.ts`.
+
+**Expected live deltas on preview (same prod DB):** micro1: unified 59 → ~51 (blocked & unknown still cap, evidence 63% now reads); audit-leader (explicit): ~73; queued hub cards: 30–36 varying by employer evidence; any source without real posting dates loses the "Fresh • 0 days" badge for an honest "no date from source" entry.

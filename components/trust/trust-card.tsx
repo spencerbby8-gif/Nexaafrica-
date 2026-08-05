@@ -32,7 +32,7 @@ export function TrustCard({ trust, legitimacyScore, aiConfidence, capNote }: { t
                 {label}
               </h3>
               <p className="mt-1 text-[12px] text-zinc-400">
-                {legitimacyScore != null || aiConfidence != null ? (<>Listing legitimacy {legitimacyScore ?? trust.score} · Opportunity evidence {aiConfidence != null ? `${aiConfidence}%` : "pending"} · unified {trust.score}</>) : (<><span className="capitalize">{trust.confidence}</span> legitimacy · {trust.signals.length} signals checked</>)}
+                {legitimacyScore != null || aiConfidence != null ? (<>Listing signals {legitimacyScore ?? trust.score} · Opportunity evidence {aiConfidence != null ? `${aiConfidence}%` : "pending"} · unified {trust.score}</>) : (<><span className="capitalize">{trust.confidence}</span> legitimacy · {trust.signals.length} signals checked</>)}
               </p>
               {capNote && (
                 <p className="mt-2 rounded-md border border-amber-500/20 bg-amber-500/[0.06] px-2.5 py-1.5 text-[11px] leading-snug text-amber-300/90">

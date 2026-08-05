@@ -177,3 +177,124 @@ if (failed > 0) {
   console.log("FAILURES:", failures.join(" | "))
   process.exit(1)
 }
+
+/* -------------------------------------------------------------------- */
+/* 7 · Trust differentiation (truth plane must not be static)            */
+/* Live evidence 2026-08-05: ~30/30 JAI-unknown cards at flat 59; queued  */
+/* MongoDB hub all "Low 32"; first-seen recruiter raw trust_score 100.    */
+
+import {
+  unifiedTrustScore,
+  softCapTrust,
+  correctedTrustSignals,
+  displayLegitimacy,
+} from "../lib/trust/engine"
+
+console.log("7 · Trust differentiation")
+
+function mkJob(over: Record<string, any>): any {
+  return {
+    id: "j1",
+    slug: "x",
+    title: "Senior Operations Manager",
+    company: "Acme Corp",
+    company_logo: "https://cdn.example.com/logo.png",
+    description_md: "A real role. Run operations well.",
+    apply_url: "https://himalayas.app/companies/acme/jobs/x",
+    category: "operations",
+    location: "Remote",
+    country: "Worldwide",
+    salary_range: "USD50k - USD70k",
+    salary_min: 50000,
+    salary_max: 70000,
+    salary_currency: "USD",
+    salary_period: "year",
+    employment_type: "full_time",
+    tags: ["ops"],
+    is_remote: true,
+    is_open_to_africa: true,
+    eligibility: "likely",
+    posted_at: "2026-08-01T10:00:00.000Z",
+    created_at: "2026-08-05T10:00:00.000Z",
+    expires_at: null,
+    source: "himalayas",
+    source_id: "himalayas:abc",
+    ...over,
+  }
+}
+
+// 7a · soft cap math: monotone, bounded, order-preserving
+{
+  const s70 = softCapTrust(70)
+  const s90 = softCapTrust(90)
+  const s100 = softCapTrust(100)
+  check("softCap keeps ceiling ≤ 59", s100 <= 59)
+  check("softCap preserves ordering (70 < 90 < 100)", s70 < s90 && s90 < s100)
+  check("softCap spreads identical-plateau raws (73 vs 80)", softCapTrust(73) !== softCapTrust(80))
+  check("softCap leaves below-cap untouched", softCapTrust(45) === 45)
+}
+
+// 7b · Africa-unknown: different evidence depths MUST surface differently
+// (prod: evidence 19% and 95% both displayed 59)
+{
+  const job = mkJob({})
+  const thin = unifiedTrustScore(job, { overall_confidence: 19, africa_eligibility: "unknown" } as any)
+  const deep = unifiedTrustScore(job, { overall_confidence: 95, africa_eligibility: "unknown" } as any)
+  check("unknown-Africa stays capped (deep ≤ 59)", deep <= 59)
+  check("unknown-Africa variance restored (thin ≠ deep)", thin !== deep, { thin, deep })
+  check("deeper evidence reads higher", deep > thin, { thin, deep })
+}
+
+// 7c · Explicit Africa is NOT capped and outranks unknown with same evidence
+{
+  const job = mkJob({})
+  const unknown63 = unifiedTrustScore(job, { overall_confidence: 63, africa_eligibility: "unknown" } as any)
+  const explicit63 = unifiedTrustScore(job, { overall_confidence: 63, africa_eligibility: "explicit" } as any)
+  check("explicit can exceed the cap (mod-high land)", explicit63 > 59, explicit63)
+  check("explicit outranks unknown at equal evidence", explicit63 > unknown63, { explicit63, unknown63 })
+}
+
+// 7d · blocked evidence_state caps even strong evidence
+{
+  const job = mkJob({ evidence_state: "blocked" })
+  const s = unifiedTrustScore(job, { overall_confidence: 95, africa_eligibility: "explicit" } as any)
+  check("blocked explicit role capped ≤ 59", s <= 59, s)
+}
+
+// 7e · fabricated posted_at (== created_at) yields honest zero-impact signal
+{
+  const fabricated = mkJob({ posted_at: "2026-08-05T04:21:24.938Z", created_at: "2026-08-05T04:21:24.938Z", trust_signals: [
+    { id: "posting_freshness", label: "Fresh • 0 days ago", scoreImpact: 12, confidence: "high", tone: "positive", explanation: "x", source: "freshness" },
+  ] })
+  const { signals, score } = correctedTrustSignals(fabricated)
+  const freshSig = signals.find((s: any) => s.id === "posting_freshness") as any
+  check("fabricated freshness gets 0 impact", freshSig?.scoreImpact === 0, freshSig && { label: freshSig.label, scoreImpact: freshSig.scoreImpact })
+  check("fabricated freshness is labeled honestly (no date from source)", /no date|cannot verify freshness/i.test((freshSig?.label || "") + " " + (freshSig?.explanation || "")))
+  check("the +12 illusion is removed from the number", score <= 100 - 12 + 1, score)
+}
+
+// 7f · learning entries survive the read-time rebuild (ctx-free renders)
+{
+  const job = mkJob({ trust_signals: [
+    { id: "company_history", label: "Established employer • 407 roles", scoreImpact: 8, confidence: "high", tone: "positive", explanation: "x", source: "history" },
+    { id: "source_learning", label: "Source track record", scoreImpact: 8, confidence: "medium", tone: "positive", explanation: "x", source: "learning" },
+  ] })
+  const { signals } = correctedTrustSignals(job)
+  check("company_history kept from persisted set", signals.some((s: any) => s.id === "company_history"))
+  check("source_learning kept from persisted set", signals.some((s: any) => s.id === "source_learning"))
+}
+
+// 7g · first-seen logo employer no longer pins legitimacy at 100
+// (rot-era: MindPackets/MindPlus raw 100 with logo+8 & board-domain +8)
+{
+  const legit = displayLegitimacy(mkJob({}))
+  check("legitimacy for logo-first-seen feed job < 100", legit < 100, legit)
+  check("legitimacy still lands in a sane band (>= 60)", legit >= 60, legit)
+}
+
+// 7h · queued (no AI): legitimacy differences flow through 0.4 weighting
+{
+  const a = unifiedTrustScore(mkJob({ company_logo: null, apply_url: "https://jobs.ashbyhq.com/x/1" }), null)
+  const b = unifiedTrustScore(mkJob({}), null)
+  check("queued rows differentiate by evidence (a ≠ b)", a !== b, { a, b })
+}

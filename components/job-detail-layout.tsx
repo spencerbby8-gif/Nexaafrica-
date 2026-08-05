@@ -10,7 +10,7 @@ import { RoleViewTracker } from '@/components/role-view-tracker'
 import { EvidencePanel } from '@/components/evidence-panel'
 import { TrustCard } from '@/components/trust/trust-card'
 import { ReportButton } from '@/components/trust/report-button'
-import { calculateTrustScore, unifiedTrustScore, unifiedCapNote } from '@/lib/trust/engine'
+import { calculateTrustScore, correctedTrustSignals, unifiedTrustScore, unifiedCapNote } from '@/lib/trust/engine'
 import { employmentLabel, isFresh, postedLabel } from '@/lib/format'
 import { cleanDescription, getCleanMarkdownForRender } from '@/lib/cleanDescription'
 import type { Job } from '@/lib/types'
@@ -327,25 +327,32 @@ export function JobDetailLayout({ companyJobCount,
           // Calculate trust score on the fly if not persisted, else use persisted if available
           // For SSR, this is pure and fast (<5ms)
           try {
-            // @ts-ignore - allow optional fields
-            const detTrust = (job as any).trust_score != null && (job as any).trust_signals?.length
-              ? {
-                  score: (job as any).trust_score,
-                  confidence: (job as any).trust_confidence || "medium",
-                  version: (job as any).trust_version || 1,
-                  signals: (job as any).trust_signals,
-                  isFlagged: !!(job as any).is_flagged,
-                  flaggedReason: (job as any).flagged_reason,
-                  isWarning: ((job as any).trust_score || 0) < 40,
-                }
-              : calculateTrustScore(job)
+            // [TRUTH LAYER v1] corrected read-time plane: stateless signals
+            // recomputed with current weights, learning entries kept from the
+            // persisted set, score = 50 + sum(displayed signals). The number
+            // always matches the list beneath it; nothing stale or clamp-hidden.
+            let detTrust: any
+            try {
+              const corrected = correctedTrustSignals(job)
+              detTrust = {
+                score: corrected.score,
+                confidence: (job as any).trust_confidence || "medium",
+                version: (job as any).trust_version || 2,
+                signals: corrected.signals,
+                isFlagged: !!(job as any).is_flagged,
+                flaggedReason: (job as any).flagged_reason,
+                isWarning: corrected.score < 40,
+              }
+            } catch {
+              detTrust = calculateTrustScore(job)
+            }
             // Unified: listing legitimacy blended with AI opportunity-evidence.
             const aiConf = (aiIntelligence as any)?.overall_confidence ?? null
             const trust = { ...(detTrust as any), score: unifiedTrustScore(job, aiIntelligence as any) }
             const capNote = unifiedCapNote((aiIntelligence as any)?.africa_eligibility ?? null, (job as any).evidence_state ?? null)
             return (
               <>
-                <TrustCard trust={trust as any} legitimacyScore={(job as any).trust_score ?? detTrust.score} aiConfidence={aiConf} capNote={capNote} />
+                <TrustCard trust={trust as any} legitimacyScore={detTrust.score} aiConfidence={aiConf} capNote={capNote} />
                 <div className="mt-4 flex justify-end">
                   <ReportButton jobId={job.id} jobSlug={job.slug} />
                 </div>

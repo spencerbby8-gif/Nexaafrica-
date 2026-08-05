@@ -83,6 +83,55 @@ export function calculateTrustScore(job: Job, ctx?: TrustContext): TrustResult {
 }
 
 
+/** Signal ids that require TrustContext (measured learning data) — kept from
+ * the persisted set when present, since render-time callers have no ctx. */
+const PERSISTED_LEARNING_IDS = new Set(["company_history", "company_learning", "source_learning"])
+
+/**
+ * [TRUTH LAYER v1] correctedTrustSignals — the display/legitimacy plane.
+ *
+ * Root cause of the production plateaus (audit P1-2): surfaces showed the
+ * persisted jobs.trust_score computed once at write time, so every signal
+ * fix landed only for NEW jobs and every correction was invisible; and the
+ * unified cap quantized whatever was left. This function rebuilds the signal
+ * set at READ time:
+ *   - stateless signals are recomputed with the CURRENT weights/copy
+ *     (logo +3 instead of the rotten +8, salary/remote/application honesty,
+ *     fabricated-freshness zeroed instead of +12),
+ *   - ctx-dependent LEARNING signals (company_history / company_learning /
+ *     source_learning) are kept from the persisted set — they encode real
+ *     measured history that no per-render caller can rebuild,
+ *   - legitimacy is then exactly 50 + sum(displayed signal impacts),
+ *     so the number on the card ALWAYS sums to the signals listed beneath
+ *     it. No hidden clamps, no stale weights, no fabricated freshness.
+ */
+export function correctedTrustSignals(job: Job, ctx?: TrustContext): { signals: TrustSignal[]; score: number } {
+  let fresh: TrustSignal[] = []
+  try {
+    fresh = calculateTrustScore(job, ctx).signals
+  } catch {
+    fresh = []
+  }
+  const persisted: TrustSignal[] = Array.isArray((job as any).trust_signals) ? (job as any).trust_signals : []
+  const keptLearning = persisted.filter((s) => s && PERSISTED_LEARNING_IDS.has((s as any).id))
+
+  let signals: TrustSignal[]
+  if (fresh.length === 0 && keptLearning.length === 0) {
+    signals = persisted // total fallback: old persisted set (better than nothing)
+  } else {
+    const freshIds = new Set(fresh.map((s) => s.id))
+    signals = [...fresh, ...keptLearning.filter((s) => !freshIds.has((s as any).id))] as TrustSignal[]
+  }
+  const score = Math.max(0, Math.min(100, Math.round(50 + signals.reduce((acc, s) => acc + (Number((s as any).scoreImpact) || 0), 0))))
+  return { signals, score }
+}
+
+/** Listing legitimacy at read time: corrected signal set summed live. */
+export function displayLegitimacy(job: Job, ctx?: TrustContext): number {
+  return correctedTrustSignals(job, ctx).score
+}
+
+
 /**
  * UNIFIED trust score — one truth path.
  *
@@ -101,15 +150,33 @@ export function calculateTrustScore(job: Job, ctx?: TrustContext): TrustResult {
  *   no AI evidence yet  -> legitimacy * 0.4  (real listing, not yet analysed)
  *   AI evidence present  -> legitimacy * 0.4 + evidence * 0.6
  */
+/**
+ * [TRUTH LAYER v1] Soft cap. The old hard clamps (min(score, 59)) quantized
+ * every above-cap score to the SAME value — production sample: ~30/30 cards
+ * rendered identical 59; evidence 19% and evidence 95% were indistinguishable
+ * (audit P1-2). A compressed cap keeps the protective ceiling (unverified or
+ * restricted Africa, or a blocked page, must never read as Trusted/Highly
+ * Trusted for an African audience) while preserving evidence-driven ordering
+ * beneath it: score' = cap - (100 - score) * CAP_SLOPE for score > cap.
+ * Monotone, bounded (<= cap), and honest: stronger evidence always shows a
+ * higher number; the BEST an unverified job can show is just under Trusted.
+ */
+const TRUST_CAP = 59
+const CAP_SLOPE = 0.35
+export function softCapTrust(score: number, cap: number = TRUST_CAP): number {
+  if (score <= cap) return score
+  return Math.max(0, Math.min(cap, Math.round(cap - (100 - score) * CAP_SLOPE)))
+}
+
 export function unifiedTrustScore(
   job: Job,
   ai?: { overall_confidence?: number | null; africa_eligibility?: string | null; last_verified_at?: string | null; evidence_refs?: any; evidence_provenance?: string | null; page_status?: number | null } | null,
 ): number {
-  const legitimacyRaw = (job as any).trust_score
-  const legitimacy =
-    typeof legitimacyRaw === "number"
-      ? legitimacyRaw
-      : (calculateTrustScore(job).score ?? 50)
+  // [TRUTH LAYER v1] legitimacy is the CORRECTED read-time plane (recomputed
+  // stateless signals + persisted learning entries), never the raw persisted
+  // score — ruling out stale weights, the rotten logo +8, and fabricated +12
+  // freshness bonuses flowing into the unified number.
+  const legitimacy = displayLegitimacy(job)
   const evidence = ai?.overall_confidence
   let score =
     evidence == null
@@ -142,7 +209,7 @@ export function unifiedTrustScore(
   //  d) Job-level crawler state: a blocked page caps trust (evidence
   //     couldn't be read — never pretend otherwise).
   const evState = (job as any).evidence_state ?? null
-  if (evState === "blocked") score = Math.min(score, 59)
+  if (evState === "blocked") score = softCapTrust(score)
 
   score = Math.max(0, Math.min(100, score))
 
@@ -151,7 +218,7 @@ export function unifiedTrustScore(
   // never display as Trusted/Highly Trusted for an African audience —
   // cap at Moderate Trust (59) until the AI verifies it.
   const africa = ai?.africa_eligibility
-  if (africa === 'unknown' || africa === 'restricted') return Math.min(score, 59)
+  if (africa === 'unknown' || africa === 'restricted') return softCapTrust(score)
   return score
 }
 

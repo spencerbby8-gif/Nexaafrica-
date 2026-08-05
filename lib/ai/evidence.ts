@@ -18,6 +18,62 @@ import type { Job } from "@/lib/types"
 
 export type EvidenceStatus = "queued" | "fetching" | "fetched" | "blocked" | "partial" | "verified" | "failed" | "stale"
 
+/** [V1.1] The legal crawler-state vocabulary (mirrors migration 20260805000000).
+ *  Every writer (collector, browser worker) MUST produce a state in this set —
+ *  anything else would be a made-up state the UI cannot describe truthfully. */
+export const EVIDENCE_STATES: readonly EvidenceStatus[] = ["queued", "fetching", "fetched", "blocked", "partial", "verified", "failed", "stale"]
+
+export function isEvidenceState(x: unknown): x is EvidenceStatus {
+  return typeof x === "string" && (EVIDENCE_STATES as readonly string[]).includes(x)
+}
+
+/** [V1.1] Honest, human copy for every crawler state (shared by UI + fixtures).
+ *  Never render the raw enum — it is internal vocabulary, not user language. */
+export function crawlerStateLabel(state: string): { label: string; tone: "red" | "green" | "amber" } {
+  switch (state) {
+    case "blocked": return { label: "Page blocked — evidence unavailable, retrying later", tone: "red" }
+    case "verified": return { label: "Page evidence verified from the live posting", tone: "green" }
+    case "fetched": return { label: "Page evidence collected from the live posting", tone: "green" }
+    case "partial": return { label: "Page partially readable — evidence is limited", tone: "amber" }
+    case "failed": return { label: "Page could not be read — retry is scheduled", tone: "red" }
+    case "fetching": return { label: "Page evidence is being collected now", tone: "amber" }
+    case "queued": return { label: "Page evidence collection is queued", tone: "amber" }
+    case "stale": return { label: "Page evidence is aging — refresh scheduled", tone: "amber" }
+    default: return { label: "Page evidence state not recorded", tone: "amber" }
+  }
+}
+
+/** [V1.1] Browser-worker state decision. A navigation failure (timeout/abort)
+ *  is a `failed` fetch — "timeout" is NOT a crawler state and must never be
+ *  written as one (it would leak raw jargon into the UI and silently skip the
+ *  blocked-cap the same condition gets when a server refuses us). The cause
+ *  is preserved in the row's detail. */
+export function workerStateFor(navFailure: string | null, httpStatus: number | null, pageText: string): EvidenceStatus | null {
+  if (navFailure) return "failed"
+  return classifyBlockStatus(httpStatus, pageText)
+}
+
+/** [V1.1] Respect our own retry schedule: when the latest page-level evidence
+ *  says blocked/failed and retry_at is still in the future, do NOT re-hit a
+ *  page that already refused us, and do NOT insert a duplicate row restating
+ *  the same refusal. The stored state is reused truthfully. */
+export function shouldDeferLiveFetch(
+  latest: { status: string | null; retry_at: string | null } | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (!latest) return false
+  if (latest.status !== "blocked" && latest.status !== "failed") return false
+  if (!latest.retry_at) return false
+  const retryMs = new Date(latest.retry_at).getTime()
+  return Number.isFinite(retryMs) && retryMs > now.getTime()
+}
+
+/** [V1.1] The evidence store holds content VERSIONS, not echoes: identical
+ *  content (same hash) must not mint a new row. */
+export function sameContentHash(a: string | null | undefined, b: string | null | undefined): boolean {
+  return !!a && !!b && a === b
+}
+
 export interface EvidenceRef {
   type: string
   sourceKind: string
@@ -101,20 +157,49 @@ export async function collectPageEvidence(sb: any, job: Job): Promise<{ state: E
   try { host = new URL(job.apply_url).hostname } catch {}
   const isAts = atsHosts.some((h) => host.includes(h))
 
+  // [V1.1] Read recent evidence once: (a) retry_at must be respected — a page
+  // that refused us is not re-hit until its retry window opens; (b) identical
+  // content (same hash) is a version, not a new row. Fail-open: if the read
+  // itself fails we fall back to the old collect-everything behavior.
+  let recent: { source_kind: string; status: string | null; content_hash: string | null; retry_at: string | null }[] = []
+  try {
+    const { data } = await sb
+      .from("job_evidence_v1")
+      .select("source_kind,status,content_hash,retry_at")
+      .eq("job_id", job.id)
+      .order("created_at", { ascending: false })
+      .limit(20)
+    if (Array.isArray(data)) recent = data as any
+  } catch {}
+  const latestOf = (kinds: string[]) => recent.find((r) => kinds.includes(r.source_kind)) ?? null
+  const latestPage = latestOf(["browser_render", "page_html", "structured_data"])
+
   // 1) ATS API / ATS-page evidence (from ingest) — always available when desc exists.
   if (job.description_md && job.description_md.length >= 100) {
-    await upsertEvidence(sb, job.id, {
+    const hash = sha256(job.description_md)
+    const dup = sameContentHash(latestOf(["ats_api"])?.content_hash, hash)
+    if (!dup) await upsertEvidence(sb, job.id, {
       evidence_type: "ats_api",
       source_url: job.apply_url,
       source_kind: "ats_api",
       status: "verified",
       http_status: 200,
-      content_hash: sha256(job.description_md),
+      content_hash: hash,
       excerpt: job.description_md.replace(/\s+/g, " ").slice(0, 800),
       detail: { bytes: job.description_md.length, via: isAts ? "ats_page" : "feed" },
       fetched_at: new Date().toISOString(),
     })
-    refs.push({ type: "ats_api", sourceKind: "ats_api", url: job.apply_url, hash: sha256(job.description_md), status: "verified", httpStatus: 200, excerptLen: job.description_md.length })
+    refs.push({ type: "ats_api", sourceKind: "ats_api", url: job.apply_url, hash, status: "verified", httpStatus: 200, excerptLen: job.description_md.length })
+  }
+
+  // [V1.1] Defer live re-fetch while a blocked/failed retry window is still
+  // closed: reuse the stored state truthfully instead of hammering a page
+  // that already refused us (and instead of echoing the same refusal into
+  // the evidence store again).
+  if (shouldDeferLiveFetch(latestPage) && isEvidenceState(latestPage?.status)) {
+    const st = latestPage!.status as EvidenceStatus
+    refs.push({ type: "page_html", sourceKind: latestPage!.source_kind, url: job.apply_url, hash: latestPage!.content_hash, status: st, httpStatus: null, excerptLen: 0 })
+    return { state: st, refs }
   }
 
   // 2) Live page fetch (public source) — real evidence with honest status.
@@ -158,31 +243,36 @@ export async function collectPageEvidence(sb: any, job: Job): Promise<{ state: E
     const ld = extractStructuredData(body)
     let structuredState: EvidenceStatus = "fetched"
     if (ld.length > 0) structuredState = "verified"
-    await upsertEvidence(sb, job.id, {
-      evidence_type: "structured_data",
-      source_url: job.apply_url,
-      source_kind: "structured_data",
-      status: structuredState,
-      http_status: liveStatus,
-      content_hash: sha256(JSON.stringify(ld).slice(0, 4000)),
-      excerpt: JSON.stringify(ld).slice(0, 500),
-      detail: { blocks: ld.length },
-      fetched_at: new Date().toISOString(),
-    })
-    refs.push({ type: "structured_data", sourceKind: "structured_data", url: job.apply_url, hash: sha256(JSON.stringify(ld).slice(0, 4000)), status: structuredState, httpStatus: liveStatus, excerptLen: JSON.stringify(ld).length })
+    const ldHash = sha256(JSON.stringify(ld).slice(0, 4000))
+    // [V1.1] Same structured data as last time = same version — no new row.
+    if (!sameContentHash(latestOf(["structured_data"])?.content_hash, ldHash)) {
+      await upsertEvidence(sb, job.id, {
+        evidence_type: "structured_data",
+        source_url: job.apply_url,
+        source_kind: "structured_data",
+        status: structuredState,
+        http_status: liveStatus,
+        content_hash: ldHash,
+        excerpt: JSON.stringify(ld).slice(0, 500),
+        detail: { blocks: ld.length },
+        fetched_at: new Date().toISOString(),
+      }, false)
+    }
+    refs.push({ type: "structured_data", sourceKind: "structured_data", url: job.apply_url, hash: ldHash, status: structuredState, httpStatus: liveStatus, excerptLen: JSON.stringify(ld).length })
 
+    const pageHash = sha256(body)
     await upsertEvidence(sb, job.id, {
       evidence_type: "page_html",
       source_url: job.apply_url,
       source_kind: "page_html",
       status: "fetched",
       http_status: liveStatus,
-      content_hash: sha256(body),
+      content_hash: pageHash,
       excerpt: body.replace(/\s+/g, " ").slice(0, 800),
       detail: { bytes: body.length, state: "partial_fetch" },
       fetched_at: new Date().toISOString(),
     })
-    refs.push({ type: "page_html", sourceKind: "page_html", url: job.apply_url, hash: sha256(body), status: "fetched", httpStatus: liveStatus, excerptLen: body.length })
+    refs.push({ type: "page_html", sourceKind: "page_html", url: job.apply_url, hash: pageHash, status: "fetched", httpStatus: liveStatus, excerptLen: body.length })
     return { state: "fetched", refs }
   }
 

@@ -11,6 +11,7 @@ import { EvidencePanel } from '@/components/evidence-panel'
 import { TrustCard } from '@/components/trust/trust-card'
 import { ReportButton } from '@/components/trust/report-button'
 import { calculateTrustScore, correctedTrustSignals, unifiedTrustScore, unifiedCapNote } from '@/lib/trust/engine'
+import { crawlerStateLabel } from '@/lib/ai/evidence'
 import { employmentLabel, isFresh, postedLabel } from '@/lib/format'
 import { cleanDescription, getCleanMarkdownForRender } from '@/lib/cleanDescription'
 import type { Job } from '@/lib/types'
@@ -375,16 +376,18 @@ export function JobDetailLayout({ companyJobCount,
       <div className="pt-6">
         <ProofBadge intelligence={aiIntelligence || (job as any).aiIntelligence || null} queueStatus={(job as any)?._queueStatus} queueError={(job as any)?._queueError ?? null} variant="full" />
         {(() => {
-          // [V1] Crawler state — surfaced truthfully (queued|fetching|fetched|
-          // blocked|partial|verified|failed|stale). Only shown when set.
+          // [V1.1] Crawler state — surfaced truthfully (queued|fetching|fetched|
+          // blocked|partial|verified|failed|stale) with human copy from the
+          // shared label map. The raw enum is internal vocabulary — it is
+          // never rendered. Only shown when set.
           const evState = (job as any).evidence_state ?? null
           if (!evState) return null
-          const tone = evState === 'blocked' ? 'text-red-400' : evState === 'verified' || evState === 'fetched' ? 'text-green-400' : evState === 'failed' ? 'text-red-400' : 'text-amber-400'
-          const label = evState === 'blocked' ? 'Page blocked — evidence unavailable, retrying later' : `Evidence: ${evState}`
+          const { label, tone } = crawlerStateLabel(evState)
+          const toneCls = tone === 'red' ? 'text-red-400' : tone === 'green' ? 'text-green-400' : 'text-amber-400'
           return (
             <div className="mt-1 text-[11px]">
               <span className="font-medium text-foreground/70">Crawler:</span>{' '}
-              <span className={tone}>{label}</span>
+              <span className={toneCls}>{label}</span>
             </div>
           )
         })()}

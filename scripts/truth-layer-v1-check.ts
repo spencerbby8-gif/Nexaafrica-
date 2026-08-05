@@ -312,3 +312,68 @@ function mkJob(over: Record<string, any>): any {
   check("rawSum exposed for ceiling marking", typeof rich.rawSum === "number")
   check("score equals min(100, rawSum)", rich.score === Math.min(100, Math.max(0, rich.rawSum)), { score: rich.score, rawSum: rich.rawSum })
 }
+
+console.log("8 · Evidence crawler states (Evidence Intelligence V1.1)")
+
+import {
+  EVIDENCE_STATES,
+  crawlerStateLabel,
+  isEvidenceState,
+  sameContentHash,
+  shouldDeferLiveFetch,
+  workerStateFor,
+} from "../lib/ai/evidence"
+
+// 8a · state vocabulary — every writer must stay inside the legal set
+{
+  check("vocabulary has exactly the 8 migrated states", EVIDENCE_STATES.length === 8, EVIDENCE_STATES)
+  check("every vocabulary entry passes the guard", EVIDENCE_STATES.every((s) => isEvidenceState(s)))
+  check("'timeout' is NOT a legal crawler state", !isEvidenceState("timeout"))
+  check("garbage is rejected by the guard", !isEvidenceState("Evidence: verified") && !isEvidenceState("") && !isEvidenceState(null))
+}
+
+// 8b · worker nav failure maps to failed, never the made-up 'timeout' state
+{
+  const navTimeout = workerStateFor("timeout", 0, "anything")
+  check("nav timeout resolves to failed", navTimeout === "failed", navTimeout)
+  check("nav timeout stays in-vocabulary", isEvidenceState(navTimeout))
+  const refused = workerStateFor(null, 403, "")
+  check("server 403 still blocked", refused === "blocked", refused)
+  const challenge = workerStateFor(null, 200, "<html>Just a moment… cloudflare challenge-platform</html>")
+  check("challenge page still blocked", challenge === "blocked", challenge)
+  const clean = workerStateFor(null, 200, "Senior Engineer role description with real content")
+  check("healthy page yields no block state", clean === null, clean)
+}
+
+// 8c · honest human copy — raw enums never reach the UI
+{
+  for (const st of EVIDENCE_STATES) {
+    const { label } = crawlerStateLabel(st)
+    check(`label for '${st}' is not the raw enum`, label !== st && !label.includes(`Evidence: ${st}`), label)
+    check(`label for '${st}' carries real words`, label.length > 12, label)
+  }
+  check("blocked copy preserved verbatim (regression)", crawlerStateLabel("blocked").label === "Page blocked — evidence unavailable, retrying later")
+  check("failed state admits the failure and the retry", /could not be read/.test(crawlerStateLabel("failed").label) && /retry/i.test(crawlerStateLabel("failed").label), crawlerStateLabel("failed").label)
+  check("unknown state degrades honestly, not to jargon", crawlerStateLabel("weird").label === "Page evidence state not recorded", crawlerStateLabel("weird").label)
+  check("tone map complete", EVIDENCE_STATES.every((s) => ["red", "green", "amber"].includes(crawlerStateLabel(s).tone)))
+}
+
+// 8d · retry_at deference — a refused page is not re-hit inside its window
+{
+  const future = new Date(Date.now() + 6 * 3_600_000).toISOString()
+  const past = new Date(Date.now() - 60_000).toISOString()
+  check("blocked + future retry defers", shouldDeferLiveFetch({ status: "blocked", retry_at: future }))
+  check("failed + future retry defers", shouldDeferLiveFetch({ status: "failed", retry_at: future }))
+  check("blocked + window open refetches", !shouldDeferLiveFetch({ status: "blocked", retry_at: past }))
+  check("verified evidence never defers", !shouldDeferLiveFetch({ status: "verified", retry_at: future }))
+  check("blocked without retry_at refetches (no schedule to respect)", !shouldDeferLiveFetch({ status: "blocked", retry_at: null }))
+  check("no evidence yet refetches", !shouldDeferLiveFetch(null))
+  check("garbage retry_at does not defer", !shouldDeferLiveFetch({ status: "blocked", retry_at: "not-a-date" }))
+}
+
+// 8e · evidence store holds versions, not echoes
+{
+  check("identical hash is a duplicate", sameContentHash("abc123", "abc123"))
+  check("changed content is not a duplicate", !sameContentHash("abc123", "def456"))
+  check("missing hashes never dedupe away evidence", !sameContentHash(null, "abc123") && !sameContentHash("abc123", null) && !sameContentHash(null, null))
+}

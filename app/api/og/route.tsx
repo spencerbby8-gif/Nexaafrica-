@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    return new ImageResponse(
+    const img = new ImageResponse(
     (
       <div
         style={{
@@ -62,7 +62,6 @@ export async function GET(req: NextRequest) {
           background: BG,
           color: FG,
           padding: '64px 72px',
-          fontFamily: 'Inter, system-ui, sans-serif',
           position: 'relative',
         }}
       >
@@ -86,7 +85,6 @@ export async function GET(req: NextRequest) {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            zIndex: 1,
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
@@ -139,8 +137,8 @@ export async function GET(req: NextRequest) {
                 gap: 10,
                 padding: '8px 16px',
                 borderRadius: 999,
-                border: `1px solid ${ACCENT}55`,
-                background: `${ACCENT}15`,
+                border: '1px solid rgba(52, 211, 153, 0.33)',
+                background: 'rgba(52, 211, 153, 0.08)',
                 color: ACCENT,
                 fontSize: 18,
                 fontWeight: 500,
@@ -169,7 +167,6 @@ export async function GET(req: NextRequest) {
             flexDirection: 'column',
             justifyContent: 'center',
             flexGrow: 1,
-            zIndex: 1,
             paddingTop: 32,
             paddingBottom: 32,
           }}
@@ -211,7 +208,6 @@ export async function GET(req: NextRequest) {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            zIndex: 1,
             borderTop: `1px solid ${BORDER}`,
             paddingTop: 24,
           }}
@@ -228,15 +224,23 @@ export async function GET(req: NextRequest) {
     {
       width: WIDTH,
       height: HEIGHT,
+    },
+    )
+    // Force the render NOW: next/og defers satori work to stream
+    // consumption, which escapes a constructor-level try/catch and was the
+    // structural reason the production 500 survived the copy fix. Buffering
+    // here makes any render failure catchable -> honest SVG fallback.
+    const buf = await img.arrayBuffer()
+    return new Response(buf, {
       headers: {
+        'Content-Type': img.headers.get('content-type') || 'image/png',
         'Cache-Control': 'public, max-age=86400, s-maxage=86400, immutable',
       },
-    },
-  )
+    })
   } catch (err) {
     // Minimal brand card fallback — satori failures must degrade, not 500.
     console.error('[og] ImageResponse failed', (err as Error)?.message)
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}"><rect width="100%" height="100%" fill="${BG}"/><text x="72" y="${HEIGHT / 2}" fill="${FG}" font-family="system-ui, sans-serif" font-size="64" font-weight="700">Nexa</text><text x="72" y="${HEIGHT / 2 + 56}" fill="${MUTED}" font-family="system-ui, sans-serif" font-size="28">Remote work for African talent</text></svg>`
+    const svg = `<!--og-fallback--><svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}"><rect width="100%" height="100%" fill="${BG}"/><text x="72" y="${HEIGHT / 2}" fill="${FG}" font-family="system-ui, sans-serif" font-size="64" font-weight="700">Nexa</text><text x="72" y="${HEIGHT / 2 + 56}" fill="${MUTED}" font-family="system-ui, sans-serif" font-size="28">Remote work for African talent</text></svg>`
     return new Response(svg, {
       headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=3600' },
     })

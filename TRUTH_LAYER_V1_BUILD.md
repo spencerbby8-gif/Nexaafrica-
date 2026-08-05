@@ -143,6 +143,26 @@ Then the next 05:00 UTC drain re-verifies requeued rows; re-check the §6 fixtur
 - [ ] After next 05:00 UTC drain: re-run the §6 table — every row must flip to the "Post-merge expected" column; positive control must stay explicit
 - [ ] `/admin/observability` panels show plausible aligned counts; `action_not_persistable` appears in logs once per gateway allow (then audit table gains rows only for persistable actions)
 
-## 10 · Deferred debt (documented, not silently skipped)
+## 10 · Preview verification results (PR #32 → deployment `mLbLBJtKVFZaceg4k3patMdzk1uh`, 2026-08-05)
+
+**Preview URL:** `https://v0-nexa-platform-architec-git-091ee2-waylonbaby2-9618s-projects.vercel.app`
+**Deployment identity proof:** preview sitemap static-page `lastmod = 2026-08-05T21:42:16.782Z` (fresh build at PR creation) vs production's `2026-08-04T08:29:05.798Z`. Preview reads the same production DB → rendering-plane fixes are verifiable immediately; persisted-data fixes require the post-merge backfill/drain and are *expected stale* in preview.
+
+### PASS (verified live on preview)
+| Gate | Evidence |
+|---|---|
+| "ago ago" template | micro1 role timeline renders "**17h ago**" ×3 (prod: "14h ago ago") |
+| P0-4 chip downgrade | `/companies/mongodb` queued cards now read "**Likely open · unverified**" neutral (prod: affirmative "Likely open") |
+
+### DEFECTS FOUND BY PREVIEW — fixed on this branch (same push cycle)
+1. **`/api/og` still HTTP 500 after the radial-gradient copy fix.** Root cause (code-proven): next/og defers satori rendering to *stream consumption*, so a constructor-level try/catch structurally cannot catch render failures — the 500 survived the copy change regardless of which CSS feature was the thrower. **Fix:** eager `await img.arrayBuffer()` inside the handler (render errors now catchable → honest SVG fallback, marked `<!--og-fallback-->` for branch identification) + compatibility hardening (dropped declared-but-unloaded `fontFamily`, removed `zIndex`, replaced 8-digit-hex border with `rgba()`). Node probe: new markup renders a 42,646-byte PNG — and the radial-gradient control *also* rendered, meaning the original prod thrower is unconfirmed beyond "render-time"; the eager-fallback architecture makes any such failure a 200-from-now-on, with `console.error('[og] ImageResponse failed')` surfacing the true cause in Vercel logs on first hit.
+2. **P0-4 residue: "Opportunity Intelligence" bullets asserted "Likely open to Africa"** on queued cards (from the ingest `job.eligibility` fallback inside `africaFitLabel`) even though the chip was downgraded. **Fix:** `africaFitLabel` now treats JAI verdicts and ingest fallbacks as separate claim classes — ingest-only `likely` renders neutral "**Likely open · unverified**"; ingest `restricted` stays visible (protective); ingest `explicit` (Africa actually named in posting) renders "Open to Africa", consistent with the card chip. Applied to both card and detail variants (call sites ×2).
+
+### EXPECTED STALE in preview (data-plane; corrected by post-merge backfill + 05:00 UTC drain — not code defects)
+Persisted skills-as-JSON (8 objects on micro1) · salary split (badge USD70–110k vs JAI USD 50,000–70,000) · mid-word-mangled stored quotes · legacy trust-signal copy ("Employer with logo…") · stored JAI verdicts incl. the audit-leader's "Explicitly open to Africa • 75%" and the commissioning role's "Fully remote (from feed)". All are re-queued / corrected by `kind=all` backfill + re-verification per §4/§6.
+
+---
+
+## 10b · Deferred debt (documented, not silently skipped)
 
 `posted_at = ingest_time` freshness fabrication is **DB-trigger-enforced** (`20260530154519` coalesces null→created_at) — fixing it needs a migration + adapter-dates plumbing: deliberately out of this PR. Also deferred (all listed in Truth Report §4/P2–P3 with live evidence): trust-score plateaus (partially mitigated by §2 signal honesty), seo-status 1000 caps, build-time sitemap lastmod, `npm run lint` config absence, in-memory rate limiter, dead subsystems (council `Math.random`, 18 superseded `real*AI` verifiers), duplicate migration versions (needs DB-plane access to reconcile), admin in-page authZ (authN verified live).

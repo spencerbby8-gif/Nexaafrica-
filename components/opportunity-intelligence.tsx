@@ -37,12 +37,31 @@ function intelligenceState(row: any | null | undefined, queueStatus?: string | n
   }
 }
 function africaFitLabel(elig: string | null | undefined, fallbackElig?: string | null): { label: string; tone: 'positive' | 'caution' | 'neutral' } {
-  const effective = elig || fallbackElig || null
-  switch (effective) {
+  // JAI-backed verdicts render as verified claims.
+  if (elig) {
+    switch (elig) {
+      case 'explicit':
+        return { label: 'Explicitly open to Africa', tone: 'positive' }
+      case 'likely':
+        return { label: 'Likely open to Africa', tone: 'caution' }
+      case 'restricted':
+        return { label: 'Restricted – may require US/EU residency', tone: 'caution' }
+      case 'unknown':
+        return { label: 'Africa eligibility unknown', tone: 'neutral' }
+      default:
+        return { label: 'Intelligence pending', tone: 'neutral' }
+    }
+  }
+  // [TRUTH LAYER v1] Ingest-tier fallback (queued/rule-based rows with no AI
+  // verdict) is a heuristic read, not a verified claim. P0-4: unknown/likely
+  // must never assert affirmative Africa openness — render as unverified.
+  // 'restricted' stays shown (protective); 'explicit' requires Africa actually
+  // named in the posting and matches the card chip.
+  switch (fallbackElig) {
     case 'explicit':
-      return { label: 'Explicitly open to Africa', tone: 'positive' }
+      return { label: 'Open to Africa', tone: 'positive' }
     case 'likely':
-      return { label: 'Likely open to Africa', tone: 'caution' }
+      return { label: 'Likely open · unverified', tone: 'neutral' }
     case 'restricted':
       return { label: 'Restricted – may require US/EU residency', tone: 'caution' }
     case 'unknown':

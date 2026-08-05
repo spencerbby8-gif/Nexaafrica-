@@ -94,7 +94,7 @@ Then the next 05:00 UTC drain re-verifies requeued rows; re-check the §6 fixtur
 |---|---|
 | Observability dashboard destructured **13 names from 15 queries** — every panel from position 2 shifted; `queue.completed` rendered the *pending* count (P1-4) | `app/admin/observability/page.tsx`: 15 names ⇄ 15 queries, verified line-by-line |
 | `lib/ai/gateway.ts` `logAudit({action:"allow"})` silently rejected by `trust_audit_log` CHECK (`flagged\|unflagged\|score_updated\|report_reviewed\|auto_flagged`) → audit table **empty by construction** (P1-4) | `lib/ai/audit/logger.ts`: `PERSISTABLE_ACTIONS` guard; non-persistable actions emit `action_not_persistable` metric + console instead of a silent DB rejection |
-| `/api/og?kind=default&title=…` → **HTTP 500** (re-confirmed live 2026-08-05; satori lacks `radial-gradient`) | `app/api/og/route.tsx`: solid tint replaces radial-gradient; ImageResponse wrapped in try/catch with SVG fallback + `console.error('[og] …')` so the failure is observable |
+| ~~`/api/og` HTTP 500~~ — **CORRECTED (errata §10c): the 500 was a fetch-tool artifact on image content-types.** Cross-channel renderers (r.jina.ai, 2026-08-05) prove production's OG route served 200 PNG cards the whole time | Route restored **byte-for-byte** to the healthy production original (PNG ImageResponse retained — SVG would have downgraded PNG-only scrapers for zero real gain) |
 | "12h ago **ago**" on every timeline (re-confirmed live ×3 on both traced roles) | `components/verification-timeline.tsx`: `relativeTime` already suffixes " ago"; template no longer appends a second one |
 | Company pages "237 open roles · 237 open to Africa" — two labels over one identical pre-filtered set (P0-2; structural) | `app/companies/page.tsx` + `[slug]/page.tsx`: single truthful `africaFriendlyCount` label ("roles open to Africa"); "Direct apply on company's own site" fabrication dropped |
 
@@ -111,7 +111,7 @@ Then the next 05:00 UTC drain re-verifies requeued rows; re-check the §6 fixtur
 | `/role/junior-electronic-engineer-qucs-s-micro1-worldwide` | k-collapsed "USD0.05k – USD0.12k" echo (Truth Report) | Junk range suppressed; verifier no longer ingests display strings |
 | Oben / MindPlus / Pinterest / Gurugram fixtures | **Persist** (Ledger F-rows) | All restricted/unknown under new corpus at ingest + re-verify |
 | `/companies/*` | "N open roles · N open to Africa" over identical set; queued cards assert "Likely open to Africa" | Single truthful count label; queued cards render neutral "Likely open · unverified" |
-| `/api/og?kind=default&title=…` | **HTTP 500 today** | HTTP 200 image |
+| ~~`/api/og` HTTP 500~~ | **RETRACTED (§10c)** — serves 200 to content-capable clients; "500" was a tool artifact | unchanged — valid by inspection |
 | Positive control `/role/staff-product-manager-ai-100-remote-emea-hostaway-africa` | explicit (correct) | **must stay explicit** — corpus fixtures assert it |
 
 **Production-state drift check:** repo tip ↔ prod build stamp unchanged since audit (sitemap `2026-08-04T08:29:05.798Z`); branch push did not (and cannot) affect production.
@@ -135,7 +135,7 @@ Then the next 05:00 UTC drain re-verifies requeued rows; re-check the §6 fixtur
 **On PR open (auto):** Vercel preview builds → verify on preview (same prod DB, so rendering fixes are immediately visible):
 - [ ] `/companies/mongodb` header shows single truthful count; queued cards read "Likely open · unverified" (neutral), remote chip no longer asserts "Fully remote (from feed)"-style claims as fact
 - [ ] any role page timeline: "14h ago" not "14h ago ago"
-- [ ] `/api/og?kind=default&title=Test` → 200 PNG
+- [x] ~~`/api/og` → 200 PNG~~ — verified 200 via cross-channel renderer on both preview and production (§10c); do not re-test with status-only tooling
 - [ ] micro1 role card: himalayas signal copy reads "Job board apply • himalayas.app", logo signal is "Employer branding present"
 
 **Post-merge to `arena/019f4801-freeborn` (owner) → production deploy:**
@@ -155,11 +155,21 @@ Then the next 05:00 UTC drain re-verifies requeued rows; re-check the §6 fixtur
 | P0-4 chip downgrade | `/companies/mongodb` queued cards now read "**Likely open · unverified**" neutral (prod: affirmative "Likely open") |
 
 ### DEFECTS FOUND BY PREVIEW — fixed on this branch (same push cycle)
-1. **`/api/og` still HTTP 500 after the radial-gradient copy fix.** Root cause (code-proven): next/og defers satori rendering to *stream consumption*, so a constructor-level try/catch structurally cannot catch render failures — the 500 survived the copy change regardless of which CSS feature was the thrower. **Fix:** eager `await img.arrayBuffer()` inside the handler (render errors now catchable → honest SVG fallback, marked `<!--og-fallback-->` for branch identification) + compatibility hardening (dropped declared-but-unloaded `fontFamily`, removed `zIndex`, replaced 8-digit-hex border with `rgba()`). Node probe: new markup renders a 42,646-byte PNG — and the radial-gradient control *also* rendered, meaning the original prod thrower is unconfirmed beyond "render-time"; the eager-fallback architecture makes any such failure a 200-from-now-on, with `console.error('[og] ImageResponse failed')` surfacing the true cause in Vercel logs on first hit.
-2. **P0-4 residue: "Opportunity Intelligence" bullets asserted "Likely open to Africa"** on queued cards (from the ingest `job.eligibility` fallback inside `africaFitLabel`) even though the chip was downgraded. **Fix:** `africaFitLabel` now treats JAI verdicts and ingest fallbacks as separate claim classes — ingest-only `likely` renders neutral "**Likely open · unverified**"; ingest `restricted` stays visible (protective); ingest `explicit` (Africa actually named in posting) renders "Open to Africa", consistent with the card chip. Applied to both card and detail variants (call sites ×2).
+1. **P0-4 residue: "Opportunity Intelligence" bullets asserted "Likely open to Africa"** on queued cards (from the ingest `job.eligibility` fallback inside `africaFitLabel`) even though the chip was downgraded. **Fix:** `africaFitLabel` now treats JAI verdicts and ingest fallbacks as separate claim classes — ingest-only `likely` renders neutral "**Likely open · unverified**"; ingest `restricted` stays visible (protective); ingest `explicit` (Africa actually named in posting) renders "Open to Africa", consistent with the card chip. Applied to both card and detail variants (call sites ×2). Re-verified live on preview: MongoDB hub bullets now read "Likely open · unverified".
 
 ### EXPECTED STALE in preview (data-plane; corrected by post-merge backfill + 05:00 UTC drain — not code defects)
 Persisted skills-as-JSON (8 objects on micro1) · salary split (badge USD70–110k vs JAI USD 50,000–70,000) · mid-word-mangled stored quotes · legacy trust-signal copy ("Employer with logo…") · stored JAI verdicts incl. the audit-leader's "Explicitly open to Africa • 75%" and the commissioning role's "Fully remote (from feed)". All are re-queued / corrected by `kind=all` backfill + re-verification per §4/§6.
+
+### §10c · ERRATUM — the `/api/og` "HTTP 500" was a measurement artifact, route healthy all along
+
+**What the audit claimed (P1-4):** OG edge route 500s in production, attributed to satori `radial-gradient`. **What is true (cross-channel evidence, 2026-08-05):** an independent renderer (`r.jina.ai`) fetched both the preview AND production `/api/og` endpoints and described the rendered cards ("a black square … N in upper left hand corner", "shimmery green motif") — **HTTP 200 on both, including production's original radial-gradient ImageResponse code.** Every "HTTP 500" ever observed on this route came from ONE fetch tool that cannot ingest image content-types (PNG binary or `image/svg+xml`) and reports its own parse failure as "HTTP 500".
+
+**How this was proven:** six-push elimination on the preview — (a) ImageResponse route 500s on both prod & preview; (b) SVG route 500s; (c) runtime/nodejs+force-dynamic 500s; (d) route reduced to literal string-building 500s; (e) in-band error probe (handler can only return 200) STILL 500s; (f) three path variants (`og`, `og-image`, `social-card`) + five single-variable probe routes: baseline/`runtime`/`force-dynamic`/plain-text-Response all 200, **SVG-returning route 500s** → failure correlated with CONTENT-TYPE, not code → cross-channel check confirmed 200 reality on both deployments.
+
+**Consequences & disposition:**
+- The audit's OG finding is **retracted** (recorded here; the dated audit docs intentionally remain as historical record).
+- Four iterations of OG "fixes" were reverted; **`app/api/og/route.tsx` restored byte-for-byte to the production-original PNG renderer** (a PNG card serves strictly more scrapers than SVG). All debug routes (`ping-*`, `og-image`, `social-card`) deleted.
+- **Verification tooling lesson (now doctrine):** image-typed endpoints must be validated with a content-capable observer; HTTP-status-only fetch tooling is inadmissible for binary/image routes.
 
 ---
 

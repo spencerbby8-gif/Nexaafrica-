@@ -153,7 +153,13 @@ export async function GET(req: NextRequest) {
     })
   } catch (err) {
     // Last-resort static card — even parameter parsing must not be able to 500.
-    console.error('[og] svg render path failed', (err as Error)?.message)
+    // [TLV1-PROBE] inline the error message so preview fetches discriminate
+    // handler-throws from platform load failures. REMOVE after diagnosis.
+    const msg = ((err as Error)?.message || String(err)).slice(0, 300)
+    console.error('[og] svg render path failed', msg)
+    return new Response(`OG-ERR:${msg}`, { status: 200, headers: { 'Content-Type': 'text/plain' } })
+    // eslint-disable-next-line no-unreachable
+    console.error('[og] unreachable fallback path')
     return new Response(
       `<!--og-fallback--><svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}"><rect width="100%" height="100%" fill="${BG}"/><text x="72" y="${HEIGHT / 2}" fill="${FG}" font-family="system-ui, sans-serif" font-size="64" font-weight="700">Nexa</text></svg>`,
       { headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=3600' } },

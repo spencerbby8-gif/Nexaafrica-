@@ -171,12 +171,6 @@ function v1Reason(v: { tier: string; reason: string }) {
   return `${v.tier}/${v.reason}`
 }
 
-console.log(`\n${"═".repeat(60)}`)
-console.log(`Truth Layer v1 fixtures: ${passed} passed, ${failed} failed`)
-if (failed > 0) {
-  console.log("FAILURES:", failures.join(" | "))
-  process.exit(1)
-}
 
 /* -------------------------------------------------------------------- */
 /* 7 · Trust differentiation (truth plane must not be static)            */
@@ -297,4 +291,11 @@ function mkJob(over: Record<string, any>): any {
   const a = unifiedTrustScore(mkJob({ company_logo: null, apply_url: "https://jobs.ashbyhq.com/x/1" }), null)
   const b = unifiedTrustScore(mkJob({}), null)
   check("queued rows differentiate by evidence (a ≠ b)", a !== b, { a, b })
+}
+
+console.log(`\n${"═".repeat(60)}`)
+console.log(`Truth Layer v1 fixtures: ${passed} passed, ${failed} failed`)
+if (failed > 0) {
+  console.log("FAILURES:", failures.join(" | "))
+  process.exit(1)
 }

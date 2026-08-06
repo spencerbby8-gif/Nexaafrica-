@@ -315,3 +315,24 @@ Fabricated data? None — every rendered quote is containment-verified; dropped 
 - Trust plateaus return until the rescore backfill runs.
 
 **Backfill runbook (unchanged, merge-gated, never run in preview):** `GET /api/ai/backfill?kind=africa-fp|salary-conflict|skills-json|all&execute=1` (Bearer CRON_SECRET; dry-run first) + `POST /api/jobs/backfill-trust?batch=500`. Preview lane throughout: nothing merged, no production, no backfills executed.
+
+## 14b · §14 live verification — deployment `H4mtm3bpDKSrAmBGaUuw9vwHXKK4` (2026-08-05)
+
+Every surface verified on the preview alias after the cleanup. Doctrine-consequence rows (visible staleness, write-path healing) are labeled as such — they are the doctrine working, not regressions.
+
+**Trust plane (C1/C2/C3/C4):**
+- Audit-leader: "Listing signals **100** (at ceiling — signal sum **156**) · Opportunity evidence 55% · **unified 73**". Persisted score/signals displayed; ceiling marker = arithmetic over displayed signals (C4). 73 = 100·0.4 + 55·0.6 exactly — no decay/richness/provenance adjustments (C2), no render arbitration (A3).
+- Video Editor: unified **45** with blocked-cap note (stored `evidence_state` governs — C3 presentation of the stored rule).
+- Feed values 40/45/49/50/51/54/55 — **plateaus return (100-base)**. Doctrine-accepted: stale truth until the merge-gated rescore backfill (`TRUST_VERSION` 3, `POST /api/jobs/backfill-trust`) re-persists rows. Never masked at render.
+
+**Africa eligibility (A1/A5):**
+- Audit-leader (mali class): "Explicitly open to Africa · 75% confidence" — the stored (wrong) verdict displayed with its stored confidence + class provenance, NOT silently overruled. Heals via `africa-fp` backfill → verifier re-judges under the corpus (`corroborateAfricaClaim`, verifier domain).
+- Evidence panel anchor "Explicitly open to Africa — From eligibility analysis" with NO excerpt (nothing traceable in posting → no fabricated-looking quote; claim still shows with provenance).
+
+**Membership (A2):** Oben Romania back on `/remote-jobs/nigeria` and `/remote-jobs/search/open-to-africa` — stored-flag membership, honestly labeled "Likely open · unverified" (ingest tier, no AI row → neutral class ✓ P0-4). MindPlus 75% / Decision 55% stored claims back on both. Hostaway "Open to Africa" (stored ingest-explicit) intact ✓.
+
+**Salary (A4/B3/B9):** Talent Ops card: chip "USD70k - USD110k" (feed) + panel "USD 50000 – 70000/year — Quoted from posting • 100%" (JAI) — both planes with provenance, no silent adjudication. Junk rows (Workflow Annotator ×2, BI Consultant, Gameplay): "Salary unclear", zero "USD0.03k"/"USD 0 – 0" strings anywhere. Autodesk (stored `disclosed` with no numbers): "Salary not disclosed" + stored "Transparency: disclosed 70%" still visible — nothing fabricated. Genuine ranges pass: Reddit "$217,000—$303,900".
+
+**Kept presentation work (B):** quotes all word-aligned/traceable ("We use a hybrid work model…", "Location: Remote", "Job Type: Contractor"); skills unwrapped clean ("large-cohort onboarding at scale…", "Excel, Power Query…"); "Tagged in the feed:" honesty; crawler label "Page blocked — evidence unavailable, retrying later" byte-stable.
+
+**Single-owner confirmation:** every displayed Africa verdict, salary figure, trust score, skills list, crawler state and confidence on these surfaces traces to exactly one canonical plane (persisted `jobs`/`job_ai_intelligence` rows computed by ingest/verifier/trust-engine), with render limited to junk-guards, quote traceability, de-duping and provenance labels. Harness suite 12 guards the boundary structurally (139/139).

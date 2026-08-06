@@ -6,7 +6,18 @@ import { PROVIDERS } from "./providers/types"
 import { asInt, clamp100, asEnum, asStringOrNull, asStringArray, asSkillList, cleanEvidenceText } from "./normalize"
 import { formatSalary } from "@/lib/intelligence"
 import { companyLegitimacyOwner, type CompanyLearningInput } from "@/lib/company/legitimacy"
-import { isFailedModelVersion, queueRepairDecision, preserveQuote, REQUEUE_ERROR_LABEL, type RequeueReason } from "./queue-repair"
+import { isFailedModelVersion, queueRepairDecision, contradictionRepairDecision, preserveQuote, REQUEUE_ERROR_LABEL, type RequeueReason } from "./queue-repair"
+import { contradictionFlags } from "@/lib/validation/truth-v2"
+
+/** PostgREST reads `.in()` filters from the request URL; beyond a few
+ *  hundred UUIDs the URL overflows HTTP limits and the query silently
+ *  fails behind a try/catch — the repair pass would no-op without an
+ *  error anyone sees. Chunk every batched lookup. */
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+  return out
+}
 
 
 
@@ -477,11 +488,12 @@ export async function processAIQueue(batchSize = 100) {
       .eq("jobs.is_active", true)
       .limit(200)
     if (doneClean && doneClean.length > 0) {
-      const { data: jaiRows } = await supabase
-        .from("job_ai_intelligence")
-        .select("job_id")
-        .in("job_id", doneClean.map((d: any) => d.job_id))
-      const haveJai = new Set((jaiRows || []).map((r: any) => r.job_id))
+      const jaiRows: any[] = []
+      for (const ids of chunkArray(doneClean.map((d: any) => d.job_id), 100)) {
+        const { data } = await supabase.from("job_ai_intelligence").select("job_id").in("job_id", ids)
+        if (data) jaiRows.push(...data)
+      }
+      const haveJai = new Set(jaiRows.map((r: any) => r.job_id))
       const orphans = (doneClean as any[]).filter((d: any) => !haveJai.has(d.job_id))
       if (orphans.length > 0) {
         const healNow = new Date().toISOString()
@@ -512,19 +524,66 @@ export async function processAIQueue(batchSize = 100) {
       .limit(1000)
     if (doneRows && doneRows.length > 0) {
       const jobIds = [...new Set(doneRows.map((d: any) => d.job_id))]
-      const { data: jaiRows } = await supabase
-        .from("job_ai_intelligence")
-        .select("job_id, model_version, evidence_refs")
-        .in("job_id", jobIds)
-      const jaiMap = new Map((jaiRows || []).map((r: any) => [r.job_id, r]))
-      const requeueable = (doneRows as any[]).filter((d) => queueRepairDecision(d, jaiMap.get(d.job_id)) !== null).slice(0, 250)
+      const jaiRows: any[] = []
+      for (const ids of chunkArray(jobIds, 100)) {
+        const { data } = await supabase
+          .from("job_ai_intelligence")
+          .select("job_id, model_version, evidence_refs, africa_eligibility, africa_confidence, africa_evidence, company_legitimacy, company_confidence, company_evidence, remote_evidence, salary_evidence, visa_evidence, job_quality_evidence")
+          .in("job_id", ids)
+        if (data) jaiRows.push(...data)
+      }
+      const jaiMap = new Map(jaiRows.map((r: any) => [r.job_id, r]))
+
+      // [V2 CONTRADICTION REPAIR] Rows the §17 classes pass (real-model,
+      // V1.1 evidence) are then judged against the deterministic owners:
+      // Africa adjudicator, canonical company owner, quote traceability —
+      // the SAME pure flags the validation endpoint reports, so the
+      // simulated drain and the real drain can never diverge.
+      const basePassRows = (doneRows as any[]).filter((d) => {
+        const jai = jaiMap.get(d.job_id)
+        return jai && queueRepairDecision(d, jai) === null
+      })
+      const jobsMap = new Map<string, any>()
+      for (const ids of chunkArray([...new Set(basePassRows.map((d) => d.job_id))], 100)) {
+        if (ids.length === 0) continue
+        const { data } = await supabase.from("jobs").select("id, title, company, location, description_md, salary_range").in("id", ids)
+        for (const j of data || []) jobsMap.set((j as any).id, j)
+      }
+      const companyNames = [...new Set([...jobsMap.values()].map((j) => ((j as any).company || "").trim()).filter(Boolean))]
+      const learningMap = new Map<string, CompanyLearningInput>()
+      for (const names of chunkArray(companyNames, 100)) {
+        if (names.length === 0) continue
+        const { data } = await supabase.from("company_intelligence").select("company, total_jobs, verification_rate, hiring_velocity_30d").in("company", names)
+        for (const ci of data || []) {
+          learningMap.set((ci as any).company, {
+            totalRoles: Number((ci as any).total_jobs) || 0,
+            verificationRate: typeof (ci as any).verification_rate === "number" ? (ci as any).verification_rate : null,
+            roles30d: Number((ci as any).hiring_velocity_30d) || 0,
+          })
+        }
+      }
+
+      const decide = (d: any): RequeueReason => {
+        const jai = jaiMap.get(d.job_id)
+        const base = queueRepairDecision(d, jai)
+        if (base) return base
+        if (!jai) return null
+        const job = jobsMap.get(d.job_id)
+        if (!job) return null
+        return contradictionRepairDecision(contradictionFlags(job, jai, learningMap.get((job.company || "").trim()) ?? null))
+      }
+
+      const requeueable = (doneRows as any[])
+        .map((d) => ({ row: d, reason: decide(d) }))
+        .filter((x) => x.reason !== null)
+        .slice(0, 250)
       if (requeueable.length > 0) {
         const healNow = new Date().toISOString()
         const byReason = new Map<string, string[]>()
         for (const r of requeueable) {
-          const reason = queueRepairDecision(r, jaiMap.get(r.job_id)) as Exclude<RequeueReason, null>
+          const reason = r.reason as Exclude<RequeueReason, null>
           const list = byReason.get(reason) || []
-          list.push(r.id)
+          list.push(r.row.id)
           byReason.set(reason, list)
         }
         let requeued = 0
@@ -555,11 +614,12 @@ export async function processAIQueue(batchSize = 100) {
       .order("created_at", { ascending: true })
       .limit(1000)
     if (oldestJobs && oldestJobs.length > 0) {
-      const { data: queuedRows } = await supabase
-        .from("ai_processing_queue")
-        .select("job_id")
-        .in("job_id", oldestJobs.map((j: any) => j.id))
-      const haveRow = new Set((queuedRows || []).map((r: any) => r.job_id))
+      const queuedRows: any[] = []
+      for (const ids of chunkArray(oldestJobs.map((j: any) => j.id), 100)) {
+        const { data } = await supabase.from("ai_processing_queue").select("job_id").in("job_id", ids)
+        if (data) queuedRows.push(...data)
+      }
+      const haveRow = new Set(queuedRows.map((r: any) => r.job_id))
       const missing = (oldestJobs as any[]).filter((j) => !haveRow.has(j.id)).map((j) => j.id)
       if (missing.length > 0) {
         const { error: insErr } = await supabase.from("ai_processing_queue").upsert(
@@ -744,30 +804,33 @@ export async function processAIQueue(batchSize = 100) {
         return
       }
 
+      // [§17 PRESERVATION + V2 PLANE SYNC] Verdicts and preserved evidence
+      // are computed ONCE, before the protection branch: they are needed by
+      // the main upsert AND by the canonical-plane sync. The merge rule is
+      // unchanged — never overwrite stored evidence with blanks; a stored
+      // quote survives only while its dimension's verdict is unchanged (a
+      // new verdict must not inherit the old verdict's evidence).
+      const salaryMinRaw = asInt(intelligence.salary.value.min)
+      let salaryMin = salaryMinRaw
+      let salaryMax = asInt(intelligence.salary.value.max)
+      if (salaryMin !== null && salaryMax !== null && salaryMax < salaryMin) {
+        const tmp = salaryMin; salaryMin = salaryMax; salaryMax = tmp
+      }
+      const vAfrica = asEnum(intelligence.africa.value, AFRICA_ENUM)
+      const vRemote = asEnum(intelligence.remote.value, REMOTE_ENUM)
+      const vVisa = asEnum(intelligence.visa.value, VISA_ENUM)
+      const vSalaryTrans = asEnum(intelligence.salary.value.transparency, TRANSPARENCY_ENUM)
+      const vCompany = asEnum(intelligence.company.value, LEGITIMACY_ENUM)
+      const vQuality = asEnum(intelligence.quality.value, QUALITY_ENUM)
+      const africaEvidence = preserveQuote(cleanEvidenceText(intelligence.africa.evidence[0]?.text), existingRow?.africa_evidence, !!existingRow && existingRow.africa_eligibility === vAfrica)
+      const remoteEvidence = preserveQuote(cleanEvidenceText(intelligence.remote.evidence?.[0]?.text), existingRow?.remote_evidence, !!existingRow && existingRow.remote_eligibility === vRemote)
+      const visaEvidence = preserveQuote(cleanEvidenceText(intelligence.visa.evidence?.[0]?.text), existingRow?.visa_evidence, !!existingRow && existingRow.visa_sponsorship === vVisa)
+      const salaryEvidence = preserveQuote(cleanEvidenceText(intelligence.salary.evidence?.[0]?.text), existingRow?.salary_evidence, !!existingRow && existingRow.salary_transparency === vSalaryTrans)
+      const companyEvidence = preserveQuote(cleanEvidenceText(intelligence.company.evidence?.[0]?.text), existingRow?.company_evidence, !!existingRow && existingRow.company_legitimacy === vCompany)
+      const qualityEvidence = preserveQuote(cleanEvidenceText(intelligence.quality.evidence?.[0]?.text), existingRow?.job_quality_evidence, !!existingRow && existingRow.job_quality === vQuality)
+
       // ── Main upsert (skipped if protection fired) ─────────────────────
       if (!skipUpsert) {
-        const salaryMinRaw = asInt(intelligence.salary.value.min)
-        let salaryMin = salaryMinRaw
-        let salaryMax = asInt(intelligence.salary.value.max)
-        if (salaryMin !== null && salaryMax !== null && salaryMax < salaryMin) {
-          const tmp = salaryMin; salaryMin = salaryMax; salaryMax = tmp
-        }
-        // [§17 PRESERVATION] Never overwrite stored evidence with blanks. A
-        // stored quote survives a pass that lost it — but only while the
-        // dimension's verdict is unchanged (a new verdict must not inherit
-        // the old verdict's evidence; honest absence beats mis-provenance).
-        const vAfrica = asEnum(intelligence.africa.value, AFRICA_ENUM)
-        const vRemote = asEnum(intelligence.remote.value, REMOTE_ENUM)
-        const vVisa = asEnum(intelligence.visa.value, VISA_ENUM)
-        const vSalaryTrans = asEnum(intelligence.salary.value.transparency, TRANSPARENCY_ENUM)
-        const vCompany = asEnum(intelligence.company.value, LEGITIMACY_ENUM)
-        const vQuality = asEnum(intelligence.quality.value, QUALITY_ENUM)
-        const africaEvidence = preserveQuote(cleanEvidenceText(intelligence.africa.evidence[0]?.text), existingRow?.africa_evidence, !!existingRow && existingRow.africa_eligibility === vAfrica)
-        const remoteEvidence = preserveQuote(cleanEvidenceText(intelligence.remote.evidence?.[0]?.text), existingRow?.remote_evidence, !!existingRow && existingRow.remote_eligibility === vRemote)
-        const visaEvidence = preserveQuote(cleanEvidenceText(intelligence.visa.evidence?.[0]?.text), existingRow?.visa_evidence, !!existingRow && existingRow.visa_sponsorship === vVisa)
-        const salaryEvidence = preserveQuote(cleanEvidenceText(intelligence.salary.evidence?.[0]?.text), existingRow?.salary_evidence, !!existingRow && existingRow.salary_transparency === vSalaryTrans)
-        const companyEvidence = preserveQuote(cleanEvidenceText(intelligence.company.evidence?.[0]?.text), existingRow?.company_evidence, !!existingRow && existingRow.company_legitimacy === vCompany)
-        const qualityEvidence = preserveQuote(cleanEvidenceText(intelligence.quality.evidence?.[0]?.text), existingRow?.job_quality_evidence, !!existingRow && existingRow.job_quality === vQuality)
         const { error: upsertErr } = await supabase.from("job_ai_intelligence").upsert({
           job_id: job.id,
           version: intelligence.version,
@@ -849,6 +912,29 @@ export async function processAIQueue(batchSize = 100) {
           })
           failed++
           return
+        }
+      } else if (existingRow) {
+        // ── [V2 CANONICAL-PLANE SYNC] Confidence-protection guards MODEL
+        // output planes from regression. Africa (corpus adjudicator) and
+        // company (canonical owner) are NOT model output — they cannot
+        // degrade with a weak run, and freezing them behind confidence
+        // arithmetic would leave deterministic-plane contradictions
+        // unhealable forever (a protected row would requeue → skip →
+        // requeue endlessly). Their values arrive via the preservation
+        // merge above and land even when the wholesale upsert is skipped.
+        try {
+          await supabase.from("job_ai_intelligence").update({
+            africa_eligibility: vAfrica,
+            africa_confidence: clamp100(intelligence.africa.confidence),
+            africa_evidence: africaEvidence,
+            country_restrictions: asStringArray(intelligence.africa.countryRestrictions),
+            company_legitimacy: vCompany,
+            company_confidence: clamp100(intelligence.company.confidence),
+            company_evidence: companyEvidence,
+            last_verified_at: new Date().toISOString(),
+          }).eq("job_id", job.id)
+        } catch (e) {
+          console.log(JSON.stringify({ scope: "ai_engine", event: "plane_sync_error", jobId: (job as any).id?.slice(0,8) || "", error: (e instanceof Error ? e.message : String(e)).slice(0,150) }))
         }
       }
 

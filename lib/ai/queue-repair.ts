@@ -39,7 +39,13 @@ export function isRuleBasedModelVersion(m: string | null | undefined): boolean {
   )
 }
 
-export type RequeueReason = "thin_tier" | "pre_v1_evidence" | null
+export type RequeueReason =
+  | "thin_tier"
+  | "pre_v1_evidence"
+  | "company_vs_owner"
+  | "africa_vs_adjudicator"
+  | "untraceable_quote"
+  | null
 
 /** Should a COMPLETED queue row be sent back to pending for reprocessing?
  *  - Admission rejections ("Rejected: <reason> [gate]") are intentional
@@ -77,7 +83,32 @@ export function preserveQuote(
   return null
 }
 
+/**
+ * [V2 VALIDATION — zero unexplained contradictions] Three contradiction-
+ * targeted classes close the convergence gap the §17 classes leave open:
+ * a V1.1 row (real-model, evidence_refs present) whose stored verdict
+ * disagrees with the deterministic owners — or whose stored quotes are not
+ * traceable to the posting — would otherwise stay sealed `completed`
+ * forever and never heal. Detection itself lives in lib/validation/truth-v2
+ * (single home, fixture-tested); this decision is a pure flag map so the
+ * drain-start repair pass and the validation endpoint decide identically.
+ * Order is deterministic: company plane, then Africa plane, then quotes.
+ */
+export function contradictionRepairDecision(flags: {
+  companyMismatch?: boolean
+  africaMismatch?: boolean
+  untraceableQuote?: boolean
+}): RequeueReason {
+  if (flags.companyMismatch) return "company_vs_owner"
+  if (flags.africaMismatch) return "africa_vs_adjudicator"
+  if (flags.untraceableQuote) return "untraceable_quote"
+  return null
+}
+
 export const REQUEUE_ERROR_LABEL: Record<Exclude<RequeueReason, null>, string> = {
   thin_tier: "Requeued: repair — rule-based/AI-less tier (must retry like a failure)",
   pre_v1_evidence: "Requeued: repair — pre-V1 row (no stored evidence plane)",
+  company_vs_owner: "Requeued: repair — stored company verdict disagrees with the canonical company-plane owner",
+  africa_vs_adjudicator: "Requeued: repair — stored Africa verdict disagrees with the deterministic corpus adjudicator",
+  untraceable_quote: "Requeued: repair — stored evidence quote is not word-traceable to the posting text",
 }

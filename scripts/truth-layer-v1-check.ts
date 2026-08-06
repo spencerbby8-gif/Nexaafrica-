@@ -779,3 +779,198 @@ We're growing our collaborative team of individuals to drive Reddit Ads product 
     check("boundary: render never imports the adjudicator or slug chooser", leaked.length === 0, leaked)
   }
 }
+
+/* -------------------------------------------------------------------- */
+/* 15 · TRUTH LAYER V2 — validation: contradictions, heal classes,      */
+/*      drain simulation, zero-unexplained invariant                    */
+/* -------------------------------------------------------------------- */
+import {
+  modelBucket,
+  quoteTraceableFor,
+  storedSignalSum,
+  storedEmployerClaim,
+  contradictionFlags,
+  repairClassFor,
+  evaluateRecord,
+  evidenceCaseFor,
+  projectRecord,
+  summarize,
+  type ValidationRecord,
+  type ValidationJaiInput,
+} from "../lib/validation/truth-v2"
+
+{
+  console.log("\n15 · Truth Layer V2 validation")
+
+  const mkJob = (over: Partial<ValidationRecord["job"]> = {}): ValidationRecord["job"] => ({
+    id: "job-fixture-1",
+    slug: "fixture-role",
+    title: "Senior Product Adoption Strategist, Shopping",
+    company: "Reddit",
+    location: "Remote - United States",
+    description_md:
+      "**Location:** Remote from NYC, Chicago, SF or LA\nWe're growing our collaborative team of individuals to drive Reddit Ads product adoption within our Global Sales organization and with advertisers. In this role, you will be responsible for scaling ads product adoption and scale across the Large Customer Sales advertisers in the United States.",
+    source: "greenhouse:reddit",
+    is_remote: true,
+    eligibility: "likely",
+    is_open_to_africa: true,
+    salary_min: 182000,
+    salary_max: 254800,
+    salary_currency: "USD",
+    salary_range: "$182,000—$254,800",
+    trust_score: 75,
+    trust_signals: [
+      { id: "employer_legitimacy", label: "Verified employer", scoreImpact: 15 },
+      { id: "posting_freshness", label: "Fresh posting", scoreImpact: 10 },
+    ],
+    evidence_state: null,
+    ...over,
+  })
+  const mkJai = (over: Partial<ValidationJaiInput> = {}): ValidationJaiInput => ({
+    model_version: "real-model-v1",
+    evidence_refs: { sources: [], pageStatus: 200, provenance: "ats", dimensionCount: 3 },
+    africa_eligibility: "restricted",
+    africa_confidence: 80,
+    africa_evidence: "Remote - United States",
+    remote_eligibility: "fully_remote",
+    remote_evidence: null,
+    visa_sponsorship: "unknown",
+    visa_evidence: null,
+    salary_transparency: "disclosed",
+    salary_evidence: "$182,000—$254,800",
+    salary_min: 182000,
+    salary_max: 254800,
+    company_legitimacy: "verified",
+    company_confidence: 95,
+    company_evidence: null,
+    job_quality: "high",
+    job_quality_evidence: null,
+    ...over,
+  })
+  const mkRec = (over: Partial<ValidationRecord> = {}): ValidationRecord => ({
+    job: mkJob(),
+    jai: mkJai(),
+    queue: { status: "completed", error: null },
+    evidence: { rowCount: 1, kinds: ["ats_api"], statuses: ["verified"] },
+    learning: null,
+    ...over,
+  })
+
+  /* 15a · buckets + primitives */
+  check("v2: model buckets never leak providers (none/rule-based/real-model)",
+    modelBucket(null) === "none" && modelBucket("regex-extracted-8079bytes") === "rule-based" && modelBucket("real-model-v1") === "real-model",
+    [modelBucket(null), modelBucket("regex-extracted-8079bytes"), modelBucket("real-model-v1")])
+
+  check("v2: posting quote traceable", quoteTraceableFor("africa", "scaling ads product adoption and scale across the Large Customer Sales advertisers in the United States", mkJob(), null) === true)
+  check("v2: fabricated marketing quote fails", quoteTraceableFor("africa", "operations across the EMEA region with partners worldwide", mkJob(), null) === false)
+  check("v2: short posting makes quotes unverifiable, not fabricated", quoteTraceableFor("africa", "anything at all here", mkJob({ description_md: "too short" }), null) === null)
+  const ownerSentence = "Reddit is on Nexa's curated employer registry — jobs arrive via the company's official ATS feed, a channel Nexa verified directly."
+  check("v2: owner basis sentence counts as provenance, not a posting quote", quoteTraceableFor("company", ownerSentence, mkJob(), ownerSentence) === true)
+  check("v2: salary evidence matching the feed range is ATS-metadata traceable", quoteTraceableFor("salary", "$182,000—$254,800", mkJob(), null) === true)
+  check("v2: location-field corpus quote is traceable (adjudicator quotes the location verbatim)", quoteTraceableFor("africa", "Remote - United States", mkJob(), null) === true)
+  check("v2: salary evidence beyond the posting and the feed range fails", quoteTraceableFor("salary", "$999,999 total comp guaranteed", mkJob(), null) === false)
+
+  check("v2: trust signal arithmetic primitive", storedSignalSum([{ scoreImpact: 15 }, { scoreImpact: 10 }]) === 25)
+  check("v2: employer claim primitive", storedEmployerClaim([{ id: "employer_legitimacy", label: "Verified employer" }]) === true && storedEmployerClaim([{ id: "employer_legitimacy", label: "New employer" }]) === false)
+
+  const desc = mkJob().description_md as string
+
+  /* 15b · contradiction flags */
+  check("v2: converged fixture has zero flags", JSON.stringify(contradictionFlags(mkJob(), mkJai(), null)) === JSON.stringify({ companyMismatch: false, africaMismatch: false, untraceableQuote: false }), contradictionFlags(mkJob(), mkJai(), null))
+  check("v2: africa drift flagged", contradictionFlags(mkJob(), mkJai({ africa_eligibility: "likely" }), null).africaMismatch === true)
+  check("v2: company drift flagged (registry company stored unknown)", contradictionFlags(mkJob(), mkJai({ company_legitimacy: "unknown" }), null).companyMismatch === true)
+  check("v2: fetch-era <title> company quote flagged", contradictionFlags(mkJob(), mkJai({ company_evidence: "<title>Jobs at Reddit</title>" }), null).untraceableQuote === true)
+  check("v2: registry company can never be stored suspicious without a flag", contradictionFlags(mkJob(), mkJai({ company_legitimacy: "suspicious", company_evidence: "pay a fee" }), null).companyMismatch === true)
+  {
+    const scamJob = mkJob({ company: "Acme Hiring Ltd", description_md: desc + "\nApplicants must pay a $50 registration fee before the interview." })
+    const scamJai = mkJai({ company_legitimacy: "suspicious", company_evidence: "Applicants must pay a $50 registration fee before the interview." })
+    check("v2: non-registry scam demotion with verbatim posting quote is legal (not a flag)", contradictionFlags(scamJob, scamJai, null).companyMismatch === false, contradictionFlags(scamJob, scamJai, null))
+    const fabricatedScam = mkJai({ company_legitimacy: "suspicious", company_evidence: "classic advance-fee fraud pattern detected" })
+    check("v2: non-registry scam demotion with unverifiable quote is a flag", contradictionFlags(scamJob, fabricatedScam, null).companyMismatch === true)
+  }
+
+  /* 15c · repair classes + heal routing (the zero-unexplained theorem) */
+  check("v2: completed africa-drift row requeues as africa_vs_adjudicator", repairClassFor(mkRec({ jai: mkJai({ africa_eligibility: "likely" }) })) === "africa_vs_adjudicator")
+  check("v2: completed company-drift row requeues as company_vs_owner", repairClassFor(mkRec({ jai: mkJai({ company_legitimacy: "unknown" }) })) === "company_vs_owner")
+  check("v2: completed bad-quote row requeues as untraceable_quote", repairClassFor(mkRec({ jai: mkJai({ remote_evidence: "not in the posting text anywhere at all" }) })) === "untraceable_quote")
+  check("v2: thin tier keeps base precedence over contradiction classes", repairClassFor(mkRec({ jai: mkJai({ model_version: "regex-extracted-8079bytes", africa_eligibility: "likely", company_legitimacy: "unknown" }) })) === "thin_tier")
+  check("v2: pre-V1 keeps base precedence over contradiction classes", repairClassFor(mkRec({ jai: mkJai({ evidence_refs: null, africa_eligibility: "likely" }) })) === "pre_v1_evidence")
+  check("v2: pending rows are not repair-scanned (already moving)", repairClassFor(mkRec({ queue: { status: "pending", error: null }, jai: mkJai({ africa_eligibility: "likely" }) })) === null)
+
+  {
+    const evDrift = evaluateRecord(mkRec({ jai: mkJai({ africa_eligibility: "likely" }) }))
+    check("v2: every deterministic-plane contradiction on a completed row is drain-healable (never unexplained)",
+      evDrift.contradictions.length > 0 && evDrift.contradictions.every((c) => (c.heal === "drain_requeue" || c.heal === "ingest_rescore" || c.kind === "salary_jobs_vs_jai" ? true : c.heal !== "needs_fix"), ),
+      evDrift.contradictions)
+    const evPending = evaluateRecord(mkRec({ queue: { status: "pending", error: null }, jai: mkJai({ company_legitimacy: "unknown" }) }))
+    check("v2: pending-row contradiction is awaiting_processing, not needs_fix",
+      evPending.contradictions.find((c) => c.kind === "company_vs_owner")?.heal === "awaiting_processing",
+      evPending.contradictions)
+    const evFailed = evaluateRecord(mkRec({ queue: { status: "failed", error: "Rejected: all AI providers failed after 7 attempts" }, jai: mkJai({ company_legitimacy: "unknown" }) }))
+    check("v2: failed-row contradiction is awaiting_rerun (deliberate stop, explained)",
+      evFailed.contradictions.find((c) => c.kind === "company_vs_owner")?.heal === "awaiting_rerun",
+      evFailed.contradictions)
+  }
+
+  /* 15d · evidence-plane six honest cases */
+  check("v2: case never_written (no queue row)", evidenceCaseFor(mkRec({ queue: null })) === "never_written")
+  check("v2: case overwritten_by_thin_tier", evidenceCaseFor(mkRec({ jai: mkJai({ model_version: "regex-extracted-8079bytes" }) })) === "overwritten_by_thin_tier")
+  check("v2: case stale_pre_v1", evidenceCaseFor(mkRec({ jai: mkJai({ evidence_refs: null }) })) === "stale_pre_v1")
+  check("v2: case exists_and_renders", evidenceCaseFor(mkRec()) === "exists_and_renders")
+  check("v2: case collection_failed (only blocked rows)", evidenceCaseFor(mkRec({ jai: mkJai({ africa_evidence: null, salary_evidence: null }), evidence: { rowCount: 2, kinds: ["page_html"], statuses: ["blocked"] } })) === "collection_failed", evidenceCaseFor(mkRec({ jai: mkJai({ africa_evidence: null, salary_evidence: null }), evidence: { rowCount: 2, kinds: ["page_html"], statuses: ["blocked"] } })))
+  check("v2: case admission_rejected", evidenceCaseFor(mkRec({ queue: { status: "completed", error: "Rejected: region lock [africa_eligibility]" }, jai: null })) === "admission_rejected")
+
+  /* 15e · drain simulation converges (projection kills every deterministic contradiction) */
+  {
+    const broken = mkRec({
+      jai: mkJai({
+        africa_eligibility: "likely",
+        africa_confidence: 55,
+        company_legitimacy: "unknown",
+        company_confidence: 22,
+        company_evidence: "<title>Jobs at Reddit</title>",
+        remote_evidence: "not in the posting text anywhere at all",
+      }),
+    })
+    const before = evaluateRecord(broken)
+    check("v2: broken fixture really carries deterministic contradictions",
+      before.contradictions.some((c) => c.kind === "africa_vs_adjudicator") && before.contradictions.some((c) => c.kind === "company_vs_owner") && before.contradictions.some((c) => c.kind === "quote_untraceable"),
+      before.contradictions.map((c) => c.kind))
+    const after = evaluateRecord(projectRecord(broken, before))
+    const remaining = after.contradictions.filter((c) => c.kind === "africa_vs_adjudicator" || c.kind === "company_vs_owner" || c.kind === "quote_untraceable")
+    check("v2: simulated drain converges all three deterministic classes to zero", remaining.length === 0, remaining)
+    check("v2: simulated drain lands the owner/company + adjudicator/africa values",
+      after.storedCompany === after.expectedCompany.value && after.storedAfrica === after.expectedAfrica.value,
+      [after.storedCompany, after.expectedCompany.value, after.storedAfrica, after.expectedAfrica.value])
+    const again = evaluateRecord(projectRecord({ ...broken, jai: { ...broken.jai!, africa_eligibility: "restricted", africa_confidence: 80, company_legitimacy: "verified", company_confidence: 95, company_evidence: null, remote_evidence: null } }))
+    check("v2: projection is idempotent on an already-converged record", again.contradictions.filter((c) => c.kind !== "trust_score_arithmetic" && c.kind !== "salary_jobs_vs_jai").length === 0, again.contradictions)
+  }
+
+  /* 15f · summarize() metric math + cohort divergence detection */
+  {
+    const good = evaluateRecord(mkRec())
+    const badCo = evaluateRecord(mkRec({ job: mkJob({ slug: "other-reddit-role" }), jai: mkJai({ company_legitimacy: "unknown" }) }))
+    const m = summarize([good, badCo])
+    check("v2: summarize counts unexplained contradictions correctly (all drain-healable here)", m.contradictions.unexplained === 0 && m.contradictions.total >= 1, m.contradictions)
+    check("v2: cohort of a flipping company is detected as divergent", m.companyConsistency.divergentCohorts >= 1, m.companyConsistency.cohorts)
+    check("v2: africa consistency counts stored-vs-adjudicator", m.africaConsistency.total === 2 && m.africaConsistency.matches === 2, m.africaConsistency)
+  }
+
+  /* 15g · structural boundaries */
+  {
+    const root = join(dirname(fileURLToPath(import.meta.url)), "..")
+    const engineSrc = readFileSync(join(root, "lib", "ai", "engine.ts"), "utf8")
+    check("v2 boundary: engine repair pass decides with the shared pure functions",
+      engineSrc.includes("contradictionRepairDecision(contradictionFlags("))
+    check("v2 boundary: engine has the canonical-plane sync on the protected path",
+      engineSrc.includes("plane_sync_error") && engineSrc.includes("[V2 CANONICAL-PLANE SYNC]"))
+    const routeSrc = readFileSync(join(root, "app", "api", "validation", "truth-layer-v2", "route.ts"), "utf8")
+    const writes = [".insert(", ".update(", ".upsert(", ".delete(", ".rpc("].filter((w) => routeSrc.includes(w))
+    check("v2 boundary: validation endpoint is provably read-only (no DML in source)", writes.length === 0, writes)
+    check("v2 boundary: endpoint never emits raw model_version (provider secrecy)", !routeSrc.includes("model_version:") || routeSrc.includes('"v2-simulated"'))
+    check("v2 boundary: endpoint never returns evidence excerpts (kinds/statuses only)", !routeSrc.includes("excerpt"))
+    const uiFilesList = (() => { const walk = (dir: string): string[] => { const out: string[] = []; for (const e of readdirSync(dir)) { if (e === "node_modules" || e.startsWith(".")) continue; const p = join(dir, e); const st = statSync(p); if (st.isDirectory()) out.push(...walk(p)); else if (/\.(ts|tsx)$/.test(e)) out.push(p) } return out }; return [...walk(join(root, "app", "jobs")), ...walk(join(root, "app", "role")), ...walk(join(root, "components"))] })().filter((p) => existsSync(p))
+    const v2Leak = uiFilesList.filter((p) => readFileSync(p, "utf8").includes("lib/validation/truth-v2"))
+    check("v2 boundary: render never imports the validation module", v2Leak.length === 0, v2Leak)
+  }
+}

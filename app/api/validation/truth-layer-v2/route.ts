@@ -129,7 +129,7 @@ function jobRow(ev: JobEvaluation) {
     coV: `${ev.storedCompany ?? "-"}→${ev.expectedCompany.value}`,
     quotes: `${ev.quoteChecks.filter((q) => q.traceable === true).length}/${ev.quoteChecks.filter((q) => q.stored).length}`,
     rq: ev.repairClass,
-    ctr: ev.contradictions.map((c) => `${c.kind}[${c.heal}]`),
+    ctr: ev.contradictions.map((c) => `${c.kind}[${c.heal}]: ${c.detail}`),
     notes: ev.notes.length ? ev.notes : undefined,
   }
 }
@@ -313,6 +313,10 @@ export async function GET(request: NextRequest) {
     .filter((ev) => ev.contradictions.length > 0)
     .slice(0, 60)
     .map((ev) => jobRow(ev))
+  const projectedContradictionRows = projEvals
+    .filter((ev) => ev.contradictions.length > 0)
+    .slice(0, 60)
+    .map((ev) => jobRow(ev))
 
   return NextResponse.json({
     generatedAt: new Date().toISOString(),
@@ -336,5 +340,6 @@ export async function GET(request: NextRequest) {
     metricsProjectedPostDrain: projectedMetrics,
     auditRows: includeJobs ? evaluations.map((ev) => ({ ...jobRow(ev), b: bucketOf.get(ev.jobId) })) : undefined,
     contradictions: contradictionRows,
+    projectedContradictions: projectedContradictionRows,
   })
 }

@@ -431,8 +431,6 @@ import { plainifyPosting, traceableQuote, deriveEvidence } from "../lib/evidence
 
 console.log("10 · V1.2 consistency — skills JSON, salary authority, segment quotes")
 
-import { jaiSalaryDisplay } from "../lib/evidence"
-
 // 10a · the exact stored micro1 payload never renders JSON again
 {
   const liveStored = [
@@ -446,18 +444,18 @@ import { jaiSalaryDisplay } from "../lib/evidence"
   check("broken JSON text is dropped, not rendered", asSkillList(["{broken json" as any]).length === 0, asSkillList(["{broken json" as any]))
 }
 
-// 10b · salary authority — evidence-backed number wins, everything else stands down
+// 10b · [ARCHITECTURE] No render-plane salary authority (A4 revert). The
+// canonical feed plane displays verbatim; the Nexa Intelligence range
+// displays in its own panel with provenance. Conflicting planes are
+// reconciled at the write path (salary_authority_applied) and by the
+// salary-conflict backfill — never silently adjudicated at render.
 {
-  const micro1Plain = plainifyPosting("Scale the human data engine behind frontier AI systems. The national pay range for this full-time position is base salary of $50,000 –$70,000 USD. All employees are eligible for equity compensation.")
-  const jai = { salary_transparency: "disclosed", salary_min: 50000, salary_max: 70000, salary_currency: "USD", salary_evidence: "The national pay range for this full-time position is base salary of $50,000 –$70,000 USD." }
-  check("traceable disclosed JAI salary wins", jaiSalaryDisplay(jai as any, micro1Plain) === "USD50k - USD70k", jaiSalaryDisplay(jai as any, micro1Plain))
-  check("untraceable quote disqualifies the override", jaiSalaryDisplay({ ...jai, salary_evidence: "not in the posting at all, completely different words" } as any, micro1Plain) === null)
-  check("undisclosed never overrides", jaiSalaryDisplay({ ...jai, salary_transparency: "undisclosed" } as any, micro1Plain) === null)
-  check("zero-max junk never overrides", jaiSalaryDisplay({ ...jai, salary_max: 0 } as any, micro1Plain) === null)
-  check("missing ai never overrides", jaiSalaryDisplay(null, micro1Plain) === null)
-  const sigs = deriveEvidence(mkJob({ salary_range: "USD70k - USD110k", description_md: "The national pay range for this full-time position is base salary of $50,000 –$70,000 USD. Other text." }) as any, { ai: jai } as any)
+  const sigs = deriveEvidence(mkJob({ salary_range: "USD70k - USD110k", description_md: "The national pay range for this full-time position is base salary of $50,000 –$70,000 USD. Other text." }) as any)
   const sal = sigs.find((x: any) => x.id === "salary-disclosed")
-  check("evidence panel shows ONE number — the posting-verbatim one", !!sal?.reason?.includes("USD50k - USD70k") && !sal.reason.includes("USD70k - USD110k"), sal?.reason)
+  check("evidence panel displays the canonical feed salary plane", !!sal?.reason?.includes("USD70k - USD110k"), sal?.reason)
+  check("render never silently substitutes a posting-extracted number", !!sal && !sal.reason.includes("USD50k - USD70k"), sal?.reason)
+  const fed = salaryDisplay("USD70k - USD110k" as any, {} as any)
+  check("card displays the feed range with the same junk guard", fed.isExplicit === true && fed.label.includes("110k"), fed.label)
 }
 
 // 10c · quotes never splice across the description/location join

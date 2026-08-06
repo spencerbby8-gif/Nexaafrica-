@@ -3,7 +3,6 @@ import { TrustBadge } from '@/components/trust-badge'
 import { CompanyAvatar } from '@/components/company-avatar'
 import { employmentLabel, isFresh, postedLabel, relativeTime, salaryDisplay } from '@/lib/format'
 import { getJobCardExcerpt } from '@/lib/cleanDescription'
-import { jaiSalaryDisplay, plainifyPosting } from '@/lib/evidence'
 import type { Job } from '@/lib/types'
 import { calculateTrustScore, unifiedTrustScore } from '@/lib/trust/engine'
 import { OpportunityIntelligenceSummary } from '@/components/opportunity-intelligence'
@@ -25,14 +24,12 @@ export function JobCard({
   showOpportunityIntelligence?: boolean
 }) {
   const fresh = isFresh(job.posted_at, 3)
-  const baseSalary = salaryDisplay(job.salary_range, { openToAfrica: job.is_open_to_africa })
-  // [EVIDENCE V1.2] A posting-verbatim salary beats a conflicting feed range
-  // on every surface — same rule as the detail page (live: micro1 split).
-  let jaiSalary: string | null = null
-  try {
-    jaiSalary = jaiSalaryDisplay(aiIntelligence as any, plainifyPosting(`${job.description_md ?? ''}\n${job.location ?? ''}`))
-  } catch {}
-  const salary = jaiSalary ? { ...baseSalary, label: jaiSalary, isExplicit: true } : baseSalary
+  // [ARCHITECTURE — single-owner doctrine] The card displays the canonical
+  // feed salary plane. The Nexa Intelligence range displays in the
+  // Opportunity panel with its own provenance; conflicting planes are
+  // reconciled at the write path (salary_authority_applied) and by the
+  // salary-conflict backfill — never silently adjudicated at render.
+  const salary = salaryDisplay(job.salary_range, { openToAfrica: job.is_open_to_africa })
   const excerpt = getJobCardExcerpt(job.description_md)
   return (
     <Link

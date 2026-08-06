@@ -55,7 +55,7 @@ function EvidenceRow({ signal }: { signal: EvidenceSignal }) {
 }
 
 export function EvidencePanel({ job, intelligence }: { job: Job; intelligence?: any }) {
-  const signals = deriveEvidence(job, { storedAITier: (intelligence as any)?.africa_eligibility ?? null, ai: intelligence ?? null })
+  const signals = deriveEvidence(job, { storedAITier: (intelligence as any)?.africa_eligibility ?? null })
   if (signals.length === 0) return null
 
   return (

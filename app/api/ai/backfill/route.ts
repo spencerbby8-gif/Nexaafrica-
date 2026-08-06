@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server"
 import { isPipelineAuthorized, pipelineAuthConfigured } from "@/lib/server/auth"
 import { createServiceClient } from "@/lib/supabase/service"
-import { AFRICA_RE, eligibilityScanText } from "@/lib/geo/eligibility"
+import { AFRICA_RE, corroborateAfricaClaim, eligibilityScanText } from "@/lib/geo/eligibility"
 import { asSkillList } from "@/lib/ai/normalize"
 import { formatSalary } from "@/lib/intelligence"
+import { plainifyPosting, traceableQuote } from "@/lib/evidence"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -20,13 +21,24 @@ export const maxDuration = 300
  *  - africa-fp:    JAI rows holding "explicit" Africa verdicts whose stored
  *                  evidence quote does NOT itself pass the word-boundary
  *                  Africa matcher after dead-zone stripping (e.g. the
- *                  quote is about "anomalies" — the mali false positive).
- *                  Heal = requeue the job for re-verification under the
- *                  Truth Layer v1 corpus.
+ *                  quote is about "anomalies" — the mali false positive),
+ *                  OR whose CURRENT posting text no longer supports the
+ *                  claim under the shared corpus (verifier-domain
+ *                  corroboration). Heal = requeue the job for
+ *                  re-verification under the Truth Layer v1 corpus.
  *  - salary-conflict: JAI says disclosed with numbers, jobs row shows a
  *                  DIFFERENT number (or a machine-junk range string /
  *                  0–0). Heal = apply the same authority rule the engine
- *                  now applies at write time.
+ *                  now applies at write time. Additionally, a disclosed
+ *                  salary whose stored evidence quote is no longer
+ *                  traceable to the current posting is requeued for
+ *                  re-verification (stale-quote class).
+ *
+ * [ARCHITECTURE 2026-08-05 — single-owner doctrine] These healers are the
+ * WRITE-PATH home of the checks that briefly ran inside the render layer
+ * (corpus re-arbitration, salary evidence authority). Stale rows are healed
+ * here by re-verification/rewrite — never masked at render. Trust re-scoring
+ * of historical rows lives at POST /api/jobs/backfill-trust.
  *  - skills-json:  JAI rows whose skills arrays contain objects (rendered
  *                  raw as JSON to users). Heal = normalize to plain
  *                  deduped strings via the shared persistence contract.
@@ -53,14 +65,46 @@ async function healAfricaFp(svc: any, execute: boolean, limit: number) {
   if (error) return { kind: "africa-fp", error: error.message }
 
   const suspect: Row[] = []
+  const suspectIds = new Set<string>()
   for (const r of rows || []) {
     const ev: string = r.africa_evidence || ""
     // An explicit verdict whose own evidence quote has no word-boundary
     // Africa match (after dead-zone stripping) is the proven fabrication
     // class; missing quotes on explicit verdicts are equally invalid.
     const scan = eligibilityScanText(ev)
-    if (!ev || ev.length < 10 || !AFRICA_RE.test(scan)) suspect.push(r)
+    if (!ev || ev.length < 10 || !AFRICA_RE.test(scan)) {
+      suspect.push({ ...r, class: "untraceable-quote" })
+      suspectIds.add(r.job_id)
+    }
     if (suspect.length >= limit) break
+  }
+
+  // [ARCHITECTURE 2026-08-05] Verifier-domain corroboration (moved out of
+  // the render layer): re-read the CURRENT posting text through the shared
+  // corpus. A stored "explicit" the corpus can no longer find in the posting
+  // is a suspect even when its stored quote once looked plausible — requeue
+  // it for full re-verification instead of letting the claim drift.
+  const remainingRows = (rows || []).filter((r: Row) => !suspectIds.has(r.job_id))
+  if (remainingRows.length > 0 && suspect.length < limit) {
+    const ids = remainingRows.map((r: Row) => r.job_id)
+    const { data: jobs } = await svc
+      .from("jobs")
+      .select("id, description_md, location")
+      .in("id", ids)
+    const jobMap = new Map<string, Row>((jobs || []).map((j: Row) => [j.id, j]))
+    for (const r of remainingRows) {
+      const j = jobMap.get(r.job_id)
+      if (!j) continue
+      const support = corroborateAfricaClaim(
+        { text: j.description_md ?? "", locationField: j.location ?? null },
+        "explicit",
+      )
+      if (!support.supported) {
+        suspect.push({ ...r, class: support.reason })
+        suspectIds.add(r.job_id)
+      }
+      if (suspect.length >= limit) break
+    }
   }
 
   let requeued = 0
@@ -93,7 +137,7 @@ async function healAfricaFp(svc: any, execute: boolean, limit: number) {
 async function healSalaryConflict(svc: any, execute: boolean, limit: number) {
   const { data: jaiRows, error } = await svc
     .from("job_ai_intelligence")
-    .select("job_id, salary_min, salary_max, salary_currency, salary_period, salary_transparency, last_verified_at")
+    .select("job_id, salary_min, salary_max, salary_currency, salary_period, salary_transparency, salary_evidence, last_verified_at")
     .eq("salary_transparency", "disclosed")
     .not("salary_max", "is", null)
     .gt("salary_max", 0)
@@ -105,7 +149,7 @@ async function healSalaryConflict(svc: any, execute: boolean, limit: number) {
   if (ids.length === 0) return { kind: "salary-conflict", scanned: 0, suspects: 0, executed: execute, fixed: 0 }
   const { data: jobs } = await svc
     .from("jobs")
-    .select("id, salary_min, salary_max, salary_range, salary_currency, salary_period")
+    .select("id, salary_min, salary_max, salary_range, salary_currency, salary_period, description_md")
     .in("id", ids)
   const jobMap = new Map<string, Row>((jobs || []).map((j: Row) => [j.id, j]))
   const junk = /\b0\.\d+k\b|(?:usd|\$|€|£)\s*0\s*[–—-]\s*(?:usd|\$|€|£)?\s*0\b/i
@@ -149,13 +193,51 @@ async function healSalaryConflict(svc: any, execute: boolean, limit: number) {
       if (!uErr) fixed++
     }
   }
+
+  // [ARCHITECTURE 2026-08-05] Stale-quote requeue class — the write-path
+  // home of the check that briefly ran inside the render layer: a disclosed
+  // salary whose stored evidence quote is no longer traceable to the
+  // current posting is NOT rewritten here and never masked at render; it is
+  // requeued so the verifier re-decides with fresh evidence.
+  const conflictIds = new Set(conflicts.map((c) => c.jobId))
+  const staleQuote: string[] = []
+  for (const r of jaiRows || []) {
+    if (conflictIds.has(r.job_id)) continue
+    const ev: string = r.salary_evidence || ""
+    if (!ev) continue
+    const j = jobMap.get(r.job_id)
+    if (!j?.description_md) continue
+    if (!traceableQuote(ev, plainifyPosting(j.description_md))) staleQuote.push(r.job_id)
+    if (staleQuote.length >= limit) break
+  }
+
+  let requeued = 0
+  if (execute && staleQuote.length > 0) {
+    for (const jobId of staleQuote) {
+      const { error: qErr } = await svc
+        .from("ai_processing_queue")
+        .update({
+          status: "pending",
+          attempts: 0,
+          completed_at: null,
+          started_at: null,
+          next_retry_at: new Date().toISOString(),
+          error: "[TLV1] re-verify: disclosed salary evidence quote no longer traceable to current posting",
+        })
+        .eq("job_id", jobId)
+      if (!qErr) requeued++
+    }
+  }
   return {
     kind: "salary-conflict",
     scanned: (jaiRows || []).length,
     suspects: conflicts.length,
     sample: conflicts.slice(0, 8),
+    stale_quote_suspects: staleQuote.length,
+    stale_quote_sample: sample(staleQuote),
     executed: execute,
     fixed,
+    requeued,
   }
 }
 

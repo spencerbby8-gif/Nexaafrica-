@@ -239,11 +239,10 @@ function fromPersistedIntelligence(job: Job, plain: string): EvidenceSignal[] {
   return out
 }
 
-export function deriveEvidence(job: Job, opts?: { storedAITier?: string | null; ai?: any }): EvidenceSignal[] {
+export function deriveEvidence(job: Job, opts?: { storedAITier?: string | null }): EvidenceSignal[] {
   const signals: EvidenceSignal[] = []
   const text = job.description_md ?? ''
   const storedAITier = opts?.storedAITier ?? null
-  const ai = opts?.ai ?? null
   // [V1.2] All matching and all quoting run on the plain rendering — the
   // same words the user reads; markdown hrefs and escapes cannot leak into
   // a "verbatim" quote again. Quotes are extracted per real segment
@@ -397,23 +396,13 @@ export function deriveEvidence(job: Job, opts?: { storedAITier?: string | null; 
   }
 
   /* -- Salary -------------------------------------------------------- */
-  // [V1.2] Salary evidence authority: a posting-verbatim, traceable salary
-  // (extracted by Nexa Intelligence) beats a conflicting feed value. The
-  // page then carries ONE number everywhere — the one with evidence behind
-  // it. When the JAI quote cannot be traced, the feed value stands (and the
-  // conflict stays visible for the write-plane authority fix to settle at
-  // the next verification).
-  const jaiDisclosed = jaiSalaryDisplay(ai, haystack)
-  if (jaiDisclosed) {
-    signals.push({
-      id: 'salary-disclosed',
-      tone: 'positive',
-      label: 'Salary disclosed',
-      reason: `The posting itself publishes compensation for this role: ${jaiDisclosed}. Quoted and verified against the posting text.`,
-      excerpt: traceableQuote(ai?.salary_evidence ?? null, haystack) ?? undefined,
-      source: 'posting-text',
-    })
-  } else if (job.salary_range && isRealSalaryRange(job)) {
+  // [ARCHITECTURE — single-owner doctrine] No render-plane salary authority:
+  // the canonical feed plane displays here (with the malformed-value junk
+  // guard); the Nexa Intelligence range displays in the Opportunity panel
+  // with its own provenance. Conflicting planes are reconciled at the write
+  // path (salary_authority_applied) and by the salary-conflict backfill —
+  // never silently adjudicated at render time.
+  if (job.salary_range && isRealSalaryRange(job)) {
     signals.push({
       id: 'salary-disclosed',
       tone: 'positive',
@@ -502,24 +491,4 @@ function isRealSalaryRange(job: Job): boolean {
   } catch {
     return false
   }
-}
-
-/**
- * [EVIDENCE V1.2] Render-plane salary authority helper. Returns the JAI-
- * disclosed range ONLY when its quote is traceable word-aligned to the
- * posting's plain rendering — the evidence must back the number, or the
- * feed value stands. Exported for the trust chip + fixtures.
- */
-export function jaiSalaryDisplay(ai: any, sourcePlainText: string): string | null {
-  if (!ai) return null
-  if (ai.salary_transparency !== 'disclosed') return null
-  const max = Number(ai.salary_max)
-  if (!Number.isFinite(max) || max <= 0) return null
-  const min = Number(ai.salary_min)
-  const q = traceableQuote(ai.salary_evidence ?? null, sourcePlainText)
-  if (!q) return null
-  const cur = ai.salary_currency || 'USD'
-  const k = (n: number) => (n >= 1000 && n % 1000 === 0 ? `${n / 1000}k` : `${n}`)
-  const lo = Number.isFinite(min) && min > 0 ? k(min) : null
-  return `${cur}${lo ?? k(max)}${lo ? ` - ${cur}${k(max)}` : ''}`
 }

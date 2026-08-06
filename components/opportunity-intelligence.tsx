@@ -89,8 +89,24 @@ function salaryTruthLabel(row: JobAIIntelligenceRow | null | undefined, job?: Jo
     const currency = row.salary_currency || job?.salary_currency || ''
     const min = row.salary_min ?? job?.salary_min
     const max = row.salary_max ?? job?.salary_max
+    const period = row.salary_period ?? null
+    // [V1.2] Salary hygiene at render — junk never wears a "disclosed" label:
+    //   · "USD 0 – 0" asserting disclosure (live: BI Consultant card) is a
+    //     contradiction; zero/negative ranges are not compensation evidence.
+    //   · k-collapsed tiny "yearly" ranges ("USD 0.03 – 0.1" — live on three
+    //     micro1 cards) are data corruption, not pay — surface the quality
+    //     issue honestly instead of quoting nonsense with a confidence score.
+    const nmin = typeof min === 'number' ? min : null
+    const nmax = typeof max === 'number' ? max : null
+    const zeroRange = (nmax != null && nmax <= 0) && (nmin == null || nmin <= 0)
+    const kCollapsed = nmax != null && nmax > 0 && nmax < 500 && (period == null || period === 'year') && (currency === '' || currency === 'USD')
+    if (trans === 'disclosed' && (zeroRange || kCollapsed)) {
+      return { label: 'Salary unclear', detail: 'Raw value failed quality checks — flagged for correction. Nexa never estimates pay.', hasSalary: false, junk: true }
+    }
     if (trans === 'disclosed' && (hasRange || min != null || max != null)) {
-      const range = min != null && max != null ? `${currency} ${min} – ${max}` : min != null ? `${currency} ${min}` : max != null ? `${currency} ${max}` : `${currency} disclosed`
+      const suffix = period === 'hour' ? '/hour' : period === 'day' ? '/day' : period === 'month' ? '/month' : period === 'year' ? '/year' : ''
+      const fmt = (n: number | null) => n == null ? null : (n % 1 !== 0 ? n.toFixed(2).replace(/\.?0+$/, '') : `${n}`)
+      const range = nmin != null && nmax != null ? `${currency} ${fmt(nmin)} – ${fmt(nmax)}${suffix}` : nmin != null ? `${currency} ${fmt(nmin)}${suffix}` : nmax != null ? `${currency} ${fmt(nmax)}${suffix}` : `${currency} disclosed`
       return { label: `Salary disclosed: ${range}`, detail: isEst ? 'Estimated from posting' : 'Quoted from posting', hasSalary: true }
     }
     if (trans === 'estimated') {
@@ -242,7 +258,7 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
       <ul className="mt-2 grid gap-1.5 text-[11px] leading-snug">
         <li className="flex gap-1.5"><Globe className="mt-[1px] h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /><span className={africa.tone === 'positive' ? 'text-foreground font-medium' : 'text-muted-foreground'}>{africa.label}{africaConf ? ` • ${africaConf}%` : ''}</span></li>
         <li className="flex gap-1.5"><Clock className="mt-[1px] h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /><span className="text-muted-foreground">{remote}{intelligence.timezone_requirements ? ` • ${intelligence.timezone_requirements}` : ''}{intelligence.remote_confidence ? ` • ${intelligence.remote_confidence}%` : ''}</span></li>
-        <li className="flex gap-1.5"><Banknote className="mt-[1px] h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /><span className="text-muted-foreground">{salary.label}{intelligence.salary_confidence ? ` • ${intelligence.salary_confidence}%` : ''}</span></li>
+        <li className="flex gap-1.5"><Banknote className="mt-[1px] h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /><span className="text-muted-foreground">{salary.label}{salary.hasSalary && salary.label.startsWith('Salary disclosed') && intelligence.salary_confidence ? ` • ${intelligence.salary_confidence}%` : ''}</span></li>
         <li className="flex gap-1.5"><Building2 className="mt-[1px] h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /><span className={company.tone === 'positive' ? 'text-foreground' : 'text-muted-foreground'}>{company.label}{intelligence.company_confidence ? ` • ${intelligence.company_confidence}%` : ''}</span></li>
         <li className="flex gap-1.5"><GraduationCap className="mt-[1px] h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /><span className="text-muted-foreground">{exp}{requiredSkills.length > 0 ? ` • Skills: ${requiredSkills.join(', ')}` : ''}</span></li>
       </ul>

@@ -64,7 +64,7 @@ export const INTENTS: Intent[] = [
         heading: 'What "open to Africa" actually means here',
         paragraphs: [
           'Companies use loose language. "Remote" can mean US-only. "Remote, anywhere" can mean anywhere with a US bank account. Nexa cuts through that by checking the company\u2019s actual applicantLocationRequirements on their ATS, their published hiring policy, and observable hiring patterns over the past 18 months.',
-          'A role appears on this page only when it explicitly accepts candidates from at least one African country, or when the company has demonstrably hired from Africa for the same role family within the past year. We don\u2019t guess.',
+          'A role appears on this page when its own posting explicitly accepts African candidates, or when the posting\u2019s own language clearly indicates worldwide hiring with no geographic restriction. Verified cases show an \u201cOpen to Africa\u201d or \u201cLikely open\u201d label; anything Nexa cannot confirm in the posting text is excluded from this page. We don\u2019t guess.',
         ],
       },
       {
@@ -96,7 +96,7 @@ export const INTENTS: Intent[] = [
       },
       {
         q: 'How fresh is this list?',
-        a: 'Inventory refreshes from company ATS feeds every six hours. Each card shows when it was indexed. Stale roles are removed automatically.',
+        a: 'Inventory refreshes from company ATS feeds daily. Each card shows when it was indexed. Roles that disappear from the source are removed automatically.',
       },
     ],
     related: [

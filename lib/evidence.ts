@@ -238,13 +238,26 @@ function fromPersistedIntelligence(job: Job, plain: string): EvidenceSignal[] {
   return out
 }
 
-export function deriveEvidence(job: Job, storedAITier?: string | null): EvidenceSignal[] {
+export function deriveEvidence(job: Job, opts?: { storedAITier?: string | null; ai?: any }): EvidenceSignal[] {
   const signals: EvidenceSignal[] = []
   const text = job.description_md ?? ''
+  const storedAITier = opts?.storedAITier ?? null
+  const ai = opts?.ai ?? null
   // [V1.2] All matching and all quoting run on the plain rendering — the
   // same words the user reads; markdown hrefs and escapes cannot leak into
-  // a "verbatim" quote again.
-  const haystack = plainifyPosting(`${text}\n${job.location ?? ''}`)
+  // a "verbatim" quote again. Quotes are extracted per real segment
+  // (description / location) — never spliced across the join boundary.
+  const descPlain = plainifyPosting(text)
+  const locPlain = plainifyPosting(job.location ?? '')
+  const segments = [descPlain, locPlain].filter(Boolean)
+  const haystack = segments.join('\n')
+  const excerptFor = (re: RegExp): string | undefined => {
+    for (const seg of segments) {
+      const ex = extractExcerpt(seg, re)
+      if (ex) return ex
+    }
+    return undefined
+  }
 
   /* -- Eligibility (the arbitration plane — the anchor signal) -------- */
   // [V1.2] The anchor tier is the corpus-verified render tier, NOT the raw
@@ -287,8 +300,8 @@ export function deriveEvidence(job: Job, storedAITier?: string | null): Evidence
       reason:
         'The posting contains location, residency, or authorization requirements that may exclude applicants in Africa.',
       excerpt:
-        extractExcerpt(haystack, GEO_RESTRICT_RE) ??
-        extractExcerpt(haystack, WORK_AUTH_RE),
+        excerptFor(GEO_RESTRICT_RE) ??
+        excerptFor(WORK_AUTH_RE),
       source: 'posting-text',
     })
   } else {
@@ -310,7 +323,7 @@ export function deriveEvidence(job: Job, storedAITier?: string | null): Evidence
         tone: 'positive',
         label: 'Worldwide opportunity',
         reason: 'The posting uses worldwide or work-from-anywhere hiring language.',
-        excerpt: extractExcerpt(haystack, WORLDWIDE_RE),
+        excerpt: excerptFor(WORLDWIDE_RE),
         source: 'posting-text',
       })
     } else if (EMEA_RE.test(haystack)) {
@@ -320,7 +333,7 @@ export function deriveEvidence(job: Job, storedAITier?: string | null): Evidence
         label: 'EMEA opportunity',
         reason:
           'The posting targets the EMEA region, which includes Africa.',
-        excerpt: extractExcerpt(haystack, EMEA_RE),
+        excerpt: excerptFor(EMEA_RE),
         source: 'posting-text',
       })
     }
@@ -350,7 +363,7 @@ export function deriveEvidence(job: Job, storedAITier?: string | null): Evidence
   }
 
   /* -- Cautions from posting text ------------------------------------ */
-  const tzExcerpt = extractExcerpt(haystack, TIMEZONE_RE)
+  const tzExcerpt = excerptFor(TIMEZONE_RE)
   if (tzExcerpt) {
     signals.push({
       id: 'timezone-requirement',
@@ -364,7 +377,7 @@ export function deriveEvidence(job: Job, storedAITier?: string | null): Evidence
   }
 
   if (eligibility.tier !== 'restricted') {
-    const authExcerpt = extractExcerpt(haystack, WORK_AUTH_RE)
+    const authExcerpt = excerptFor(WORK_AUTH_RE)
     if (authExcerpt) {
       signals.push({
         id: 'work-auth-requirement',
@@ -379,7 +392,23 @@ export function deriveEvidence(job: Job, storedAITier?: string | null): Evidence
   }
 
   /* -- Salary -------------------------------------------------------- */
-  if (job.salary_range) {
+  // [V1.2] Salary evidence authority: a posting-verbatim, traceable salary
+  // (extracted by Nexa Intelligence) beats a conflicting feed value. The
+  // page then carries ONE number everywhere — the one with evidence behind
+  // it. When the JAI quote cannot be traced, the feed value stands (and the
+  // conflict stays visible for the write-plane authority fix to settle at
+  // the next verification).
+  const jaiDisclosed = jaiSalaryDisplay(ai, haystack)
+  if (jaiDisclosed) {
+    signals.push({
+      id: 'salary-disclosed',
+      tone: 'positive',
+      label: 'Salary disclosed',
+      reason: `The posting itself publishes compensation for this role: ${jaiDisclosed}. Quoted and verified against the posting text.`,
+      excerpt: traceableQuote(ai?.salary_evidence ?? null, haystack) ?? undefined,
+      source: 'posting-text',
+    })
+  } else if (job.salary_range) {
     signals.push({
       id: 'salary-disclosed',
       tone: 'positive',
@@ -406,7 +435,7 @@ export function deriveEvidence(job: Job, storedAITier?: string | null): Evidence
         tone: 'positive',
         label: `${platform.name} detected`,
         reason: `The posting mentions ${platform.name}, a global employment platform — a strong signal the company can legally hire across borders.`,
-        excerpt: extractExcerpt(haystack, platform.re),
+        excerpt: excerptFor(platform.re),
         source: 'posting-text',
       })
       break // one platform signal is enough; avoid badge spam
@@ -422,7 +451,7 @@ export function deriveEvidence(job: Job, storedAITier?: string | null): Evidence
       label: 'Global hiring infrastructure mentioned',
       reason:
         'The posting references employer-of-record, global payroll, or hire-anywhere capability — signals the company is set up for international employment.',
-      excerpt: extractExcerpt(haystack, EOR_GENERIC_RE),
+      excerpt: excerptFor(EOR_GENERIC_RE),
       source: 'posting-text',
     })
   }
@@ -457,4 +486,24 @@ export function sortEvidence(signals: EvidenceSignal[]): EvidenceSignal[] {
     neutral: 2,
   }
   return [...signals].sort((a, b) => order[a.tone] - order[b.tone])
+}
+
+/**
+ * [EVIDENCE V1.2] Render-plane salary authority helper. Returns the JAI-
+ * disclosed range ONLY when its quote is traceable word-aligned to the
+ * posting's plain rendering — the evidence must back the number, or the
+ * feed value stands. Exported for the trust chip + fixtures.
+ */
+export function jaiSalaryDisplay(ai: any, sourcePlainText: string): string | null {
+  if (!ai) return null
+  if (ai.salary_transparency !== 'disclosed') return null
+  const max = Number(ai.salary_max)
+  if (!Number.isFinite(max) || max <= 0) return null
+  const min = Number(ai.salary_min)
+  const q = traceableQuote(ai.salary_evidence ?? null, sourcePlainText)
+  if (!q) return null
+  const cur = ai.salary_currency || 'USD'
+  const k = (n: number) => (n >= 1000 && n % 1000 === 0 ? `${n / 1000}k` : `${n}`)
+  const lo = Number.isFinite(min) && min > 0 ? k(min) : null
+  return `${cur}${lo ?? k(max)}${lo ? ` - ${cur}${k(max)}` : ''}`
 }

@@ -301,7 +301,7 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons }
         <div className="rounded-md border border-border/60 bg-secondary/30 p-3">
           <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"><Globe className="h-3 w-3" aria-hidden /> Africa Fit</p>
           <p className={`mt-1.5 text-sm font-medium ${africa.tone === 'positive' ? 'text-foreground' : africa.tone === 'caution' && africaRe.tier === 'restricted' ? 'text-amber-700 dark:text-amber-400' : 'text-foreground/80'}`}>{africa.label}</p>
-          {intelligence?.africa_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.africa_confidence}% confidence</p>}
+          {africaRe.corroborated && intelligence?.africa_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.africa_confidence}% confidence</p>}
           {intelligence?.country_restrictions && intelligence.country_restrictions.length > 0 && <p className="mt-1 text-[11px] text-muted-foreground">Restrictions: {intelligence.country_restrictions.join(', ')}</p>}
           {intelligence?.visa_sponsorship && intelligence.visa_sponsorship !== 'unknown' && <p className="mt-1 text-[11px] text-muted-foreground">Visa: {intelligence.visa_sponsorship.replace('_', ' ')}</p>}
           <EvidenceQuote text={intelligence?.africa_evidence} url={intelligence?.africa_source_urls?.[0]} plain={plain} />

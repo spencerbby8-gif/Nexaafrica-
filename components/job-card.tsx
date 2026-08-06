@@ -3,6 +3,7 @@ import { TrustBadge } from '@/components/trust-badge'
 import { CompanyAvatar } from '@/components/company-avatar'
 import { employmentLabel, isFresh, postedLabel, relativeTime, salaryDisplay } from '@/lib/format'
 import { getJobCardExcerpt } from '@/lib/cleanDescription'
+import { jaiSalaryDisplay, plainifyPosting } from '@/lib/evidence'
 import type { Job } from '@/lib/types'
 import { calculateTrustScore, unifiedTrustScore } from '@/lib/trust/engine'
 import { renderEligibility } from '@/lib/geo/render-eligibility'
@@ -25,7 +26,14 @@ export function JobCard({
   showOpportunityIntelligence?: boolean
 }) {
   const fresh = isFresh(job.posted_at, 3)
-  const salary = salaryDisplay(job.salary_range, { openToAfrica: job.is_open_to_africa })
+  const baseSalary = salaryDisplay(job.salary_range, { openToAfrica: job.is_open_to_africa })
+  // [EVIDENCE V1.2] A posting-verbatim salary beats a conflicting feed range
+  // on every surface — same rule as the detail page (live: micro1 split).
+  let jaiSalary: string | null = null
+  try {
+    jaiSalary = jaiSalaryDisplay(aiIntelligence as any, plainifyPosting(`${job.description_md ?? ''}\n${job.location ?? ''}`))
+  } catch {}
+  const salary = jaiSalary ? { ...baseSalary, label: jaiSalary, isExplicit: true } : baseSalary
   const excerpt = getJobCardExcerpt(job.description_md)
   return (
     <Link

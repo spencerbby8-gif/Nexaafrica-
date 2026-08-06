@@ -369,14 +369,14 @@ export function JobDetailLayout({ companyJobCount,
               </>
             )
           } catch {
-            return <EvidencePanel job={job} />
+            return <EvidencePanel job={job} intelligence={aiIntelligence || (job as any).aiIntelligence || null} />
           }
         })()}
       </div>
 
       {/* Evidence check — secondary, kept for backward compat, now below Trust Card */}
       <div className="pt-6">
-        <EvidencePanel job={job} />
+        <EvidencePanel job={job} intelligence={aiIntelligence || (job as any).aiIntelligence || null} />
       </div>
 
       {/* Live Proof Layer — verification state, provider/model, provenance, liveness */}

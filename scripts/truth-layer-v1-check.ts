@@ -469,3 +469,41 @@ import { renderEligibility, eligibleForAfricaSurfaces, excludeFromCountryHub } f
   const score = unifiedTrustScore(mkJob({ description_md: "Open to applicants in Nigeria and Kenya. Fully remote.", eligibility: "unknown" }), { overall_confidence: 75, africa_eligibility: "unknown" } as any)
   check("trust plane follows the same arbitration (no cap on real evidence)", score > 59, score)
 }
+
+console.log("10 · V1.2 consistency — skills JSON, salary authority, segment quotes")
+
+import { jaiSalaryDisplay } from "../lib/evidence"
+
+// 10a · the exact stored micro1 payload never renders JSON again
+{
+  const liveStored = [
+    "{\"skill\":\"large-cohort onboarding at scale\",\"evidence\":\"Run large-cohort onboarding at scale (fast, clean, zero chaos).\"}",
+    "{\"skill\":\"distributed talent pool management\",\"evidence\":\"Activate and manage distributed talent pools powering AI training + data ops.\"}",
+    "{\"skill\":\"enterprise client relationship management\",\"evidence\":\"Build and maintain high-trust enterprise client relationships.\"}",
+  ]
+  const out = asSkillList(liveStored as any)
+  check("stringified skill objects unwrap to names", out.join("|") === "large-cohort onboarding at scale|distributed talent pool management|enterprise client relationship management", out)
+  check("no JSON syntax survives the boundary", !out.some((s) => s.includes("{") || s.includes("\"evidence\"")), out)
+  check("broken JSON text is dropped, not rendered", asSkillList(["{broken json" as any]).length === 0, asSkillList(["{broken json" as any]))
+}
+
+// 10b · salary authority — evidence-backed number wins, everything else stands down
+{
+  const micro1Plain = plainifyPosting("Scale the human data engine behind frontier AI systems. The national pay range for this full-time position is base salary of $50,000 –$70,000 USD. All employees are eligible for equity compensation.")
+  const jai = { salary_transparency: "disclosed", salary_min: 50000, salary_max: 70000, salary_currency: "USD", salary_evidence: "The national pay range for this full-time position is base salary of $50,000 –$70,000 USD." }
+  check("traceable disclosed JAI salary wins", jaiSalaryDisplay(jai as any, micro1Plain) === "USD50k - USD70k", jaiSalaryDisplay(jai as any, micro1Plain))
+  check("untraceable quote disqualifies the override", jaiSalaryDisplay({ ...jai, salary_evidence: "not in the posting at all, completely different words" } as any, micro1Plain) === null)
+  check("undisclosed never overrides", jaiSalaryDisplay({ ...jai, salary_transparency: "undisclosed" } as any, micro1Plain) === null)
+  check("zero-max junk never overrides", jaiSalaryDisplay({ ...jai, salary_max: 0 } as any, micro1Plain) === null)
+  check("missing ai never overrides", jaiSalaryDisplay(null, micro1Plain) === null)
+  const sigs = deriveEvidence(mkJob({ salary_range: "USD70k - USD110k", description_md: "The national pay range for this full-time position is base salary of $50,000 –$70,000 USD. Other text." }) as any, { ai: jai } as any)
+  const sal = sigs.find((x: any) => x.id === "salary-disclosed")
+  check("evidence panel shows ONE number — the posting-verbatim one", !!sal?.reason?.includes("USD50k - USD70k") && !sal.reason.includes("USD70k - USD110k"), sal?.reason)
+}
+
+// 10c · quotes never splice across the description/location join
+{
+  const sigs = deriveEvidence(mkJob({ description_md: "Role overview. Originally posted on Himalayas", location: "Worldwide" }) as any)
+  const worldwide = sigs.find((x: any) => x.id === "scope-worldwide")
+  check("no cross-segment splice ('Originally posted on Himalayas Worldwide')", worldwide?.excerpt === undefined || worldwide.excerpt !== "Originally posted on Himalayas Worldwide", worldwide?.excerpt)
+}

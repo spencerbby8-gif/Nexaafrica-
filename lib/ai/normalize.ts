@@ -47,7 +47,29 @@ export const asSkillList = (v: unknown, max = 25): string[] => {
   const seen = new Set<string>()
   for (const x of v) {
     let s: string | null = null
-    if (typeof x === "string") s = x
+    if (typeof x === "string") {
+      s = x
+      // [V1.2] Legacy rows stored stringified JSON objects as skill entries
+      // (live: micro1 renders "Required: {\"skill\":…}" verbatim). Unwrap the
+      // JSON; never let raw JSON text reach the UI as a "skill".
+      const t = s.trim()
+      if (t.startsWith("{")) {
+        // JSON-shaped text is never a displayable skill.
+        s = null
+        if (t.endsWith("}")) {
+          try {
+            const o = JSON.parse(t) as Record<string, unknown>
+            s =
+              (typeof o.skill === "string" && o.skill) ||
+              (typeof o.name === "string" && o.name) ||
+              (typeof o.title === "string" && o.title) ||
+              null
+          } catch {
+            s = null // unparseable JSON text is not a skill — drop, don't render
+          }
+        }
+      }
+    }
     else if (x !== null && typeof x === "object") {
       const o = x as Record<string, unknown>
       s =

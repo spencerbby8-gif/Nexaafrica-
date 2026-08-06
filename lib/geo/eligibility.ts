@@ -376,3 +376,63 @@ export function classifyGeoEligibility(opts: {
 
   return { tier: "unknown", reason: "no-signal", quote: null, restrictions: [] }
 }
+
+/* ------------------------------------------------------------------ */
+/* Verifier-plane claim corroboration                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * [ARCHITECTURE 2026-08-05 — single-owner doctrine] Claim corroboration
+ * lives in the VERIFIER DOMAIN. This check used to run inside the render
+ * layer (`lib/geo/render-eligibility.ts`), where it re-read the corpus at
+ * display time and silently superseded persisted verdicts — a second
+ * intelligence engine in the UI. It was moved here under the doctrine:
+ * the verifier corpus re-judges stale claims; backfill/re-verification
+ * heals the stored rows; the render layer displays the canonical stored
+ * verdict with its provenance class and never imports this function.
+ *
+ * Consumers: the africa-fp backfill healer (requeues rows whose stored
+ * affirmative verdict the current corpus can no longer find in the
+ * posting) and any future re-verification pass.
+ */
+export interface AfricaClaimSupport {
+  /** Tier the corpus computes from the posting held today. */
+  corpusTier: AfricaTier
+  /** True when the stored affirmative claim does not outrun the current evidence. */
+  supported: boolean
+  quote: string | null
+  reason: string
+}
+
+export function corroborateAfricaClaim(
+  opts: { text: string; locationField?: string | null },
+  storedTier: string | null | undefined,
+): AfricaClaimSupport {
+  const corpus = classifyGeoEligibility({ text: opts.text, locationField: opts.locationField ?? null })
+  const stored = storedTier ?? null
+
+  if (stored === "explicit") {
+    // An affirmative "names Africa" claim is supported only while the corpus
+    // still finds Africa named in the posting (the mali FP class: a stored
+    // explicit whose posting contains no Africa word must be re-verified).
+    const supported = corpus.tier === "explicit"
+    return {
+      corpusTier: corpus.tier,
+      supported,
+      quote: corpus.quote ?? null,
+      reason: supported ? "corpus-confirms-explicit" : "stored-explicit-not-in-current-text",
+    }
+  }
+  if (stored === "likely") {
+    const supported = corpus.tier === "explicit" || corpus.tier === "likely"
+    return {
+      corpusTier: corpus.tier,
+      supported,
+      quote: corpus.quote ?? null,
+      reason: supported ? "corpus-confirms-likely-or-stronger" : "stored-likely-not-in-current-text",
+    }
+  }
+  // Protective or absent verdicts are never auto-cleared by corpus silence:
+  // restricted/unknown rows stand until a full re-verification re-judges them.
+  return { corpusTier: corpus.tier, supported: true, quote: corpus.quote ?? null, reason: "no-affirmative-claim-to-corroborate" }
+}

@@ -3,7 +3,7 @@ import {
   isCurrentIntelligence,
   type IntelligenceSignal,
 } from '@/lib/intelligence'
-import { renderEligibility } from '@/lib/geo/render-eligibility'
+import { AFRICA_RE } from '@/lib/geo/eligibility'
 import { salaryDisplay } from '@/lib/format'
 
 /**
@@ -260,29 +260,33 @@ export function deriveEvidence(job: Job, opts?: { storedAITier?: string | null; 
     return undefined
   }
 
-  /* -- Eligibility (the arbitration plane — the anchor signal) -------- */
-  // [V1.2] The anchor tier is the corpus-verified render tier, NOT the raw
-  // stored tier: a stale stored verdict can no longer contradict the chip,
-  // the hub, and this panel on the same page over the same posting text.
-  const eligibility = renderEligibility(job, storedAITier)
-  if (eligibility.tier === 'explicit') {
+  /* -- Eligibility (canonical stored verdict — the anchor signal) ----- */
+  // [ARCHITECTURE — single-owner doctrine] The panel displays the CANONICAL
+  // stored verdict chain — Nexa Intelligence verdict first, ingest tier as
+  // fallback — with its provenance class. The render layer never re-decides
+  // eligibility: a stale stored verdict is healed by re-verification /
+  // backfill, never masked here.
+  const aiTier = storedAITier ?? null
+  const tier: string = aiTier ?? job.eligibility ?? 'unknown'
+  const aiBacked = aiTier != null
+  if (tier === 'explicit') {
     signals.push({
       id: 'eligibility-explicit',
       tone: 'positive',
       label: 'Explicitly open to Africa',
       reason:
         'The posting names Africa or an African country as an eligible applicant location.',
-      excerpt: eligibility.quote ?? undefined,
+      excerpt: excerptFor(AFRICA_RE),
       source: 'classification',
     })
-  } else if (eligibility.tier === 'likely') {
+  } else if (tier === 'likely') {
     signals.push({
       id: 'eligibility-likely',
-      tone: eligibility.corroborated ? 'positive' : 'neutral',
-      label: eligibility.corroborated ? 'Likely open' : 'Likely open · unverified',
-      reason: eligibility.corroborated
+      tone: aiBacked ? 'positive' : 'neutral',
+      label: aiBacked ? 'Likely open' : 'Likely open · unverified',
+      reason: aiBacked
         ? 'Advertised as globally remote with no geographic restriction detected. Africa is not named, so this is an informed read — not a guarantee.'
-        : 'A stored read suggests global hiring, but the current posting text does not confirm it. Awaiting verification — not a guarantee.',
+        : 'A stored read suggests global hiring, but Nexa Intelligence has not verified this listing yet — not a guarantee.',
       source: 'classification',
     })
     signals.push({
@@ -293,7 +297,7 @@ export function deriveEvidence(job: Job, opts?: { storedAITier?: string | null; 
         'Nexa scanned the posting for region, residency, and work-authorization restrictions and found none.',
       source: 'posting-text',
     })
-  } else if (eligibility.tier === 'restricted') {
+  } else if (tier === 'restricted') {
     signals.push({
       id: 'geo-restrictions',
       tone: 'caution',
@@ -317,7 +321,7 @@ export function deriveEvidence(job: Job, opts?: { storedAITier?: string | null; 
   }
 
   /* -- Scope: worldwide / EMEA -------------------------------------- */
-  if (eligibility.tier !== 'restricted') {
+  if (tier !== 'restricted') {
     if (WORLDWIDE_RE.test(haystack)) {
       signals.push({
         id: 'scope-worldwide',
@@ -377,7 +381,7 @@ export function deriveEvidence(job: Job, opts?: { storedAITier?: string | null; 
     })
   }
 
-  if (eligibility.tier !== 'restricted') {
+  if (tier !== 'restricted') {
     const authExcerpt = excerptFor(WORK_AUTH_RE)
     if (authExcerpt) {
       signals.push({

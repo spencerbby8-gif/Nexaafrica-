@@ -1,4 +1,3 @@
-import { renderEligibility } from "@/lib/geo/render-eligibility"
 import type { Job } from "@/lib/types"
 import type { TrustResult, TrustSignal, TrustContext, TrustConfidence } from "./types"
 import { TRUST_VERSION } from "./types"
@@ -222,16 +221,11 @@ export function unifiedTrustScore(
   // verdict says Africa eligibility is unknown or restricted, the job can
   // never display as Trusted/Highly Trusted for an African audience —
   // cap at Moderate Trust (59) until the AI verifies it.
-  // [EVIDENCE V1.2] The cap consults the arbitration plane, not the bare
-  // stored verdict: a stored "explicit" the corpus cannot find in the
-  // posting held today (mali FP class) is an evidence mistake — it is
-  // surfaced honestly and caps like unverified instead of sailing through
-  // on a fabricated claim. Tier semantics identical otherwise.
-  let africaTier: string | null | undefined = ai?.africa_eligibility
-  try {
-    africaTier = renderEligibility(job as any, ai?.africa_eligibility ?? null).tier
-  } catch {}
-  if (africaTier === 'unknown' || africaTier === 'restricted') return softCapTrust(score)
+  // [ARCHITECTURE — single-owner doctrine] The cap gates on the CANONICAL
+  // stored verdict. The render layer never re-arbitrates it; a stale
+  // verdict is healed by re-verification/backfill, never masked here.
+  const africa = ai?.africa_eligibility
+  if (africa === 'unknown' || africa === 'restricted') return softCapTrust(score)
   return score
 }
 

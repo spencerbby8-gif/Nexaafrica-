@@ -242,7 +242,7 @@ function mkJob(over: Record<string, any>): any {
 // 7b · Africa-unknown: different evidence depths MUST surface differently
 // (prod: evidence 19% and 95% both displayed 59)
 {
-  const job = mkJob({})
+  const job = mkJob({ trust_score: 70 })
   const thin = unifiedTrustScore(job, { overall_confidence: 19, africa_eligibility: "unknown" } as any)
   const deep = unifiedTrustScore(job, { overall_confidence: 95, africa_eligibility: "unknown" } as any)
   check("unknown-Africa stays capped (deep ≤ 59)", deep <= 59)
@@ -250,32 +250,31 @@ function mkJob(over: Record<string, any>): any {
   check("deeper evidence reads higher", deep > thin, { thin, deep })
 }
 
-// 7c · Explicit Africa is NOT capped and outranks unknown with same evidence
+// 7c · [ARCHITECTURE] The render cap gates on the CANONICAL STORED verdict —
+// never on a render-time re-read of the posting (A3 revert). Stored explicit
+// is uncapped; stored unknown is soft-capped.
 {
-  // [V1.2] "explicit" is only meaningful when Africa is traceably named in
-  // the posting held today — genuine explicit evidence, not a stored claim.
-  const job = mkJob({ description_md: "A real role. Open to applicants in Nigeria, Ghana, and worldwide. Run operations well." })
-  // unknown = stored unknown AND no Africa evidence in the posting held today.
-  const silentJob = mkJob({})
-  const unknown63 = unifiedTrustScore(silentJob, { overall_confidence: 63, africa_eligibility: "unknown" } as any)
+  const job = mkJob({ trust_score: 80 })
+  const unknown63 = unifiedTrustScore(job, { overall_confidence: 63, africa_eligibility: "unknown" } as any)
   const explicit63 = unifiedTrustScore(job, { overall_confidence: 63, africa_eligibility: "explicit" } as any)
-  check("corpus-visible Africa evidence outranks a stale stored unknown", explicit63 > unknown63, { explicit63, unknown63 })
-  check("explicit can exceed the cap (mod-high land)", explicit63 > 59, explicit63)
+  check("stored explicit is uncapped at render (canonical verdict governs)", explicit63 > 59, explicit63)
+  check("stored unknown is soft-capped", unknown63 <= 59, unknown63)
   check("explicit outranks unknown at equal evidence", explicit63 > unknown63, { explicit63, unknown63 })
 }
 
-// 7c-bis · [V1.2] mali-class regression: a stored "explicit" the corpus
-// cannot find in the current posting caps like unverified — fabricated
-// explicit claims can never outrank the evidence plane again.
+// 7c-bis · [ARCHITECTURE] mali-class rows DISPLAY their stored verdict —
+// the honest stale state — until re-verification/backfill heals the row at
+// the write path. The corpus re-read that used to mask them at render now
+// lives only in the verifier domain (suite 12).
 {
-  const maliRow = mkJob({ description_md: "Use data analytics, and AI to improve risk assessment, scoping, testing, continuous monitoring, and reporting, including identifying anomalies, control weaknesses, and emerging risks." })
+  const maliRow = mkJob({ trust_score: 80, description_md: "Use data analytics, and AI to improve risk assessment, scoping, testing, continuous monitoring, and reporting, including identifying anomalies, control weaknesses, and emerging risks." })
   const stored = unifiedTrustScore(maliRow, { overall_confidence: 75, africa_eligibility: "explicit" } as any)
-  check("stored explicit with no Africa in posting is capped ≤ 59 (mali class)", stored <= 59, stored)
+  check("render does not mask a stale stored verdict (mali row blends unmasked)", stored === 77, stored)
 }
 
 // 7d · blocked evidence_state caps even strong evidence
 {
-  const job = mkJob({ evidence_state: "blocked", description_md: "Open to applicants across Africa. Run operations well." })
+  const job = mkJob({ trust_score: 70, evidence_state: "blocked", description_md: "Open to applicants across Africa. Run operations well." })
   const s = unifiedTrustScore(job, { overall_confidence: 95, africa_eligibility: "explicit" } as any)
   check("blocked explicit role capped ≤ 59", s <= 59, s)
 }
@@ -392,10 +391,9 @@ import {
   check("missing hashes never dedupe away evidence", !sameContentHash(null, "abc123") && !sameContentHash("abc123", null) && !sameContentHash(null, null))
 }
 
-console.log("9 · Evidence Intelligence V1.2 — quote integrity + eligibility arbitration")
+console.log("9 · Quote integrity + canonical stored-verdict display (B-keepers)")
 
 import { plainifyPosting, traceableQuote, deriveEvidence } from "../lib/evidence"
-import { renderEligibility, eligibleForAfricaSurfaces, excludeFromCountryHub } from "../lib/geo/render-eligibility"
 
 // 9a · plain rendering — hrefs and escapes can never leak into prose
 {
@@ -424,51 +422,12 @@ import { renderEligibility, eligibleForAfricaSurfaces, excludeFromCountryHub } f
   check("short fragments are not quotes", traceableQuote("app) Worldwide", hostawayPlain) === null)
 }
 
-// 9c · arbitration matrix — every case from the live audit
-{
-  // Positive control: Africa named in location -> explicit, regardless of stored.
-  const hostaway = { description_md: "**NOTE: FULLY remote, must be within EMEA to collaborate.** Trusted by 20,000+ property managers worldwide.", location: "Australia, Canada, Ghana, India, Ireland, New Zealand, Nigeria, South Africa, United Kingdom, United States", eligibility: "likely" as const }
-  const ha = renderEligibility(hostaway, "likely")
-  check("Africa named in location is explicit (positive control)", ha.tier === "explicit", ha)
-  // Oben Romania (live): stale stored likely CANNOT outrank Romania lock.
-  const oben = { description_md: "Job details Job Location: Remote (Anywhere Romania) Effort Schedule:8 Hours/Day Business Hours: EET Timeframe Language: English, Romanian Customers Background: (EU, WorldWide) Client Facing Role: Yes Project Team Size:+10 members.", location: "Romania", eligibility: "likely" as const, is_open_to_africa: true }
-  const ob = renderEligibility(oben, null)
-  check("Romania-locked role renders restricted despite stored likely", ob.tier === "restricted", ob)
-  check("Romania-locked role excluded from Africa intent surfaces", !eligibleForAfricaSurfaces(oben, null))
-  check("Romania-locked role excluded from country hubs", excludeFromCountryHub(oben, null))
-  // mali FP (live audit-leader): stored explicit, no Africa in posting -> NOT explicit.
-  const mali = { description_md: "This role is based in San Francisco, CA. We use a hybrid work model of 3 days in the office per week and offer relocation assistance to new employees.", location: "San Francisco", eligibility: "likely" as const }
-  const ma = renderEligibility(mali, "explicit")
-  check("stored explicit with no Africa in posting is NOT rendered explicit", ma.tier !== "explicit", ma)
-  check("mali-class row is not corroborated", ma.corroborated === false)
-  // MindPlus (live): marketing worldwide is a dead zone; old stored likely degrades honestly.
-  const mind = { description_md: "The organization partners with businesses worldwide to deliver innovative, data-driven solutions that enhance operational efficiency and business growth.", location: "Sri Lanka", eligibility: "likely" as const }
-  const mi = renderEligibility(mind, null)
-  check("marketing worldwide is not a verified likely", mi.corroborated === false, mi)
-  check("marketing worldwide does not qualify for Africa intent surfaces", !eligibleForAfricaSurfaces(mind, null))
-  // Genuine worldwide hiring (corpus likely) + stored likely -> corroborated claim.
-  const genuine = { description_md: "This is a fully remote role. Work from anywhere in the world. We hire globally across all time zones.", location: "Worldwide", eligibility: "likely" as const }
-  const ge = renderEligibility(genuine, "likely")
-  check("genuine worldwide hiring corroborates stored likely", ge.tier === "likely" && ge.corroborated === true, ge)
-  check("genuine worldwide hiring qualifies for Africa surfaces", eligibleForAfricaSurfaces(genuine, "likely"))
-  // Feed region lock suppresses affirmative claims even when corpus reads likely.
-  const locked = { ...genuine, is_open_to_africa: false as const }
-  check("feed region lock still suppresses affirmative tier", renderEligibility(locked, "likely").tier === "unknown")
-}
-
 // 9d · skills rendered deduped, never JSON, never tags-as-'Required'
 {
   check("'Finance, Finance' dedupes at render boundary", asSkillList(["Finance", "Finance"]).length === 1, asSkillList(["Finance", "Finance"]))
   check("stored skill-objects never render as JSON", asSkillList([{ skill: "onboarding at scale", evidence: "x" }] as any)[0] === "onboarding at scale", asSkillList([{ skill: "onboarding at scale", evidence: "x" }] as any))
 }
 
-// 9e · one plane: chip, panel, and trust read the same arbitrated tier
-{
-  const corpus = renderEligibility({ description_md: "Open to applicants in Nigeria and Kenya. Fully remote.", location: "Worldwide", eligibility: "unknown" as const }, "unknown")
-  check("corpus-visible Africa beats stored unknown on every surface", corpus.tier === "explicit", corpus)
-  const score = unifiedTrustScore(mkJob({ description_md: "Open to applicants in Nigeria and Kenya. Fully remote.", eligibility: "unknown" }), { overall_confidence: 75, africa_eligibility: "unknown" } as any)
-  check("trust plane follows the same arbitration (no cap on real evidence)", score > 59, score)
-}
 
 console.log("10 · V1.2 consistency — skills JSON, salary authority, segment quotes")
 

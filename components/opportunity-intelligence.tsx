@@ -2,7 +2,6 @@ import { ShieldCheck, Globe, Banknote, Building2, Wrench, GraduationCap, Clock }
 import type { JobAIIntelligenceRow } from '@/lib/ai/queries'
 import type { Job } from '@/lib/types'
 import { pipelineState } from '@/lib/ai/pipelineState'
-import { renderEligibility, type RenderEligibility } from '@/lib/geo/render-eligibility'
 import { plainifyPosting, traceableQuote } from '@/lib/evidence'
 import { asSkillList } from '@/lib/ai/normalize'
 import { salaryDisplay } from '@/lib/format'
@@ -40,24 +39,41 @@ function intelligenceState(row: any | null | undefined, queueStatus?: string | n
       return { status: "pending", label: "Pending", tone: "amber" }
   }
 }
-function africaFitLabel(re: RenderEligibility): { label: string; tone: 'positive' | 'caution' | 'neutral' } {
-  // [EVIDENCE V1.2] ONE evidence plane: the corpus re-reads the posting at
-  // render time. A stored claim (AI verdict or ingest tier) renders as a
-  // verified claim ONLY when the corpus corroborates it from the posting we
-  // hold today. Stale stored verdicts — the mali FP "explicit", marketing-
-  // text "likely" — degrade to the honest unverified class instead of
-  // contradicting the chip, the hub, and this panel on the same page.
-  switch (re.tier) {
+function africaFitLabel(elig: string | null | undefined, fallbackElig?: string | null): { label: string; tone: 'positive' | 'caution' | 'neutral' } {
+  // [ARCHITECTURE — single-owner doctrine] Displays the CANONICAL stored
+  // verdict — the Nexa Intelligence verdict first — with its provenance
+  // class. The render layer never re-decides eligibility: a stale stored
+  // verdict is healed by re-verification/backfill, never masked here.
+  if (elig) {
+    switch (elig) {
+      case 'explicit':
+        return { label: 'Explicitly open to Africa', tone: 'positive' }
+      case 'likely':
+        return { label: 'Likely open to Africa', tone: 'caution' }
+      case 'restricted':
+        return { label: 'Restricted – may require US/EU residency', tone: 'caution' }
+      case 'unknown':
+        return { label: 'Africa eligibility unknown', tone: 'neutral' }
+      default:
+        return { label: 'Intelligence pending', tone: 'neutral' }
+    }
+  }
+  // [TRUTH LAYER v1] Ingest-tier fallback (queued/rule-based rows with no AI
+  // verdict) is a heuristic read, not a verified claim. P0-4: unknown/likely
+  // must never assert affirmative Africa openness — render as unverified.
+  // 'restricted' stays shown (protective); 'explicit' requires Africa
+  // actually named in the posting at ingest and matches the card chip.
+  switch (fallbackElig) {
     case 'explicit':
-      return { label: 'Explicitly open to Africa', tone: 'positive' }
+      return { label: 'Open to Africa', tone: 'positive' }
     case 'likely':
-      return re.corroborated
-        ? { label: 'Likely open to Africa', tone: 'caution' }
-        : { label: 'Likely open · unverified', tone: 'neutral' }
+      return { label: 'Likely open · unverified', tone: 'neutral' }
     case 'restricted':
       return { label: 'Restricted – may require US/EU residency', tone: 'caution' }
-    default:
+    case 'unknown':
       return { label: 'Africa eligibility unknown', tone: 'neutral' }
+    default:
+      return { label: 'Intelligence pending', tone: 'neutral' }
   }
 }
 
@@ -113,7 +129,7 @@ function salaryTruthLabel(row: JobAIIntelligenceRow | null | undefined, job?: Jo
     const zeroRange = (nmax != null && nmax <= 0) && (nmin == null || nmin <= 0)
     const kCollapsed = nmax != null && nmax > 0 && nmax < 500 && (period == null || period === 'year') && (currency === '' || currency === 'USD')
     if (trans === 'disclosed' && (zeroRange || kCollapsed)) {
-      return { label: 'Salary unclear', detail: 'Raw value failed quality checks — flagged for correction. Nexa never estimates pay.', hasSalary: false, junk: true }
+      return { label: 'Salary unclear', detail: "Raw value failed quality checks — we don't display it as compensation.", hasSalary: false, junk: true }
     }
     if (trans === 'disclosed' && (hasRange || min != null || max != null)) {
       const suffix = period === 'hour' ? '/hour' : period === 'day' ? '/day' : period === 'month' ? '/month' : period === 'year' ? '/year' : ''
@@ -209,9 +225,8 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
   const hasAI = !!intelligence
   const state = intelligenceState(intelligence, (job as any)?._queueStatus, (job as any)?._queueError)
   const degraded = hasAI && state.status === 'degraded' // regex/legacy fallback rows — not real AI output
-  const africaRe = renderEligibility(job ?? {}, intelligence?.africa_eligibility ?? null)
   const plain = job ? plainifyPosting(`${job.description_md ?? ''}\n${job.location ?? ''}`) : null
-  const africa = africaFitLabel(africaRe)
+  const africa = africaFitLabel(intelligence?.africa_eligibility, job?.eligibility)
   const remote = remoteLabel(intelligence?.remote_eligibility, job?.is_remote, intelligence?.remote_evidence)
   const salary = salaryTruthLabel(intelligence, job || null)
   const company = companyLabel(intelligence?.company_legitimacy, job?.company_logo ? true : false)
@@ -220,9 +235,9 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
   const isHigh = overall >= 70
   // [V1.2] Deduped at render (kills stored "Finance, Finance"); never JSON.
   const requiredSkills = asSkillList(intelligence?.required_skills ?? job?.tags ?? []).slice(0, 3)
-  // [V1.2] A stored confidence number only attaches to a corroborated claim —
-  // "Likely open · unverified • 75%" would be a contradiction.
-  const africaConf = africaRe.corroborated ? intelligence?.africa_confidence : null
+  // [ARCHITECTURE] The stored confidence pairs with the stored verdict it
+  // belongs to — one canonical pair, displayed with its provenance class.
+  const africaConf = intelligence?.africa_confidence
 
   if (!hasAI || degraded) {
     const badgeColor = state.status === 'failed' ? 'border-red-500/20 bg-red-500/10 text-red-600' : 'border-amber-500/20 bg-amber-500/10 text-amber-600'
@@ -306,9 +321,8 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons }
   }
 
   const hasAI = !!intelligence
-  const africaRe = renderEligibility(job ?? {}, intelligence?.africa_eligibility ?? null)
   const plain = job ? plainifyPosting(`${job.description_md ?? ''}\n${job.location ?? ''}`) : null
-  const africa = africaFitLabel(africaRe)
+  const africa = africaFitLabel(intelligence?.africa_eligibility, job?.eligibility)
   const salary = salaryTruthLabel(intelligence, job || null)
   const company = companyLabel(intelligence?.company_legitimacy, job?.company_logo ? true : false)
   const overallConf = intelligence?.overall_confidence ?? 0
@@ -328,8 +342,8 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons }
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         <div className="rounded-md border border-border/60 bg-secondary/30 p-3">
           <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"><Globe className="h-3 w-3" aria-hidden /> Africa Fit</p>
-          <p className={`mt-1.5 text-sm font-medium ${africa.tone === 'positive' ? 'text-foreground' : africa.tone === 'caution' && africaRe.tier === 'restricted' ? 'text-amber-700 dark:text-amber-400' : 'text-foreground/80'}`}>{africa.label}</p>
-          {africaRe.corroborated && intelligence?.africa_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.africa_confidence}% confidence</p>}
+          <p className={`mt-1.5 text-sm font-medium ${africa.tone === 'positive' ? 'text-foreground' : africa.tone === 'caution' && (intelligence?.africa_eligibility === 'restricted' || job?.eligibility === 'restricted') ? 'text-amber-700 dark:text-amber-400' : 'text-foreground/80'}`}>{africa.label}</p>
+          {intelligence?.africa_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.africa_confidence}% confidence</p>}
           {intelligence?.country_restrictions && intelligence.country_restrictions.length > 0 && <p className="mt-1 text-[11px] text-muted-foreground">Restrictions: {intelligence.country_restrictions.join(', ')}</p>}
           {intelligence?.visa_sponsorship && intelligence.visa_sponsorship !== 'unknown' && <p className="mt-1 text-[11px] text-muted-foreground">Visa: {intelligence.visa_sponsorship.replace('_', ' ')}</p>}
           <EvidenceQuote text={intelligence?.africa_evidence} url={intelligence?.africa_source_urls?.[0]} plain={plain} />

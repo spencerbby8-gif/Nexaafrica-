@@ -6,7 +6,6 @@ import { getJobCardExcerpt } from '@/lib/cleanDescription'
 import { jaiSalaryDisplay, plainifyPosting } from '@/lib/evidence'
 import type { Job } from '@/lib/types'
 import { calculateTrustScore, unifiedTrustScore } from '@/lib/trust/engine'
-import { renderEligibility } from '@/lib/geo/render-eligibility'
 import { OpportunityIntelligenceSummary } from '@/components/opportunity-intelligence'
 import { IntelligenceBadge } from '@/components/intelligence-badge'
 import { ProofBadge } from '@/components/proof-badge'
@@ -118,21 +117,24 @@ export function JobCard({
             </span>
           )}
           {(() => {
-            // [EVIDENCE V1.2] ONE evidence plane: the corpus re-reads the
-            // posting at render time; a stored claim renders as verified only
-            // when the corpus corroborates it. Stale stored verdicts (the
-            // mali FP, marketing-text "likely") can no longer outrank the
-            // evidence — they fall back to the honest unverified class.
-            let re
-            try {
-              re = renderEligibility(job as any, (aiIntelligence as any)?.africa_eligibility ?? null)
-            } catch {
-              re = null
-            }
-            if (!re) return null
-            if (re.tier === 'explicit') return <TrustBadge variant="verified" label="Open to Africa" />
-            if (re.tier === 'likely') {
-              return re.corroborated
+            // [ARCHITECTURE — single-owner doctrine] The chip displays the
+            // CANONICAL stored verdict chain — Nexa Intelligence verdict
+            // first, ingest tier as fallback — with its provenance class.
+            // The render layer never re-decides eligibility: a stale stored
+            // verdict is healed by re-verification/backfill, never masked.
+            const aiElig = (aiIntelligence as any)?.africa_eligibility
+            const effective = aiElig || job.eligibility
+            // [REGION-LOCK] A listing the system marks as not-open-to-Africa can
+            // never show an open-to-Africa badge, even when the AI found Africa
+            // language — the system's own flag wins.
+            if (job.is_open_to_africa === false) return null
+            if (effective === 'explicit') return <TrustBadge variant="verified" label="Open to Africa" />
+            // [TRUTH LAYER v1] "likely" earns the verified (green) badge ONLY
+            // when the AI layer produced it. Ingest-tier 'likely' (no AI row)
+            // is an informed read and renders as neutral, labeled unverified —
+            // never the brand-trust green check.
+            if (effective === 'likely') {
+              return aiElig
                 ? <TrustBadge variant="verified" label="Likely open" />
                 : <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Likely open · unverified</span>
             }

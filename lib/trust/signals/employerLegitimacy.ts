@@ -1,16 +1,17 @@
 import type { Job } from "@/lib/types"
 import type { TrustSignal } from "../types"
-import { INGEST_SOURCES } from "@/lib/ingest/companies"
-
-const CURATED_COMPANIES = new Set(INGEST_SOURCES.map(s => s.company.toLowerCase()))
+import { companyLegitimacyOwner } from "@/lib/company/legitimacy"
 
 export function employerLegitimacySignal(job: Job): TrustSignal | null {
-  const companyLower = job.company.toLowerCase().trim()
   const hasLogo = !!job.company_logo
-  const isCurated = CURATED_COMPANIES.has(companyLower) || CURATED_COMPANIES.has(job.company)
+  // [§17 CANONICAL COMPANY PLANE] The trust plane never re-derives company
+  // identity on its own: it asks the single canonical owner. "Verified
+  // employer" asserts exactly what the JAI row asserts — the same registry,
+  // the same basis sentence.
+  const verdict = companyLegitimacyOwner({ company: job.company })
 
-  // Known high-trust companies (from curated list)
-  if (isCurated) {
+  // Known high-trust companies (canonical owner: curated registry)
+  if (verdict.value === "verified") {
     return {
       id: "employer_legitimacy",
       label: "Verified employer",

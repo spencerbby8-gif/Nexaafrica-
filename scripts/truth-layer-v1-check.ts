@@ -20,6 +20,10 @@ import { classifyEligibility } from "../lib/ingest/normalize"
 import { asSkillList, cleanEvidenceText } from "../lib/ai/normalize"
 import { formatSalary } from "../lib/intelligence"
 import { salaryDisplay } from "../lib/format"
+import { isFailedModelVersion, queueRepairDecision, preserveQuote } from "../lib/ai/queue-repair"
+import { companyLegitimacyOwner, isCuratedEmployer } from "../lib/company/legitimacy"
+import { employerLegitimacySignal } from "../lib/trust/signals/employerLegitimacy"
+import { ingestEvidenceRow } from "../lib/ai/evidence"
 
 let passed = 0
 let failed = 0
@@ -613,4 +617,93 @@ import { fileURLToPath } from "node:url"
   check("first TRACEABLE stored quote wins over a malformed first", firstT === "We use a hybrid work model of 3 days in the office per week", firstT)
   const noneT = [maliStored, "pl"].find((t) => t && traceableQuote(t as any, auditPlain)) ?? null
   check("no traceable stored quote -> block renders nothing (no bare heading)", noneT === null, noneT)
+}
+
+/* -------------------------------------------------------------------- */
+/* 13 · Evidence-plane repair + company-legitimacy ownership (§17)        */
+/*     All versions/cases are the REAL values sampled live in §16.        */
+/* -------------------------------------------------------------------- */
+console.log("\n13 · Write-path repair — evidence plane + canonical company legitimacy")
+{
+  // 13a — Seal classification: regex/no-AI tiers are FAILURES, never terminal.
+  check("seal: regex row sealed today is a failure tier", isFailedModelVersion("regex-extracted-33bytes"))
+  check("seal: regex row sealed 7/29 is a failure tier", isFailedModelVersion("regex-extracted-7880bytes"))
+  check("seal: no-providers is a failure tier", isFailedModelVersion("no-ai-providers"))
+  check("seal: verifier threw is a failure tier", isFailedModelVersion("verifyJobReal-threw"))
+  check("seal: legacy rule-based fast tier is a failure tier", isFailedModelVersion("rule-based-v1-fast"))
+  check("seal: real provider (mistral) is NOT a failure tier", !isFailedModelVersion("mistral:mistral-medium-2505"))
+  check("seal: real provider (github models) is NOT a failure tier", !isFailedModelVersion("github_models:gpt-4o-mini"))
+
+  // 13b — Requeue decisions on the exact live row shapes from the §16 table.
+  const stripeSealedToday = { model_version: "regex-extracted-8036bytes", evidence_refs: { sources: ["https://stripe.com/jobs/search?gh_jid=8099206"], pageStatus: 200, provenance: "company_page", dimensionCount: 2 } }
+  check("requeue: regex tier sealed with V1 evidence refs re-enters (thin tier)", queueRepairDecision({ error: null }, stripeSealedToday) === "thin_tier")
+  const redditMistralPreV1 = { model_version: "mistral:mistral-medium-2505", evidence_refs: null }
+  check("requeue: real-AI row predating the evidence plane re-enters (pre-V1)", queueRepairDecision({ error: null }, redditMistralPreV1) === "pre_v1_evidence")
+  const currentRow = { model_version: "github_models:gpt-4o-mini", evidence_refs: { sources: [], pageStatus: 200, provenance: "page", dimensionCount: 2 } }
+  check("requeue: current real row with stored evidence stays completed", queueRepairDecision({ error: null }, currentRow) === null)
+  check("requeue: admission rejection stays terminal (never requeued)", queueRepairDecision({ error: "Rejected: Not open to African applicants [africa_eligibility]" }, stripeSealedToday) === null)
+  check("requeue: completed-without-JAI left to orphan-heal (no double handling)", queueRepairDecision({ error: null }, undefined) === null)
+
+  // 13c — Preservation merge: never blank stored evidence; never mis-attribute it.
+  check("preserve: lost quote survives while verdict unchanged", preserveQuote(null, "We use a hybrid work model of 3 days in the office per week", true) === "We use a hybrid work model of 3 days in the office per week")
+  check("preserve: changed verdict must not inherit the old quote", preserveQuote(null, "We use a hybrid work model of 3 days in the office per week", false) === null)
+  check("preserve: fresh quote always wins", preserveQuote("$245,800—$344,100", "old stored quote", true) === "$245,800—$344,100")
+  check("preserve: nothing stored, nothing new -> honest absence", preserveQuote(null, null, true) === null)
+
+  // 13d — Canonical owner: identity never depends on per-run fetch luck.
+  const redditVerdict = companyLegitimacyOwner({ company: "Reddit" })
+  check("owner: Reddit canonical verdict is verified via the registry", redditVerdict.value === "verified" && redditVerdict.basis === "curated_registry" && redditVerdict.confidence === 95, redditVerdict)
+  check("owner: curator evidence states the channel basis", !!redditVerdict.evidence && redditVerdict.evidence.includes("curated employer registry"), redditVerdict.evidence)
+  const redditScam = companyLegitimacyOwner({ company: "Reddit", suspiciousEvidence: "pay a registration fee to apply" })
+  check("owner: posting-level scam evidence cannot demote a channel-authenticated employer", redditScam.value === "verified", redditScam.value)
+  const mindplusVerdict = companyLegitimacyOwner({ company: "MindPlus (Pvt) Ltd" })
+  check("owner: non-registry company with nothing measured is honestly unknown (AI cannot elevate)", mindplusVerdict.value === "unknown" && mindplusVerdict.confidence === 0, mindplusVerdict)
+  const scamVerdict = companyLegitimacyOwner({ company: "QuickCash Now", suspiciousEvidence: "buy the starter kit before your first shift" })
+  check("owner: posting-level scam evidence demotes non-registry to suspicious with the quote", scamVerdict.value === "suspicious" && scamVerdict.basis === "posting_scam_evidence" && scamVerdict.evidence === "buy the starter kit before your first shift", scamVerdict)
+  const measured = companyLegitimacyOwner({ company: "Decision Inc.", learning: { totalRoles: 12, verificationRate: 0.5 } })
+  check("owner: measured hiring history yields bounded likely_legit", measured.value === "likely_legit" && measured.basis === "measured_learning" && measured.confidence === 58, measured)
+  const tinyVolume = companyLegitimacyOwner({ company: "NewCo", learning: { totalRoles: 2, verificationRate: 1 } })
+  check("owner: below minimum measured volume stays unknown", tinyVolume.value === "unknown", tinyVolume)
+  const placeholder = companyLegitimacyOwner({ company: "Company", learning: { totalRoles: 50, verificationRate: 0.9 } })
+  check("owner: placeholder names never get legitimacy", placeholder.value === "unknown", placeholder)
+  check("owner: isCuratedEmployer is case/space tolerant", isCuratedEmployer(" mongodb ") && isCuratedEmployer("STRIPE"))
+
+  // 13e — Trust signal asks the same owner: parity with the stored plane.
+  const redditSignal = employerLegitimacySignal({ company: "Reddit", company_logo: null, source: "greenhouse" } as any)
+  check("trust parity: same owner, same verified basis, same +15", redditSignal?.label === "Verified employer" && redditSignal?.scoreImpact === 15 && redditSignal?.tone === "positive", redditSignal)
+  const newcoSignal = employerLegitimacySignal({ company: "Totally New Co", company_logo: null, source: "himalayas" } as any)
+  check("trust parity: unknown employer stays the honest new-employer zero", newcoSignal?.label === "New employer" && newcoSignal?.scoreImpact === 0, newcoSignal)
+  const logoSignal = employerLegitimacySignal({ company: "Logo Only Co", company_logo: "https://example.com/logo.png", source: "himalayas" } as any)
+  check("trust parity: logo remains cosmetic branding (+3), never legitimacy", logoSignal?.label === "Employer branding present" && logoSignal?.scoreImpact === 3, logoSignal)
+
+  // 13f — Ingest-plane evidence: every accepted job writes preference-1 evidence.
+  const longDesc = "We are hiring a platform engineer. " + "Responsibilities include building reliable systems. ".repeat(25)
+  const ingestRow = ingestEvidenceRow({ apply_url: "https://example.com/jobs/1", description_md: longDesc })
+  check("ingest evidence: accepted job with stored description gets an ats_api verified row", !!ingestRow && ingestRow.evidence_type === "ats_api" && ingestRow.status === "verified" && typeof ingestRow.content_hash === "string" && ingestRow.content_hash.length === 32, ingestRow)
+  check("ingest evidence: excerpt bounded and whitespace-normalized", !!ingestRow && typeof ingestRow.excerpt === "string" && ingestRow.excerpt.length <= 800 && !/\s{2,}/.test(ingestRow.excerpt))
+  check("ingest evidence: short/absent description is honest absence, not a blank row", ingestEvidenceRow({ apply_url: "https://example.com/jobs/2", description_md: "Too short." }) === null && ingestEvidenceRow({ apply_url: "https://example.com/jobs/3", description_md: null }) === null)
+
+  // 13g — Structural boundary: the owner and the repair live ONLY in the write plane.
+  {
+    const root = join(dirname(fileURLToPath(import.meta.url)), "..")
+    const walk = (dir: string): string[] => {
+      const out: string[] = []
+      for (const e of readdirSync(dir)) {
+        if (e === "node_modules" || e.startsWith(".")) continue
+        const p = join(dir, e)
+        const st = statSync(p)
+        if (st.isDirectory()) out.push(...walk(p))
+        else if (/\.(ts|tsx)$/.test(e)) out.push(p)
+      }
+      return out
+    }
+    const uiFiles = [...walk(join(root, "app")), ...walk(join(root, "components"))]
+    const ownerImporters = uiFiles.filter((p) => readFileSync(p, "utf8").includes("companyLegitimacyOwner"))
+    check("boundary: render never calls the canonical owner (presentation only)", ownerImporters.length === 0, ownerImporters)
+    const engineSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "ai", "engine.ts"), "utf8")
+    check("boundary: seal guard runs before any JAI upsert", engineSrc.indexOf("isFailedModelVersion(intelligence.modelVersion)") < engineSrc.indexOf("Main upsert") && engineSrc.includes("repair_requeued"))
+    check("boundary: ingest writes preference-1 evidence in the crawler path", readFileSync(join(root, "lib", "ingest", "run.ts"), "utf8").includes("recordIngestEvidence"))
+    const consolidatedSrc = readFileSync(join(root, "lib", "ai", "verifiers", "consolidated.ts"), "utf8")
+    check("boundary: per-job AI is forbidden from identity verdicts in the prompt", consolidatedSrc.includes('NEVER return "verified" or "likely_legit"'))
+  }
 }

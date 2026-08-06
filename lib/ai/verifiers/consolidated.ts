@@ -402,10 +402,17 @@ export function enforceTruthfulness(merged: AIResp, opts: { job: Job; truth: str
     }
   }
 
-  // 5) Company legitimacy: no fetched company page -> no prior-based claims
-  if (!hasCompanyPage) {
-    if (out.company_legitimacy !== "unknown") { out.company_legitimacy = "unknown"; out.company_confidence = 0 }
-    out.company_evidence = null
+  // 5) Company legitimacy: [§17] the per-job AI call NEVER decides company
+  // identity — "verified"/"likely_legit" from a job call is an invented
+  // identity verdict (it flips with per-run fetch luck; proven live §16).
+  // Identity is owned by the canonical company plane (lib/company/legitimacy).
+  // The only verdict a job call may emit is posting-level "suspicious", and
+  // only with a verbatim quote of the scam pattern from the posting text.
+  if (out.company_legitimacy === "verified" || out.company_legitimacy === "likely_legit") {
+    out.company_legitimacy = "unknown"; out.company_confidence = 0; out.company_evidence = null
+  }
+  if (out.company_legitimacy === "suspicious" && !out.company_evidence) {
+    out.company_legitimacy = "unknown"; out.company_confidence = 0
   }
 
   // 6) Salary: claimed numbers must literally exist in the posting text.
@@ -472,7 +479,7 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
     : ""
 
   // P5: abstention-first prompt — models must not guess from priors.
-  const prompt = `Extract intelligence from this job posting as JSON. STRICT RULES: (1) Use ONLY the provided text — never outside knowledge about the company or market. (2) For every *_evidence field, copy an EXACT quote from the text do not paraphrase, do not join fragments, do not invent sentences. (3) If the text does not directly prove a field, return "unknown" and null evidence — abstaining is correct, guessing is a violation. (4) visa_sponsorship = "available" ONLY when the text explicitly offers visa sponsorship/relocation support; otherwise "unknown". (5) company_legitimacy = "unknown" unless the provided company website text proves it. (6) africa_eligibility: "explicit" only if the text mentions Africa or an African country; "restricted" only if the text imposes location/work-authorization limits; "likely" only if the text says worldwide/global/EMEA hiring open to the candidate; else "unknown". (7) africa_evidence must quote the eligibility phrase itself (where the candidate may be located) — NEVER company marketing about customers, markets, operations, or regions served; that is business coverage, not hiring eligibility, and quoting it is fabrication. (8) EMEA counts toward "likely" ONLY when tied to where the candidate may be located, never when describing operations/customers/market coverage. (9) required_skills/transferable_skills/missing_skills must be arrays of plain strings — never objects.\n\n` +
+  const prompt = `Extract intelligence from this job posting as JSON. STRICT RULES: (1) Use ONLY the provided text — never outside knowledge about the company or market. (2) For every *_evidence field, copy an EXACT quote from the text do not paraphrase, do not join fragments, do not invent sentences. (3) If the text does not directly prove a field, return "unknown" and null evidence — abstaining is correct, guessing is a violation. (4) visa_sponsorship = "available" ONLY when the text explicitly offers visa sponsorship/relocation support; otherwise "unknown". (5) company_legitimacy: report ONLY posting-level scam evidence — return "suspicious" when the posting text itself shows scam patterns (pay to apply, required purchase, apply via messaging app, unrealistically easy high pay) and quote the pattern in company_evidence; otherwise return "unknown". NEVER return "verified" or "likely_legit" — company identity verification is not your job; it is owned by the company plane. (6) africa_eligibility: "explicit" only if the text mentions Africa or an African country; "restricted" only if the text imposes location/work-authorization limits; "likely" only if the text says worldwide/global/EMEA hiring open to the candidate; else "unknown". (7) africa_evidence must quote the eligibility phrase itself (where the candidate may be located) — NEVER company marketing about customers, markets, operations, or regions served; that is business coverage, not hiring eligibility, and quoting it is fabrication. (8) EMEA counts toward "likely" ONLY when tied to where the candidate may be located, never when describing operations/customers/market coverage. (9) required_skills/transferable_skills/missing_skills must be arrays of plain strings — never objects.\n\n` +
     `${job.title} @ ${job.company} | ${job.location||""} | ${job.country} | src=${job.source||""} | emp=${job.employment_type}\n` +
     `Salary: ${job.salary_range||""} ${job.salary_min||""}-${job.salary_max||""} ${job.salary_currency||""} | Tags: ${(job.tags||[]).join(",")}\n\n` +
     `Description:\n${combined.slice(0,5000)}${companyContext}\n\n` +

@@ -129,6 +129,53 @@ function retryAt(status: EvidenceStatus): string | null {
   return null
 }
 
+/**
+ * [§17 INGEST-PLANE EVIDENCE] Source-preference #1 is "ATS APIs / pages
+ * already fetched at ingest; stored description" — but the row was only ever
+ * written during the AI drain, so jobs not yet drained carried an empty
+ * evidence plane. Every accepted job now writes its ingest evidence at ingest.
+ * Pure row-builder (fixture-tested): null when there's genuinely nothing to
+ * prove — short/absent descriptions stay an honest absence.
+ */
+export function ingestEvidenceRow(job: { apply_url: string; description_md: string | null }): EvidenceWrite | null {
+  const desc = job.description_md ?? ""
+  if (desc.trim().length < 100) return null
+  return {
+    evidence_type: "ats_api",
+    source_url: job.apply_url,
+    source_kind: "ats_api",
+    status: "verified",
+    http_status: 200,
+    content_hash: sha256(desc),
+    excerpt: desc.replace(/\s+/g, " ").slice(0, 800),
+    detail: { bytes: desc.length, via: "ingest" },
+    fetched_at: new Date().toISOString(),
+  }
+}
+
+/** Write the ingest-plane evidence row for an accepted job. Version-aware:
+ *  identical content is a version, not a new row. Fills `jobs.evidence_state`
+ *  ONLY when unset — a crawler-attested state (blocked/failed/partial) is
+ *  never overwritten by ingest. */
+export async function recordIngestEvidence(sb: any, jobId: string, job: { apply_url: string; description_md: string | null }): Promise<void> {
+  const row = ingestEvidenceRow(job)
+  if (!row) return
+  try {
+    const { data: latest } = await sb
+      .from("job_evidence_v1")
+      .select("content_hash")
+      .eq("job_id", jobId)
+      .eq("source_kind", "ats_api")
+      .order("created_at", { ascending: false })
+      .limit(1)
+    if (sameContentHash(latest?.[0]?.content_hash, row.content_hash)) return
+    await sb.from("job_evidence_v1").insert({ job_id: jobId, ...row })
+    await sb.from("jobs").update({ evidence_state: "verified" }).eq("id", jobId).is("evidence_state", null)
+  } catch (e) {
+    console.log(JSON.stringify({ scope: "evidence", event: "ingest_write_error", jobId: String(jobId).slice(0, 8), error: (e instanceof Error ? e.message : String(e)).slice(0, 120) }))
+  }
+}
+
 /** Extract JSON-LD structured data blocks from an HTML string. */
 export function extractStructuredData(html: string): any[] {
   const out: any[] = []

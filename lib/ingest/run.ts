@@ -341,6 +341,16 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
             .eq('job_id', data[0].id)
             .eq('status', 'failed')
         } catch {}
+        // [§17 INGEST-PLANE EVIDENCE] The stored ATS/feed description is
+        // preference-1 evidence — write it at ingest so no accepted job ever
+        // has an empty evidence plane.
+        try {
+          const { recordIngestEvidence } = await import('@/lib/ai/evidence')
+          await recordIngestEvidence(supabase, data[0].id, {
+            apply_url: String(row.apply_url ?? ''),
+            description_md: typeof row.description_md === 'string' ? row.description_md : null,
+          })
+        } catch {}
       }
       else result.skipped += 1
     }
@@ -676,6 +686,16 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
             .update({ status: 'pending', error: null })
             .eq('job_id', data[0].id)
             .eq('status', 'failed')
+        } catch {}
+        // [§17 INGEST-PLANE EVIDENCE] The stored ATS/feed description is
+        // preference-1 evidence — write it at ingest so no accepted job ever
+        // has an empty evidence plane.
+        try {
+          const { recordIngestEvidence } = await import('@/lib/ai/evidence')
+          await recordIngestEvidence(supabase, data[0].id, {
+            apply_url: String(row.apply_url ?? ''),
+            description_md: typeof row.description_md === 'string' ? row.description_md : null,
+          })
         } catch {}
       }
       else result.skipped += 1

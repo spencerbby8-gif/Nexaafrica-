@@ -55,6 +55,7 @@ export interface ValidationJobInput {
   location: string | null
   description_md: string | null
   source: string | null
+  source_id: string | null
   is_remote: boolean | null
   eligibility: string | null
   is_open_to_africa: boolean | null
@@ -153,6 +154,12 @@ export interface QuoteCheck {
  * location verbatim). Field-aware carve-outs:
  *  - company: the canonical owner's basis SENTENCE is provenance prose, not a
  *    posting quote — equality with the owner's sentence counts as traceable.
+ *  - africa: the corpus adjudicator's own quote is provenance too — it is
+ *    extracted word-aligned from the very text the adjudicator judged
+ *    (location-field quotes can be under the 12-char quote affordance,
+ *    e.g. "New York", "CA, US"). Equality with the corpus quote counts.
+ *    [Loop-guard 2: without this, a requeued row re-mints the same
+ *    deterministic corpus quote, fails this check again, and churns.]
  *  - salary: ATS metadata salary is not description prose — the quote counts
  *    when it matches the feed's own salary_range text.
  * Short/absent descriptions make every quote unverifiable (null), never a
@@ -163,11 +170,13 @@ export function quoteTraceableFor(
   quote: string | null,
   job: Pick<ValidationJobInput, "title" | "location" | "description_md" | "salary_range">,
   expectedCompanySentence: string | null,
+  expectedAfricaQuote?: string | null,
 ): boolean | null {
   if (!quote || !quote.trim()) return null
   const desc = (job.description_md || "").trim()
   if (desc.length < 100) return null
   if (field === "company" && expectedCompanySentence && quote.trim() === expectedCompanySentence.trim()) return true
+  if (field === "africa" && expectedAfricaQuote && quote.trim() === expectedAfricaQuote.trim()) return true
   if (field === "salary" && job.salary_range && quote.replace(/\s+/g, " ").trim() === job.salary_range.replace(/\s+/g, " ").trim()) return true
   const haystack = `${job.title || ""}\n${desc}\n${job.location || ""}`
   return traceableQuote(quote, haystack) !== null
@@ -256,7 +265,7 @@ export function storedEmployerClaim(trustSignals: unknown): boolean | null {
  * necessarily produce the same requeue decision.
  */
 export function contradictionFlags(
-  job: Pick<ValidationJobInput, "title" | "location" | "company" | "description_md" | "salary_range">,
+  job: Pick<ValidationJobInput, "title" | "location" | "company" | "description_md" | "salary_range" | "source" | "source_id">,
   jai: ValidationJaiInput | null | undefined,
   learning: CompanyLearningInput | null,
 ): ContradictionFlags {
@@ -267,7 +276,7 @@ export function contradictionFlags(
     description_md: job.description_md || "",
     location: job.location,
   })
-  const expectedCompany = companyLegitimacyOwner({ company: job.company || "", learning })
+  const expectedCompany = companyLegitimacyOwner({ company: job.company || "", source: job.source ?? null, sourceId: job.source_id ?? null, learning })
 
   const africaMismatch = (jai.africa_eligibility ?? "unknown") !== expectedAfrica.value
 
@@ -289,7 +298,7 @@ export function contradictionFlags(
   for (const field of QUOTE_FIELDS) {
     const q = storedQuote(jai, field)
     if (!q || !q.trim()) continue
-    if (quoteTraceableFor(field, q, job, expectedCompany.evidence) === false) {
+    if (quoteTraceableFor(field, q, job, expectedCompany.evidence, expectedAfrica.evidence) === false) {
       untraceableQuote = true
       break
     }
@@ -338,9 +347,15 @@ export function evidenceCaseFor(rec: ValidationRecord): EvidenceCase {
   if (!rec.jai) return "never_written" // orphan — orphaned-heal requeues it
   if (modelBucket(rec.jai.model_version) === "rule-based") return "overwritten_by_thin_tier"
   if (rec.jai.evidence_refs == null) return "stale_pre_v1"
+  const expectedAfrica = adjudicateAfricaEligibility({
+    title: rec.job.title,
+    description_md: rec.job.description_md || "",
+    location: rec.job.location,
+  })
+  const expectedCompany = companyLegitimacyOwner({ company: rec.job.company || "", source: rec.job.source ?? null, sourceId: rec.job.source_id ?? null, learning: rec.learning })
   const anyTraceable = QUOTE_FIELDS.some((f) => {
     const quote = storedQuote(rec.jai as ValidationJaiInput, f)
-    return quote != null && quoteTraceableFor(f, quote, rec.job, null) === true
+    return quote != null && quoteTraceableFor(f, quote, rec.job, expectedCompany.evidence, expectedAfrica.evidence) === true
   })
   const hasUsableRows = rec.evidence.statuses.some((s) => USABLE_EVIDENCE_STATUSES.has(s))
   if (hasUsableRows || anyTraceable) return "exists_and_renders"
@@ -390,7 +405,7 @@ export function evaluateRecord(rec: ValidationRecord): JobEvaluation {
     description_md: job.description_md || "",
     location: job.location,
   })
-  const expectedCompany = companyLegitimacyOwner({ company: job.company || "", learning: rec.learning })
+  const expectedCompany = companyLegitimacyOwner({ company: job.company || "", source: job.source ?? null, sourceId: job.source_id ?? null, learning: rec.learning })
 
   const flags = contradictionFlags(job, jai, rec.learning)
   const repairClass = repairClassFor(rec)
@@ -427,7 +442,7 @@ export function evaluateRecord(rec: ValidationRecord): JobEvaluation {
         quoteChecks.push({ field, stored: false, traceable: null })
         continue
       }
-      const ok = quoteTraceableFor(field, quote, job, expectedCompany.evidence)
+      const ok = quoteTraceableFor(field, quote, job, expectedCompany.evidence, expectedAfrica.evidence)
       quoteChecks.push({ field, stored: true, traceable: ok })
       if (ok === false) untraceableFields.push(field)
     }
@@ -739,7 +754,11 @@ export function summarize(evaluations: JobEvaluation[]): TruthMetrics {
       }
     }
 
-    const key = (ev.company || "").trim().toLowerCase()
+    // Cohort identity = company × channel class: a registry company reached
+    // through its official ATS feed is verified; the same company reached
+    // through a third-party board is honestly NOT — that is a real evidence
+    // difference, never a flip. Divergence is measured within one channel.
+    const key = `${(ev.company || "").trim().toLowerCase()}|${ev.expectedCompany.basis === "curated_registry" ? "official-ats" : "other-channel"}`
     if (key) {
       const list = cohortMap.get(key) || []
       list.push(ev)

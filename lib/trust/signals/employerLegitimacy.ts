@@ -8,7 +8,10 @@ export function employerLegitimacySignal(job: Job): TrustSignal | null {
   // identity on its own: it asks the single canonical owner. "Verified
   // employer" asserts exactly what the JAI row asserts — the same registry,
   // the same basis sentence.
-  const verdict = companyLegitimacyOwner({ company: job.company })
+  // [V2] Channel-authenticated: the registry premise is "this job arrived
+  // via the company's official ATS feed". A third-party board naming the
+  // same company never inherits the verified verdict.
+  const verdict = companyLegitimacyOwner({ company: job.company, source: (job as any).source ?? null, sourceId: (job as any).source_id ?? null })
 
   // Known high-trust companies (canonical owner: curated registry)
   if (verdict.value === "verified") {

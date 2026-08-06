@@ -653,10 +653,10 @@ console.log("\n13 · Write-path repair — evidence plane + canonical company le
   check("preserve: nothing stored, nothing new -> honest absence", preserveQuote(null, null, true) === null)
 
   // 13d — Canonical owner: identity never depends on per-run fetch luck.
-  const redditVerdict = companyLegitimacyOwner({ company: "Reddit" })
+  const redditVerdict = companyLegitimacyOwner({ company: "Reddit", source: "greenhouse:reddit" })
   check("owner: Reddit canonical verdict is verified via the registry", redditVerdict.value === "verified" && redditVerdict.basis === "curated_registry" && redditVerdict.confidence === 95, redditVerdict)
   check("owner: curator evidence states the channel basis", !!redditVerdict.evidence && redditVerdict.evidence.includes("curated employer registry"), redditVerdict.evidence)
-  const redditScam = companyLegitimacyOwner({ company: "Reddit", suspiciousEvidence: "pay a registration fee to apply" })
+  const redditScam = companyLegitimacyOwner({ company: "Reddit", source: "greenhouse:reddit", suspiciousEvidence: "pay a registration fee to apply" })
   check("owner: posting-level scam evidence cannot demote a channel-authenticated employer", redditScam.value === "verified", redditScam.value)
   const mindplusVerdict = companyLegitimacyOwner({ company: "MindPlus (Pvt) Ltd" })
   check("owner: non-registry company with nothing measured is honestly unknown (AI cannot elevate)", mindplusVerdict.value === "unknown" && mindplusVerdict.confidence === 0, mindplusVerdict)
@@ -668,10 +668,22 @@ console.log("\n13 · Write-path repair — evidence plane + canonical company le
   check("owner: below minimum measured volume stays unknown", tinyVolume.value === "unknown", tinyVolume)
   const placeholder = companyLegitimacyOwner({ company: "Company", learning: { totalRoles: 50, verificationRate: 0.9 } })
   check("owner: placeholder names never get legitimacy", placeholder.value === "unknown", placeholder)
-  check("owner: isCuratedEmployer is case/space tolerant", isCuratedEmployer(" mongodb ") && isCuratedEmployer("STRIPE"))
+  check("owner: isCuratedEmployer is case/space tolerant on the name, strict on the channel",
+    isCuratedEmployer(" mongodb ", "greenhouse:mongodb") && isCuratedEmployer("STRIPE", "greenhouse:stripe"))
+  // [V2 finding — preview 2026-08-06] Channel authentication: the registry
+  // premise is "this job arrived via the company's official ATS feed". A
+  // third-party board naming a registry company must NOT inherit verified.
+  const redditHimalayas = companyLegitimacyOwner({ company: "Reddit", source: "himalayas" })
+  check("owner: third-party board naming a registry company is NOT verified (impersonation-safe)", redditHimalayas.value === "unknown" && redditHimalayas.basis === "insufficient_evidence", redditHimalayas)
+  const redditLegacy = companyLegitimacyOwner({ company: "Reddit", source: "greenhouse", sourceId: "greenhouse:reddit:7997020" })
+  check("owner: legacy rows authenticate via source_id label", redditLegacy.value === "verified" && redditLegacy.basis === "curated_registry", redditLegacy)
+  const redditNoChannel = companyLegitimacyOwner({ company: "Reddit" })
+  check("owner: no channel recorded -> honest unknown, never name-matched verified", redditNoChannel.value === "unknown", redditNoChannel)
+  const spoof = companyLegitimacyOwner({ company: "Reddit", source: "remoteok" })
+  check("owner: name alone on an open board cannot claim the channel fact", spoof.value === "unknown", spoof)
 
   // 13e — Trust signal asks the same owner: parity with the stored plane.
-  const redditSignal = employerLegitimacySignal({ company: "Reddit", company_logo: null, source: "greenhouse" } as any)
+  const redditSignal = employerLegitimacySignal({ company: "Reddit", company_logo: null, source: "greenhouse:reddit" } as any)
   check("trust parity: same owner, same verified basis, same +15", redditSignal?.label === "Verified employer" && redditSignal?.scoreImpact === 15 && redditSignal?.tone === "positive", redditSignal)
   const newcoSignal = employerLegitimacySignal({ company: "Totally New Co", company_logo: null, source: "himalayas" } as any)
   check("trust parity: unknown employer stays the honest new-employer zero", newcoSignal?.label === "New employer" && newcoSignal?.scoreImpact === 0, newcoSignal)
@@ -811,6 +823,7 @@ import {
     description_md:
       "**Location:** Remote from NYC, Chicago, SF or LA\nWe're growing our collaborative team of individuals to drive Reddit Ads product adoption within our Global Sales organization and with advertisers. In this role, you will be responsible for scaling ads product adoption and scale across the Large Customer Sales advertisers in the United States.",
     source: "greenhouse:reddit",
+    source_id: "greenhouse:reddit:7997020",
     is_remote: true,
     eligibility: "likely",
     is_open_to_africa: true,
@@ -864,7 +877,7 @@ import {
   check("v2: posting quote traceable", quoteTraceableFor("africa", "scaling ads product adoption and scale across the Large Customer Sales advertisers in the United States", mkJob(), null) === true)
   check("v2: fabricated marketing quote fails", quoteTraceableFor("africa", "operations across the EMEA region with partners worldwide", mkJob(), null) === false)
   check("v2: short posting makes quotes unverifiable, not fabricated", quoteTraceableFor("africa", "anything at all here", mkJob({ description_md: "too short" }), null) === null)
-  const ownerSentence = "Reddit is on Nexa's curated employer registry — jobs arrive via the company's official ATS feed, a channel Nexa verified directly."
+  const ownerSentence = "Reddit is on Nexa's curated employer registry — this job arrived via the company's official ATS feed, a channel Nexa verified directly."
   check("v2: owner basis sentence counts as provenance, not a posting quote", quoteTraceableFor("company", ownerSentence, mkJob(), ownerSentence) === true)
   check("v2: salary evidence matching the feed range is ATS-metadata traceable", quoteTraceableFor("salary", "$182,000—$254,800", mkJob(), null) === true)
   check("v2: location-field corpus quote is traceable (adjudicator quotes the location verbatim)", quoteTraceableFor("africa", "Remote - United States", mkJob(), null) === true)
@@ -928,6 +941,25 @@ import {
   check("v2: case exists_and_renders", evidenceCaseFor(mkRec()) === "exists_and_renders")
   check("v2: case collection_failed (only blocked rows)", evidenceCaseFor(mkRec({ jai: mkJai({ africa_evidence: null, salary_evidence: null }), evidence: { rowCount: 2, kinds: ["page_html"], statuses: ["blocked"] } })) === "collection_failed", evidenceCaseFor(mkRec({ jai: mkJai({ africa_evidence: null, salary_evidence: null }), evidence: { rowCount: 2, kinds: ["page_html"], statuses: ["blocked"] } })))
   check("v2: case admission_rejected", evidenceCaseFor(mkRec({ queue: { status: "completed", error: "Rejected: region lock [africa_eligibility]" }, jai: null })) === "admission_rejected")
+
+  /* 15e0 · loop-guard 2 — the corpus adjudicator's own short location quote
+     must pass the checker (else requeue → re-mint → same quote → requeue ∞).
+     Live class: 7 stored rows (executive-assistant mongodb, deal-strategist/
+     business-value stripe …) whose location-field quotes sit under the
+     12-char quote affordance. */
+  {
+    const shortLocJob = mkJob({ location: "New York" })
+    const simBad = mkRec({ job: shortLocJob, jai: mkJai({ africa_eligibility: "unknown", africa_evidence: null }) })
+    const expAfrica = adjudicateAfricaEligibility({ title: shortLocJob.title, description_md: shortLocJob.description_md || "", location: shortLocJob.location })
+    check("v2 loop-guard2: fixture location really is restriction-locked", expAfrica.value === "restricted", expAfrica)
+    const simJai = mkJai({ africa_eligibility: "restricted", africa_evidence: expAfrica.evidence })
+    const flagsShort = contradictionFlags(shortLocJob, simJai, null)
+    check("v2 loop-guard2: corpus quote equality counts as provenance (no self-churn flag)", flagsShort.untraceableQuote === false, flagsShort)
+    const projected = evaluateRecord(projectRecord(mkRec({ job: shortLocJob, jai: simJai })))
+    check("v2 loop-guard2: short-location row converges in one pass",
+      projected.contradictions.filter((c) => c.kind === "quote_untraceable" || c.kind === "africa_vs_adjudicator").length === 0,
+      projected.contradictions)
+  }
 
   /* 15e · drain simulation converges (projection kills every deterministic contradiction) */
   {

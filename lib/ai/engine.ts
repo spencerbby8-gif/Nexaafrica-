@@ -131,7 +131,7 @@ export async function enrichJobWithAI(job: Job, opts?: { learning?: CompanyLearn
       const aiSuspicious = bundle?.company?.legitimacy === "suspicious" && bundle?.company?.evidence
         ? String(bundle.company.evidence)
         : null
-      const verdict = companyLegitimacyOwner({ company: job.company, suspiciousEvidence: aiSuspicious, learning: opts?.learning ?? null })
+      const verdict = companyLegitimacyOwner({ company: job.company, source: (job as any).source ?? null, sourceId: (job as any).source_id ?? null, suspiciousEvidence: aiSuspicious, learning: opts?.learning ?? null })
       return {
         value: verdict.value,
         confidence: verdict.confidence,
@@ -546,7 +546,7 @@ export async function processAIQueue(batchSize = 100) {
       const jobsMap = new Map<string, any>()
       for (const ids of chunkArray([...new Set(basePassRows.map((d) => d.job_id))], 100)) {
         if (ids.length === 0) continue
-        const { data } = await supabase.from("jobs").select("id, title, company, location, description_md, salary_range").in("id", ids)
+        const { data } = await supabase.from("jobs").select("id, title, company, location, description_md, salary_range, source, source_id").in("id", ids)
         for (const j of data || []) jobsMap.set((j as any).id, j)
       }
       const companyNames = [...new Set([...jobsMap.values()].map((j) => ((j as any).company || "").trim()).filter(Boolean))]

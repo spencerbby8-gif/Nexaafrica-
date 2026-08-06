@@ -50,13 +50,46 @@ const CURATED_COMPANIES = new Set(INGEST_SOURCES.map((s) => s.company.toLowerCas
 
 const PLACEHOLDER_NAMES = new Set(["name", "company", "company name", "unknown", "n/a", "none", "test", "example"])
 
-export function isCuratedEmployer(company: string | null | undefined): boolean {
+/**
+ * [V2 FINDING — channel-authenticated registry] Registry membership is a
+ * fact about the CHANNEL, not the name: the premise of the §17 registry is
+ * "jobs from these companies arrive ONLY through the company's official ATS
+ * feed, which Nexa curated and verified". A posting that names a registry
+ * company but arrives via a third-party board (live: Reddit via himalayas)
+ * did NOT arrive through the verified channel and must never inherit the
+ * verified verdict — name-matching alone would brand impersonation posts
+ * "Verified employer". Authentication: jobs.source === "<ats>:<slug>" (the
+ * ingest sourceLabel), or source_id beginning "<ats>:<slug>:" (legacy rows
+ * whose source column predates the label convention, e.g. plain
+ * "greenhouse" with source_id "greenhouse:reddit:7997020").
+ */
+export function isCuratedEmployer(
+  company: string | null | undefined,
+  source?: string | null,
+  sourceId?: string | null,
+): boolean {
   if (!company) return false
-  return CURATED_COMPANIES.has(company.toLowerCase().trim())
+  const name = company.toLowerCase().trim()
+  if (!CURATED_COMPANIES.has(name)) return false
+  const src = (source || "").toLowerCase()
+  const sid = (sourceId || "").toLowerCase()
+  for (const s of INGEST_SOURCES) {
+    if (s.company.toLowerCase() !== name) continue
+    const label = `${s.ats}:${s.slug}`
+    if (src === label) return true
+    if (sid && sid.startsWith(`${label}:`)) return true
+  }
+  return false
 }
 
 export function companyLegitimacyOwner(input: {
   company: string
+  /** The posting's ingest channel (jobs.source) — registry verification is a
+   *  channel-authenticated fact, never a name match. */
+  source?: string | null
+  /** The posting's source-native id (jobs.source_id) — authenticates legacy
+   *  rows whose source column predates the "<ats>:<slug>" label convention. */
+  sourceId?: string | null
   /** Posting-level scam evidence (e.g. per-job AI "suspicious" + quote). Optional. */
   suspiciousEvidence?: string | null
   /** Measured learning-plane aggregates for the company. Optional. */
@@ -66,14 +99,15 @@ export function companyLegitimacyOwner(input: {
 
   // 1. Canonical verified: the posting reached us through the company's own
   //    official, curated ATS feed. Channel-authenticated — fetch luck cannot
-  //    change it. Scam-pattern noise on a single posting cannot demote it
-  //    (posting-level scam signals are surfaced separately as trust signals).
-  if (isCuratedEmployer(name)) {
+  //    change it, and a third-party board naming the same company cannot
+  //    claim it (impersonation-safe by construction). Scam-pattern noise on
+  //    a single posting cannot demote it either.
+  if (isCuratedEmployer(name, input.source, input.sourceId)) {
     return {
       value: "verified",
       confidence: 95,
       basis: "curated_registry",
-      evidence: `${name} is on Nexa's curated employer registry — jobs arrive via the company's official ATS feed, a channel Nexa verified directly.`,
+      evidence: `${name} is on Nexa's curated employer registry — this job arrived via the company's official ATS feed, a channel Nexa verified directly.`,
     }
   }
 

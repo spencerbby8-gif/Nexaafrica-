@@ -51,7 +51,7 @@ import {
 import type { CompanyLearningInput } from "@/lib/company/legitimacy"
 
 const JOB_COLS =
-  "id, slug, title, company, location, description_md, source, is_remote, eligibility, is_open_to_africa, salary_min, salary_max, salary_currency, salary_range, trust_score, trust_signals, evidence_state, created_at"
+  "id, slug, title, company, location, description_md, source, source_id, is_remote, eligibility, is_open_to_africa, salary_min, salary_max, salary_currency, salary_range, trust_score, trust_signals, evidence_state, created_at"
 const JAI_COLS =
   "job_id, model_version, evidence_refs, africa_eligibility, africa_confidence, africa_evidence, remote_eligibility, remote_evidence, visa_sponsorship, visa_evidence, salary_transparency, salary_evidence, salary_min, salary_max, company_legitimacy, company_confidence, company_evidence, job_quality, job_quality_evidence"
 
@@ -136,6 +136,28 @@ function jobRow(ev: JobEvaluation) {
 
 export async function GET(request: NextRequest) {
   const sp = request.nextUrl.searchParams
+  const probe = (sp.get("probe") || "").trim()
+  if (probe) {
+    const sbp = createServiceClient()
+    const { data: pj } = await sbp.from("jobs").select(JOB_COLS).eq("slug", probe).eq("is_active", true).limit(1)
+    if (!pj || pj.length === 0) return NextResponse.json({ probe, error: "no active job with that slug" }, { status: 404 })
+    const recs = await assemble(sbp, [pj[0] as any])
+    const ev = evaluateRecord(recs[0])
+    return NextResponse.json({
+      probe,
+      lane: "preview-read-only",
+      job: { title: recs[0].job.title, company: recs[0].job.company, location: recs[0].job.location, source: recs[0].job.source, source_id: recs[0].job.source_id, eligibility: recs[0].job.eligibility },
+      expectedAfrica: ev.expectedAfrica,
+      expectedCompany: ev.expectedCompany,
+      stored: { africa: recs[0].jai?.africa_eligibility ?? null, africaEvidence: recs[0].jai?.africa_evidence ?? null, company: recs[0].jai?.company_legitimacy ?? null, companyEvidence: recs[0].jai?.company_evidence ?? null, model: ev.model, queue: ev.queueStatus },
+      quoteChecks: ev.quoteChecks,
+      flags: ev.flags,
+      repairClass: ev.repairClass,
+      contradictions: ev.contradictions,
+      projected: ev.contradictions.length ? evaluateRecord(projectRecord(recs[0], ev)).contradictions : [],
+    })
+  }
+
   const perSource = clampInt(sp.get("perSource"), 12, 1, 15)
   const cohortN = clampInt(sp.get("cohortN"), 20, 1, 30)
   const scanN = clampInt(sp.get("scan"), 1000, 100, 1000)
@@ -224,7 +246,7 @@ export async function GET(request: NextRequest) {
     const jobsMap = new Map<string, any>()
     for (const ids of chunk([...new Set(basePass.map((d: any) => d.job_id))], 100)) {
       if (ids.length === 0) continue
-      const { data } = await sb.from("jobs").select("id, title, company, location, description_md, salary_range").in("id", ids)
+      const { data } = await sb.from("jobs").select("id, title, company, location, description_md, salary_range, source, source_id").in("id", ids)
       for (const j of data || []) jobsMap.set((j as any).id, j)
     }
     const learningMap = new Map<string, CompanyLearningInput>()

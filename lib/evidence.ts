@@ -3,6 +3,7 @@ import {
   isCurrentIntelligence,
   type IntelligenceSignal,
 } from '@/lib/intelligence'
+import { renderEligibility } from '@/lib/geo/render-eligibility'
 
 /**
  * Job Evidence Layer V1
@@ -51,28 +52,97 @@ export interface EvidenceSignal {
 /* ------------------------------------------------------------------ */
 
 /**
- * Extract the sentence (trimmed to ~160 chars) containing the first match,
- * so the UI can quote the posting's own words as proof.
+ * [EVIDENCE V1.2] Rendering-plain text of a posting. Quotes are extracted
+ * from — and verified against — the text users actually read: markdown links
+ * collapse to their label (the href is not prose), images vanish, escapes and
+ * structural characters are removed, whitespace collapses. The old extractor
+ * sliced raw markdown and produced live-reported mangled "quotes" on every
+ * page: `"app) Worldwide"`, `"Hostaway(https://himalayas."`, `"…401(K) pl"`,
+ * `"…United Stat"` — mid-URL starts and mid-word truncations. That class is
+ * eliminated here structurally, not case-by-case.
  */
-function extractExcerpt(text: string, re: RegExp): string | undefined {
-  const m = re.exec(text)
-  if (!m) return undefined
-  const idx = m.index
-  // Expand to rough sentence boundaries around the match.
-  const start = Math.max(
-    text.lastIndexOf('.', idx),
-    text.lastIndexOf('\n', idx),
-    0,
-  )
-  let end = text.indexOf('.', idx + m[0].length)
-  if (end === -1) end = Math.min(text.length, idx + m[0].length + 80)
-  let sentence = text
-    .slice(start === 0 ? 0 : start + 1, end + 1)
-    .replace(/[#*`_>\[\]]/g, '')
+export function plainifyPosting(md: string): string {
+  return md
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ') // images
+    .replace(/\[([^\]]*)\]\(([^)]*)\)/g, '$1') // [label](url) -> label (href is not prose)
+    .replace(/https?:\/\/\S+/g, ' ') // bare URLs are not quotable prose
+    .replace(/\\([\\`*_[\]{}()#+\-.!><])/g, '$1') // markdown escapes (\*\* -> **)
+    .replace(/[#*`_>]/g, ' ') // structural characters
     .replace(/\s+/g, ' ')
     .trim()
-  if (sentence.length > 160) sentence = `${sentence.slice(0, 157)}...`
-  return sentence || undefined
+}
+
+/** Normalize for quote-traceability comparison (NOT for display). */
+function normalizeForMatch(s: string): string {
+  return plainifyPosting(s)
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2013\u2014]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+}
+
+const WORD_CHAR = /[\p{L}\p{N}]/u
+
+/**
+ * [EVIDENCE V1.2] Quote traceability guard. A quote may render ONLY when it
+ * is verifiably present, word-aligned, in the plain rendering of the source
+ * text. Stored quotes that are markdown fragments ("app/companies/micro1)
+ * provides…"), mid-word truncations ("…United Stat", "pl…"), or simply absent
+ * (the mali FP quote) fail this test and are dropped — the signal remains
+ * with its honest prose reason, the fabricated-looking quote does not.
+ */
+export function traceableQuote(quote: string | null | undefined, sourcePlainText: string): string | null {
+  if (!quote) return null
+  const cleaned = plainifyPosting(quote)
+  if (cleaned.length < 12) return null
+  const hay = normalizeForMatch(sourcePlainText)
+  const needle = normalizeForMatch(cleaned)
+  if (!needle || needle.length < 12) return null
+  const idx = hay.indexOf(needle)
+  if (idx === -1) return null
+  const before = idx === 0 ? '' : hay[idx - 1]
+  const after = idx + needle.length >= hay.length ? '' : hay[idx + needle.length]
+  if (before && WORD_CHAR.test(before)) return null // starts mid-word
+  if (after && WORD_CHAR.test(after)) return null // ends mid-word
+  return cleaned
+}
+
+/**
+ * Extract the sentence (trimmed at a word boundary to ~160 chars) containing
+ * the first match of `re` in ALREADY-PLAIN text. Word-aligned by
+ * construction; returns undefined rather than emitting a fragment.
+ */
+function extractExcerpt(plain: string, re: RegExp): string | undefined {
+  const m = re.exec(plain)
+  if (!m) return undefined
+  const idx = m.index
+  // Expand to sentence boundaries around the match.
+  let start = 0
+  for (let i = idx - 1; i >= 0; i--) {
+    const ch = plain[i]
+    if (ch === '.' || ch === '!' || ch === '?' || ch === '\n') { start = i + 1; break }
+  }
+  let end = plain.length
+  for (let i = idx + m[0].length; i < plain.length; i++) {
+    const ch = plain[i]
+    if (ch === '.' || ch === '!' || ch === '?') { end = i + 1; break }
+  }
+  let sentence = plain.slice(start, end).trim()
+  // Word-align: never begin or end inside a word.
+  if (start > 0 && WORD_CHAR.test(plain[start - 1]) && WORD_CHAR.test(sentence[0] ?? '')) {
+    const sp = sentence.search(/\s/)
+    if (sp === -1) return undefined
+    sentence = sentence.slice(sp + 1)
+  }
+  if (sentence.length > 160) {
+    let cut = sentence.slice(0, 157)
+    const lastSpace = cut.lastIndexOf(' ')
+    if (lastSpace > 60) cut = cut.slice(0, lastSpace)
+    sentence = `${cut.replace(/[\s,;:–—-]+$/, '')}…`
+  }
+  return sentence.length >= 12 ? sentence : undefined
 }
 
 /** Timezone-requirement language (same family used by the Phase 14 audit). */
@@ -130,13 +200,17 @@ const EOR_GENERIC_RE =
  * below so rows ingested before Phase 16 (empty `intelligence`) keep working;
  * those overlap signals are de-duplicated by id in the panel.
  */
-function fromPersistedIntelligence(job: Job): EvidenceSignal[] {
+function fromPersistedIntelligence(job: Job, plain: string): EvidenceSignal[] {
   if (!isCurrentIntelligence(job.intelligence)) return []
   const out: EvidenceSignal[] = []
   const seenAsync = new Set<string>()
   const seenBenefit = new Set<string>()
 
   for (const sig of job.intelligence.signals as IntelligenceSignal[]) {
+    // [V1.2] Persisted excerpts render only when traceable word-aligned to
+    // the current posting text. Untraceable fragments (live: markdown href
+    // slices stored as benefit "quotes") are dropped, not shown.
+    const excerpt = traceableQuote(sig.evidence ?? null, plain) ?? undefined
     if (sig.type === 'async_culture' && sig.value && !seenAsync.has(sig.value)) {
       seenAsync.add(sig.value)
       out.push({
@@ -145,7 +219,7 @@ function fromPersistedIntelligence(job: Job): EvidenceSignal[] {
         label: sig.value,
         reason:
           'The posting describes asynchronous or flexible working culture, which typically eases collaboration across timezones.',
-        excerpt: sig.evidence ?? undefined,
+        excerpt,
         source: 'posting-text',
       })
     }
@@ -156,7 +230,7 @@ function fromPersistedIntelligence(job: Job): EvidenceSignal[] {
         tone: 'neutral',
         label: sig.value,
         reason: `The posting lists ${sig.value.toLowerCase()} as a benefit.`,
-        excerpt: sig.evidence ?? undefined,
+        excerpt,
         source: 'posting-text',
       })
     }
@@ -164,32 +238,37 @@ function fromPersistedIntelligence(job: Job): EvidenceSignal[] {
   return out
 }
 
-export function deriveEvidence(job: Job): EvidenceSignal[] {
+export function deriveEvidence(job: Job, storedAITier?: string | null): EvidenceSignal[] {
   const signals: EvidenceSignal[] = []
   const text = job.description_md ?? ''
-  const haystack = `${text} ${job.location ?? ''}`
+  // [V1.2] All matching and all quoting run on the plain rendering — the
+  // same words the user reads; markdown hrefs and escapes cannot leak into
+  // a "verbatim" quote again.
+  const haystack = plainifyPosting(`${text}\n${job.location ?? ''}`)
 
-  /* -- Eligibility (Phase 14 classification — the anchor signal) ----- */
-  if (job.eligibility === 'explicit') {
+  /* -- Eligibility (the arbitration plane — the anchor signal) -------- */
+  // [V1.2] The anchor tier is the corpus-verified render tier, NOT the raw
+  // stored tier: a stale stored verdict can no longer contradict the chip,
+  // the hub, and this panel on the same page over the same posting text.
+  const eligibility = renderEligibility(job, storedAITier)
+  if (eligibility.tier === 'explicit') {
     signals.push({
       id: 'eligibility-explicit',
       tone: 'positive',
       label: 'Explicitly open to Africa',
       reason:
         'The posting names Africa or an African country as an eligible applicant location.',
-      excerpt: extractExcerpt(
-        haystack,
-        /\b(africa|nigeria|kenya|south africa|ghana|egypt|morocco|ethiopia|tanzania|uganda|rwanda|senegal)\b/i,
-      ),
+      excerpt: eligibility.quote ?? undefined,
       source: 'classification',
     })
-  } else if (job.eligibility === 'likely') {
+  } else if (eligibility.tier === 'likely') {
     signals.push({
       id: 'eligibility-likely',
-      tone: 'positive',
-      label: 'Likely open',
-      reason:
-        'Advertised as globally remote with no geographic restriction detected. Africa is not named, so this is an informed read — not a guarantee.',
+      tone: eligibility.corroborated ? 'positive' : 'neutral',
+      label: eligibility.corroborated ? 'Likely open' : 'Likely open · unverified',
+      reason: eligibility.corroborated
+        ? 'Advertised as globally remote with no geographic restriction detected. Africa is not named, so this is an informed read — not a guarantee.'
+        : 'A stored read suggests global hiring, but the current posting text does not confirm it. Awaiting verification — not a guarantee.',
       source: 'classification',
     })
     signals.push({
@@ -200,7 +279,7 @@ export function deriveEvidence(job: Job): EvidenceSignal[] {
         'Nexa scanned the posting for region, residency, and work-authorization restrictions and found none.',
       source: 'posting-text',
     })
-  } else if (job.eligibility === 'restricted') {
+  } else if (eligibility.tier === 'restricted') {
     signals.push({
       id: 'geo-restrictions',
       tone: 'caution',
@@ -224,7 +303,7 @@ export function deriveEvidence(job: Job): EvidenceSignal[] {
   }
 
   /* -- Scope: worldwide / EMEA -------------------------------------- */
-  if (job.eligibility !== 'restricted') {
+  if (eligibility.tier !== 'restricted') {
     if (WORLDWIDE_RE.test(haystack)) {
       signals.push({
         id: 'scope-worldwide',
@@ -284,7 +363,7 @@ export function deriveEvidence(job: Job): EvidenceSignal[] {
     })
   }
 
-  if (job.eligibility !== 'restricted') {
+  if (eligibility.tier !== 'restricted') {
     const authExcerpt = extractExcerpt(haystack, WORK_AUTH_RE)
     if (authExcerpt) {
       signals.push({
@@ -350,7 +429,7 @@ export function deriveEvidence(job: Job): EvidenceSignal[] {
 
   /* -- Async culture + benefits (from persisted Phase 16 store) ------ */
   const seen = new Set(signals.map((s) => s.id))
-  for (const s of fromPersistedIntelligence(job)) {
+  for (const s of fromPersistedIntelligence(job, haystack)) {
     if (!seen.has(s.id)) {
       seen.add(s.id)
       signals.push(s)

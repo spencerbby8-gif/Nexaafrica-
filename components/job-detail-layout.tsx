@@ -12,6 +12,7 @@ import { TrustCard } from '@/components/trust/trust-card'
 import { ReportButton } from '@/components/trust/report-button'
 import { calculateTrustScore, correctedTrustSignals, unifiedTrustScore, unifiedCapNote } from '@/lib/trust/engine'
 import { crawlerStateLabel } from '@/lib/ai/evidence'
+import { renderEligibility } from '@/lib/geo/render-eligibility'
 import { employmentLabel, isFresh, postedLabel } from '@/lib/format'
 import { cleanDescription, getCleanMarkdownForRender } from '@/lib/cleanDescription'
 import type { Job } from '@/lib/types'
@@ -352,7 +353,13 @@ export function JobDetailLayout({ companyJobCount,
             // Unified: listing legitimacy blended with AI opportunity-evidence.
             const aiConf = (aiIntelligence as any)?.overall_confidence ?? null
             const trust = { ...(detTrust as any), score: unifiedTrustScore(job, aiIntelligence as any) }
-            const capNote = unifiedCapNote((aiIntelligence as any)?.africa_eligibility ?? null, (job as any).evidence_state ?? null)
+            // [EVIDENCE V1.2] The cap note explains the SAME arbitrated tier
+            // the score and chips use — never the bare stored verdict.
+            let arbiterTier: string | null = (aiIntelligence as any)?.africa_eligibility ?? null
+            try {
+              arbiterTier = renderEligibility(job as any, (aiIntelligence as any)?.africa_eligibility ?? null).tier
+            } catch {}
+            const capNote = unifiedCapNote(arbiterTier, (job as any).evidence_state ?? null)
             return (
               <>
                 <TrustCard trust={trust as any} legitimacyScore={detTrust.score} legitimacyRaw={typeof legitimacyRaw === 'number' ? legitimacyRaw : null} aiConfidence={aiConf} capNote={capNote} />

@@ -2,6 +2,9 @@ import { ShieldCheck, Globe, Banknote, Building2, Wrench, GraduationCap, Clock }
 import type { JobAIIntelligenceRow } from '@/lib/ai/queries'
 import type { Job } from '@/lib/types'
 import { pipelineState } from '@/lib/ai/pipelineState'
+import { renderEligibility, type RenderEligibility } from '@/lib/geo/render-eligibility'
+import { plainifyPosting, traceableQuote } from '@/lib/evidence'
+import { asSkillList } from '@/lib/ai/normalize'
 
 interface Props {
   intelligence: JobAIIntelligenceRow | null | undefined
@@ -36,38 +39,24 @@ function intelligenceState(row: any | null | undefined, queueStatus?: string | n
       return { status: "pending", label: "Pending", tone: "amber" }
   }
 }
-function africaFitLabel(elig: string | null | undefined, fallbackElig?: string | null): { label: string; tone: 'positive' | 'caution' | 'neutral' } {
-  // JAI-backed verdicts render as verified claims.
-  if (elig) {
-    switch (elig) {
-      case 'explicit':
-        return { label: 'Explicitly open to Africa', tone: 'positive' }
-      case 'likely':
-        return { label: 'Likely open to Africa', tone: 'caution' }
-      case 'restricted':
-        return { label: 'Restricted – may require US/EU residency', tone: 'caution' }
-      case 'unknown':
-        return { label: 'Africa eligibility unknown', tone: 'neutral' }
-      default:
-        return { label: 'Intelligence pending', tone: 'neutral' }
-    }
-  }
-  // [TRUTH LAYER v1] Ingest-tier fallback (queued/rule-based rows with no AI
-  // verdict) is a heuristic read, not a verified claim. P0-4: unknown/likely
-  // must never assert affirmative Africa openness — render as unverified.
-  // 'restricted' stays shown (protective); 'explicit' requires Africa actually
-  // named in the posting and matches the card chip.
-  switch (fallbackElig) {
+function africaFitLabel(re: RenderEligibility): { label: string; tone: 'positive' | 'caution' | 'neutral' } {
+  // [EVIDENCE V1.2] ONE evidence plane: the corpus re-reads the posting at
+  // render time. A stored claim (AI verdict or ingest tier) renders as a
+  // verified claim ONLY when the corpus corroborates it from the posting we
+  // hold today. Stale stored verdicts — the mali FP "explicit", marketing-
+  // text "likely" — degrade to the honest unverified class instead of
+  // contradicting the chip, the hub, and this panel on the same page.
+  switch (re.tier) {
     case 'explicit':
-      return { label: 'Open to Africa', tone: 'positive' }
+      return { label: 'Explicitly open to Africa', tone: 'positive' }
     case 'likely':
-      return { label: 'Likely open · unverified', tone: 'neutral' }
+      return re.corroborated
+        ? { label: 'Likely open to Africa', tone: 'caution' }
+        : { label: 'Likely open · unverified', tone: 'neutral' }
     case 'restricted':
       return { label: 'Restricted – may require US/EU residency', tone: 'caution' }
-    case 'unknown':
-      return { label: 'Africa eligibility unknown', tone: 'neutral' }
     default:
-      return { label: 'Intelligence pending', tone: 'neutral' }
+      return { label: 'Africa eligibility unknown', tone: 'neutral' }
   }
 }
 
@@ -155,9 +144,15 @@ function expLabel(level: string | null | undefined, title?: string | null) {
   return 'Experience unknown'
 }
 
-function EvidenceQuote({ text, url, allowLink = true }: { text?: string | null; url?: string | null; allowLink?: boolean }) {
+function EvidenceQuote({ text, url, allowLink = true, plain }: { text?: string | null; url?: string | null; allowLink?: boolean; plain?: string | null }) {
   if (!text) return null
-  const cleaned = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220)
+  // [EVIDENCE V1.2] No quote renders untested: it must be traceable,
+  // word-aligned, to the posting's plain rendering. This kills stored
+  // markdown fragments ("…app/companies/x) provides…"), mid-word slices
+  // ("ues to ensure…", "…United Stat"), and escaped-garbage "quotes"
+  // ("\\*\\*NOTE…") across every surface at once.
+  if (plain == null) return null
+  const cleaned = traceableQuote(text, plain)
   if (!cleaned) return null
   return (
     <blockquote className="mt-1.5 break-words border-l-2 border-border pl-2.5 text-[11.5px] italic leading-relaxed text-foreground/70">
@@ -186,14 +181,20 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
   const hasAI = !!intelligence
   const state = intelligenceState(intelligence, (job as any)?._queueStatus, (job as any)?._queueError)
   const degraded = hasAI && state.status === 'degraded' // regex/legacy fallback rows — not real AI output
-  const africa = africaFitLabel(intelligence?.africa_eligibility, job?.eligibility)
+  const africaRe = renderEligibility(job ?? {}, intelligence?.africa_eligibility ?? null)
+  const plain = job ? plainifyPosting(`${job.description_md ?? ''}\n${job.location ?? ''}`) : null
+  const africa = africaFitLabel(africaRe)
   const remote = remoteLabel(intelligence?.remote_eligibility, job?.is_remote, intelligence?.remote_evidence)
   const salary = salaryTruthLabel(intelligence, job || null)
   const company = companyLabel(intelligence?.company_legitimacy, job?.company_logo ? true : false)
   const exp = expLabel(intelligence?.experience_level, job?.title)
   const overall = intelligence?.overall_confidence ?? (hasAI ? 0 : 0)
   const isHigh = overall >= 70
-  const requiredSkills = (intelligence?.required_skills || job?.tags || []).slice(0, 4)
+  // [V1.2] Deduped at render (kills stored "Finance, Finance"); never JSON.
+  const requiredSkills = asSkillList(intelligence?.required_skills ?? job?.tags ?? []).slice(0, 3)
+  // [V1.2] A stored confidence number only attaches to a corroborated claim —
+  // "Likely open · unverified • 75%" would be a contradiction.
+  const africaConf = africaRe.corroborated ? intelligence?.africa_confidence : null
 
   if (!hasAI || degraded) {
     const badgeColor = state.status === 'failed' ? 'border-red-500/20 bg-red-500/10 text-red-600' : 'border-amber-500/20 bg-amber-500/10 text-amber-600'
@@ -239,7 +240,7 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
         </span>
       </div>
       <ul className="mt-2 grid gap-1.5 text-[11px] leading-snug">
-        <li className="flex gap-1.5"><Globe className="mt-[1px] h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /><span className={africa.tone === 'positive' ? 'text-foreground font-medium' : 'text-muted-foreground'}>{africa.label}{intelligence.africa_confidence ? ` • ${intelligence.africa_confidence}%` : ''}</span></li>
+        <li className="flex gap-1.5"><Globe className="mt-[1px] h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /><span className={africa.tone === 'positive' ? 'text-foreground font-medium' : 'text-muted-foreground'}>{africa.label}{africaConf ? ` • ${africaConf}%` : ''}</span></li>
         <li className="flex gap-1.5"><Clock className="mt-[1px] h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /><span className="text-muted-foreground">{remote}{intelligence.timezone_requirements ? ` • ${intelligence.timezone_requirements}` : ''}{intelligence.remote_confidence ? ` • ${intelligence.remote_confidence}%` : ''}</span></li>
         <li className="flex gap-1.5"><Banknote className="mt-[1px] h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /><span className="text-muted-foreground">{salary.label}{intelligence.salary_confidence ? ` • ${intelligence.salary_confidence}%` : ''}</span></li>
         <li className="flex gap-1.5"><Building2 className="mt-[1px] h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /><span className={company.tone === 'positive' ? 'text-foreground' : 'text-muted-foreground'}>{company.label}{intelligence.company_confidence ? ` • ${intelligence.company_confidence}%` : ''}</span></li>
@@ -253,7 +254,7 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
       {(intelligence.africa_evidence || intelligence.remote_evidence || intelligence.salary_evidence) && (
         <div className="mt-2">
           <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70">Evidence</p>
-          <EvidenceQuote text={intelligence.africa_evidence || intelligence.remote_evidence || intelligence.salary_evidence} url={intelligence.africa_source_urls?.[0] || intelligence.evidence_urls?.[0]} allowLink={false} />
+          <EvidenceQuote text={intelligence.africa_evidence || intelligence.remote_evidence || intelligence.salary_evidence} url={intelligence.africa_source_urls?.[0] || intelligence.evidence_urls?.[0]} allowLink={false} plain={plain} />
         </div>
       )}
     </div>
@@ -277,7 +278,9 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons }
   }
 
   const hasAI = !!intelligence
-  const africa = africaFitLabel(intelligence?.africa_eligibility, job?.eligibility)
+  const africaRe = renderEligibility(job ?? {}, intelligence?.africa_eligibility ?? null)
+  const plain = job ? plainifyPosting(`${job.description_md ?? ''}\n${job.location ?? ''}`) : null
+  const africa = africaFitLabel(africaRe)
   const salary = salaryTruthLabel(intelligence, job || null)
   const company = companyLabel(intelligence?.company_legitimacy, job?.company_logo ? true : false)
   const overallConf = intelligence?.overall_confidence ?? 0
@@ -297,12 +300,12 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons }
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         <div className="rounded-md border border-border/60 bg-secondary/30 p-3">
           <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"><Globe className="h-3 w-3" aria-hidden /> Africa Fit</p>
-          <p className={`mt-1.5 text-sm font-medium ${africa.tone === 'positive' ? 'text-foreground' : africa.tone === 'caution' && (intelligence?.africa_eligibility === 'restricted' || job?.eligibility === 'restricted') ? 'text-amber-700 dark:text-amber-400' : 'text-foreground/80'}`}>{africa.label}</p>
+          <p className={`mt-1.5 text-sm font-medium ${africa.tone === 'positive' ? 'text-foreground' : africa.tone === 'caution' && africaRe.tier === 'restricted' ? 'text-amber-700 dark:text-amber-400' : 'text-foreground/80'}`}>{africa.label}</p>
           {intelligence?.africa_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.africa_confidence}% confidence</p>}
           {intelligence?.country_restrictions && intelligence.country_restrictions.length > 0 && <p className="mt-1 text-[11px] text-muted-foreground">Restrictions: {intelligence.country_restrictions.join(', ')}</p>}
           {intelligence?.visa_sponsorship && intelligence.visa_sponsorship !== 'unknown' && <p className="mt-1 text-[11px] text-muted-foreground">Visa: {intelligence.visa_sponsorship.replace('_', ' ')}</p>}
-          <EvidenceQuote text={intelligence?.africa_evidence} url={intelligence?.africa_source_urls?.[0]} />
-          {!hasAI && job && <p className="mt-1 text-[11px] text-muted-foreground">Source: job eligibility = {job.eligibility}</p>}
+          <EvidenceQuote text={intelligence?.africa_evidence} url={intelligence?.africa_source_urls?.[0]} plain={plain} />
+          {!hasAI && job && <p className="mt-1 text-[11px] text-muted-foreground">Inferred from the feed — not yet verified by Nexa Intelligence.</p>}
         </div>
 
         <div className="rounded-md border border-border/60 bg-secondary/30 p-3">
@@ -310,7 +313,7 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons }
           <p className="mt-1.5 text-sm font-medium text-foreground/90">{remoteLabel(intelligence?.remote_eligibility, job?.is_remote, intelligence?.remote_evidence)}</p>
           {intelligence?.timezone_requirements && <p className="mt-1 text-[11px] text-muted-foreground">Timezone: {intelligence.timezone_requirements}</p>}
           {intelligence?.remote_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.remote_confidence}% confidence</p>}
-          <EvidenceQuote text={intelligence?.remote_evidence} url={intelligence?.evidence_urls?.[0]} />
+          <EvidenceQuote text={intelligence?.remote_evidence} url={intelligence?.evidence_urls?.[0]} plain={plain} />
         </div>
 
         <div className="rounded-md border border-border/60 bg-secondary/30 p-3">
@@ -321,7 +324,7 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons }
           {intelligence?.salary_transparency && <p className="mt-1 text-[11px] text-muted-foreground">Transparency: {intelligence.salary_transparency}{intelligence.salary_is_estimated ? ' (estimated)' : ''}</p>}
           {intelligence?.salary_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.salary_confidence}% confidence</p>}
           {!hasAI && job?.salary_range && <p className="mt-1 text-[11px] text-muted-foreground">Fallback from feed: {job.salary_range}</p>}
-          <EvidenceQuote text={intelligence?.salary_evidence} url={intelligence?.evidence_urls?.[0]} />
+          <EvidenceQuote text={intelligence?.salary_evidence} url={intelligence?.evidence_urls?.[0]} plain={plain} />
         </div>
 
         <div className="rounded-md border border-border/60 bg-secondary/30 p-3">
@@ -330,7 +333,7 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons }
           {intelligence?.company_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.company_confidence}% confidence</p>}
           {intelligence?.job_quality && <p className="mt-1 text-[11px] text-muted-foreground">Job quality: {intelligence.job_quality} {intelligence.job_quality_confidence ? `(${intelligence.job_quality_confidence}%)` : ''}</p>}
           {intelligence?.application_difficulty && <p className="mt-1 text-[11px] text-muted-foreground">Application: {intelligence.application_difficulty} • Urgency: {intelligence.hiring_urgency || 'unknown'}</p>}
-          <EvidenceQuote text={intelligence?.company_evidence || intelligence?.job_quality_evidence} url={intelligence?.evidence_urls?.[0]} />
+          <EvidenceQuote text={intelligence?.company_evidence || intelligence?.job_quality_evidence} url={intelligence?.evidence_urls?.[0]} plain={plain} />
         </div>
 
         <div className="rounded-md border border-border/60 bg-secondary/30 p-3">
@@ -341,13 +344,27 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons }
 
         <div className="rounded-md border border-border/60 bg-secondary/30 p-3">
           <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"><Wrench className="h-3 w-3" aria-hidden /> Skill Match</p>
-          {(intelligence?.required_skills && intelligence.required_skills.length > 0) || (job?.tags && job.tags.length > 0) ? (
-            <p className="mt-1.5 text-[12px] leading-relaxed text-foreground/80">Required: {(intelligence?.required_skills && intelligence.required_skills.length > 0 ? intelligence.required_skills : job?.tags || []).join(', ')}</p>
-          ) : (
-            <p className="mt-1.5 text-[12px] text-muted-foreground">Required skills: unknown – no evidence in posting</p>
-          )}
-          {intelligence?.transferable_skills && intelligence.transferable_skills.length > 0 && <p className="mt-1 text-[11px] text-muted-foreground">Transferable: {intelligence.transferable_skills.join(', ')}</p>}
-          {intelligence?.missing_skills && intelligence.missing_skills.length > 0 && <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">Potential gaps: {intelligence.missing_skills.join(', ')}</p>}
+          {(() => {
+            const aiSkills = asSkillList(intelligence?.required_skills ?? [])
+            const feedTags = aiSkills.length === 0 ? asSkillList(job?.tags ?? [], 8) : []
+            const transferable = asSkillList(intelligence?.transferable_skills ?? [])
+            const gaps = asSkillList(intelligence?.missing_skills ?? [])
+            return (
+              <>
+                {aiSkills.length > 0 && (
+                  <p className="mt-1.5 text-[12px] leading-relaxed text-foreground/80">Required: {aiSkills.join(', ')}</p>
+                )}
+                {aiSkills.length === 0 && feedTags.length > 0 && (
+                  <p className="mt-1.5 text-[12px] leading-relaxed text-foreground/80">Tagged in the feed: {feedTags.join(', ')}</p>
+                )}
+                {aiSkills.length === 0 && feedTags.length === 0 && (
+                  <p className="mt-1.5 text-[12px] text-muted-foreground">Required skills: unknown – no evidence in posting</p>
+                )}
+                {transferable.length > 0 && <p className="mt-1 text-[11px] text-muted-foreground">Transferable: {transferable.join(', ')}</p>}
+                {gaps.length > 0 && <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">Potential gaps: {gaps.join(', ')}</p>}
+              </>
+            )
+          })()}
         </div>
       </div>
 

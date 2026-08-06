@@ -252,16 +252,30 @@ function mkJob(over: Record<string, any>): any {
 
 // 7c · Explicit Africa is NOT capped and outranks unknown with same evidence
 {
-  const job = mkJob({})
-  const unknown63 = unifiedTrustScore(job, { overall_confidence: 63, africa_eligibility: "unknown" } as any)
+  // [V1.2] "explicit" is only meaningful when Africa is traceably named in
+  // the posting held today — genuine explicit evidence, not a stored claim.
+  const job = mkJob({ description_md: "A real role. Open to applicants in Nigeria, Ghana, and worldwide. Run operations well." })
+  // unknown = stored unknown AND no Africa evidence in the posting held today.
+  const silentJob = mkJob({})
+  const unknown63 = unifiedTrustScore(silentJob, { overall_confidence: 63, africa_eligibility: "unknown" } as any)
   const explicit63 = unifiedTrustScore(job, { overall_confidence: 63, africa_eligibility: "explicit" } as any)
+  check("corpus-visible Africa evidence outranks a stale stored unknown", explicit63 > unknown63, { explicit63, unknown63 })
   check("explicit can exceed the cap (mod-high land)", explicit63 > 59, explicit63)
   check("explicit outranks unknown at equal evidence", explicit63 > unknown63, { explicit63, unknown63 })
 }
 
+// 7c-bis · [V1.2] mali-class regression: a stored "explicit" the corpus
+// cannot find in the current posting caps like unverified — fabricated
+// explicit claims can never outrank the evidence plane again.
+{
+  const maliRow = mkJob({ description_md: "Use data analytics, and AI to improve risk assessment, scoping, testing, continuous monitoring, and reporting, including identifying anomalies, control weaknesses, and emerging risks." })
+  const stored = unifiedTrustScore(maliRow, { overall_confidence: 75, africa_eligibility: "explicit" } as any)
+  check("stored explicit with no Africa in posting is capped ≤ 59 (mali class)", stored <= 59, stored)
+}
+
 // 7d · blocked evidence_state caps even strong evidence
 {
-  const job = mkJob({ evidence_state: "blocked" })
+  const job = mkJob({ evidence_state: "blocked", description_md: "Open to applicants across Africa. Run operations well." })
   const s = unifiedTrustScore(job, { overall_confidence: 95, africa_eligibility: "explicit" } as any)
   check("blocked explicit role capped ≤ 59", s <= 59, s)
 }
@@ -376,4 +390,82 @@ import {
   check("identical hash is a duplicate", sameContentHash("abc123", "abc123"))
   check("changed content is not a duplicate", !sameContentHash("abc123", "def456"))
   check("missing hashes never dedupe away evidence", !sameContentHash(null, "abc123") && !sameContentHash("abc123", null) && !sameContentHash(null, null))
+}
+
+console.log("9 · Evidence Intelligence V1.2 — quote integrity + eligibility arbitration")
+
+import { plainifyPosting, traceableQuote, deriveEvidence } from "../lib/evidence"
+import { renderEligibility, eligibleForAfricaSurfaces, excludeFromCountryHub } from "../lib/geo/render-eligibility"
+
+// 9a · plain rendering — hrefs and escapes can never leak into prose
+{
+  const md = "Trusted by 20,000+ property managers worldwide, [Hostaway](https://himalayas.app/companies/hostaway) is an industry leading platform. \\*\\*NOTE: fully remote.\\*\\*"
+  const plain = plainifyPosting(md)
+  check("links collapse to their label", plain.includes("Hostaway is an industry"), plain)
+  check("no URL survives in plain text", !/https?/.test(plain), plain)
+  check("markdown escapes resolve and emphasis stays out of prose", plain.includes("NOTE: fully remote.") && !plain.includes("\\") && !plain.includes("*"), plain)
+}
+
+// 9b · live-case quotes: the mangled classes die, the genuine ones survive
+{
+  // Real posting shape (Hostaway, live 2026-08-05): URL-adjacent prose.
+  const hostawayPlain = plainifyPosting("Trusted by 20,000+ property managers worldwide, [Hostaway](https://himalayas.app/companies/hostaway) is an industry leading, AI-powered vacation rental management platform.")
+  const sig = deriveEvidence({ description_md: "Trusted by 20,000+ property managers worldwide, [Hostaway](https://himalayas.app/companies/hostaway) is an industry leading, AI-powered vacation rental management platform.", location: "Australia, Canada, Ghana, India, Ireland, New Zealand, Nigeria, South Africa, United Kingdom, United States", eligibility: "explicit", is_remote: true } as any)
+  const worldwide = sig.find((x: any) => x.id === "scope-worldwide")
+  check("worldwide excerpt has no href contamination", worldwide?.excerpt ? !/https?|\(|\[/.test(worldwide.excerpt) : false, worldwide?.excerpt)
+  const elig = sig.find((x: any) => x.id === "eligibility-explicit")
+  check("explicit quote is word-aligned (no 'app)' prefix)", !!elig?.excerpt && !elig.excerpt.startsWith("app)"), elig?.excerpt)
+  check("explicit quote names an African country", !!elig?.excerpt && /Nigeria|Ghana|South Africa/.test(elig.excerpt), elig?.excerpt)
+  check("quotes never slice mid-word", sig.every((x: any) => !x.excerpt || !/\p{L}\p{N}…$|^\p{L}\p{N}*app\)/u.test(x.excerpt)), sig.map((x: any) => x.excerpt).filter(Boolean))
+  check("traceability drops href fragment quotes", traceableQuote("app/companies/micro1) provides a comprehensive benefits package, including up to 100% reimbursement for health-insurance premiums, paid time off, a 401(K) pl", hostawayPlain) === null)
+  check("traceability keeps a genuine verbatim quote", traceableQuote("Trusted by 20,000+ property managers worldwide, Hostaway is an industry leading, AI-powered vacation rental management platform.", hostawayPlain) !== null)
+  check("traceability drops mid-word-start fragments (mali class)", traceableQuote("d AI to improve risk assessment, audit scoping, testing", plainifyPosting("Use data analytics, and AI to improve risk assessment, scoping, testing, continuous monitoring, and reporting, including identifying anomalies, control weaknesses, and emerging risks.")) === null)
+  check("escaped stored quote still verifies after unescape", traceableQuote("\\*\\*NOTE: fully remote.\\*\\*", plainifyPosting("\\*\\*NOTE: fully remote.\\*\\* Apply now.")) !== null)
+  check("short fragments are not quotes", traceableQuote("app) Worldwide", hostawayPlain) === null)
+}
+
+// 9c · arbitration matrix — every case from the live audit
+{
+  // Positive control: Africa named in location -> explicit, regardless of stored.
+  const hostaway = { description_md: "**NOTE: FULLY remote, must be within EMEA to collaborate.** Trusted by 20,000+ property managers worldwide.", location: "Australia, Canada, Ghana, India, Ireland, New Zealand, Nigeria, South Africa, United Kingdom, United States", eligibility: "likely" as const }
+  const ha = renderEligibility(hostaway, "likely")
+  check("Africa named in location is explicit (positive control)", ha.tier === "explicit", ha)
+  // Oben Romania (live): stale stored likely CANNOT outrank Romania lock.
+  const oben = { description_md: "Job details Job Location: Remote (Anywhere Romania) Effort Schedule:8 Hours/Day Business Hours: EET Timeframe Language: English, Romanian Customers Background: (EU, WorldWide) Client Facing Role: Yes Project Team Size:+10 members.", location: "Romania", eligibility: "likely" as const, is_open_to_africa: true }
+  const ob = renderEligibility(oben, null)
+  check("Romania-locked role renders restricted despite stored likely", ob.tier === "restricted", ob)
+  check("Romania-locked role excluded from Africa intent surfaces", !eligibleForAfricaSurfaces(oben, null))
+  check("Romania-locked role excluded from country hubs", excludeFromCountryHub(oben, null))
+  // mali FP (live audit-leader): stored explicit, no Africa in posting -> NOT explicit.
+  const mali = { description_md: "This role is based in San Francisco, CA. We use a hybrid work model of 3 days in the office per week and offer relocation assistance to new employees.", location: "San Francisco", eligibility: "likely" as const }
+  const ma = renderEligibility(mali, "explicit")
+  check("stored explicit with no Africa in posting is NOT rendered explicit", ma.tier !== "explicit", ma)
+  check("mali-class row is not corroborated", ma.corroborated === false)
+  // MindPlus (live): marketing worldwide is a dead zone; old stored likely degrades honestly.
+  const mind = { description_md: "The organization partners with businesses worldwide to deliver innovative, data-driven solutions that enhance operational efficiency and business growth.", location: "Sri Lanka", eligibility: "likely" as const }
+  const mi = renderEligibility(mind, null)
+  check("marketing worldwide is not a verified likely", mi.corroborated === false, mi)
+  check("marketing worldwide does not qualify for Africa intent surfaces", !eligibleForAfricaSurfaces(mind, null))
+  // Genuine worldwide hiring (corpus likely) + stored likely -> corroborated claim.
+  const genuine = { description_md: "This is a fully remote role. Work from anywhere in the world. We hire globally across all time zones.", location: "Worldwide", eligibility: "likely" as const }
+  const ge = renderEligibility(genuine, "likely")
+  check("genuine worldwide hiring corroborates stored likely", ge.tier === "likely" && ge.corroborated === true, ge)
+  check("genuine worldwide hiring qualifies for Africa surfaces", eligibleForAfricaSurfaces(genuine, "likely"))
+  // Feed region lock suppresses affirmative claims even when corpus reads likely.
+  const locked = { ...genuine, is_open_to_africa: false as const }
+  check("feed region lock still suppresses affirmative tier", renderEligibility(locked, "likely").tier === "unknown")
+}
+
+// 9d · skills rendered deduped, never JSON, never tags-as-'Required'
+{
+  check("'Finance, Finance' dedupes at render boundary", asSkillList(["Finance", "Finance"]).length === 1, asSkillList(["Finance", "Finance"]))
+  check("stored skill-objects never render as JSON", asSkillList([{ skill: "onboarding at scale", evidence: "x" }] as any)[0] === "onboarding at scale", asSkillList([{ skill: "onboarding at scale", evidence: "x" }] as any))
+}
+
+// 9e · one plane: chip, panel, and trust read the same arbitrated tier
+{
+  const corpus = renderEligibility({ description_md: "Open to applicants in Nigeria and Kenya. Fully remote.", location: "Worldwide", eligibility: "unknown" as const }, "unknown")
+  check("corpus-visible Africa beats stored unknown on every surface", corpus.tier === "explicit", corpus)
+  const score = unifiedTrustScore(mkJob({ description_md: "Open to applicants in Nigeria and Kenya. Fully remote.", eligibility: "unknown" }), { overall_confidence: 75, africa_eligibility: "unknown" } as any)
+  check("trust plane follows the same arbitration (no cap on real evidence)", score > 59, score)
 }

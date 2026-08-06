@@ -9,6 +9,7 @@ import { FAQ } from '@/components/faq'
 import { breadcrumbJsonLd, itemListJsonLd, jsonLdString } from '@/lib/seo'
 import { COUNTRIES, getCountry } from '@/lib/countries'
 import { getCategories, getJobsWithAI, countJobs } from '@/lib/queries'
+import { excludeFromCountryHub } from '@/lib/geo/render-eligibility'
 
 export const revalidate = 600
 
@@ -54,11 +55,19 @@ export default async function CountryHubPage({
       ? { openToAfrica: true, limit: 60 }
       : { country: c.name, limit: 60 }
 
-  const [jobs, total, categories] = await Promise.all([
+  const [rawJobs, total, categories] = await Promise.all([
     getJobsWithAI(filter),
     countJobs(filter),
     getCategories(),
   ])
+  // [EVIDENCE V1.2] An Africa country hub must never list a role the CURRENT
+  // posting text locks to another region (live case: "Remote (Anywhere
+  // Romania)" rendered on /remote-jobs/nigeria from a stale stored flag).
+  // Unknown rows stay with their honest unverified labels; only
+  // corpus-restricted rows are removed. Worldwide hub lists everything.
+  const jobs = c.slug === 'worldwide'
+    ? rawJobs
+    : rawJobs.filter((j) => !excludeFromCountryHub(j as any, (j as any).aiIntelligence?.africa_eligibility ?? null))
 
   const breadcrumbs = breadcrumbJsonLd([
     { name: 'Nexa', url: '/' },

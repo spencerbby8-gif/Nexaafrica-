@@ -12,6 +12,7 @@ import {
 } from '@/lib/seo'
 import { getIntent, listIntentSlugs } from '@/lib/intents'
 import { getJobsWithAI } from '@/lib/queries'
+import { eligibleForAfricaSurfaces } from '@/lib/geo/render-eligibility'
 import type { Job } from '@/lib/types'
 import { ogImage } from '@/lib/og'
 
@@ -81,7 +82,14 @@ export default async function IntentPage({ params }: { params: Promise<Params> }
   const baseLimit = intent.titleKeywords ? 120 : intent.filters.limit ?? 24
   const candidates = await getJobsWithAI({ ...intent.filters, limit: baseLimit })
   const matched = applyTitleKeywords(candidates, intent.titleKeywords)
-  const jobs = matched.slice(0, intent.filters.limit ?? 24)
+  // [EVIDENCE V1.2] A page promising Africa eligibility may only list roles
+  // whose CURRENT posting text confirms it (corpus explicit/likely). Stored
+  // flags go stale (live case: Romania-locked Oben role listed here); an
+  // untraceable claim on this page is a false inclusion.
+  const verified = slug === 'open-to-africa'
+    ? matched.filter((j) => eligibleForAfricaSurfaces(j as any, (j as any).aiIntelligence?.africa_eligibility ?? null))
+    : matched
+  const jobs = verified.slice(0, intent.filters.limit ?? 24)
 
   const url = `/remote-jobs/search/${slug}`
   const breadcrumbs = breadcrumbJsonLd([

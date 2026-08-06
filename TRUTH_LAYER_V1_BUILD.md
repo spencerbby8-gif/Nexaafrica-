@@ -355,3 +355,50 @@ Every surface verified on the preview alias after the cleanup. Doctrine-conseque
 **Cross-check sample (stored ↔ displayed), all consistent post-restore:** video-editor (remote quote shown; africa unknown 0% — stored null; junk feed range guarded), talent-ops (both salary planes + traceable posting salary quote; skills unwrapped), audit-leader (stored explicit 75% shown; stored quote is an unmarked mid-word slice → not shown; africa-fp backfill heals at write path), Veeam (3 benefit quotes restored; blocked crawler honest), Oben (stored rule-based verdicts; EET timezone; blocked honest), MindPlus (claim without stored quote — honestly nothing to quote), Hostaway (equity quote shown; healthcare restored).
 
 **Gates:** tsc clean; harness 148/148 (new suite 9f pins every restore/keep-dead vector from real stored rows). No rows written, no healers executed, no backfills, preview lane only.
+
+## 16 · Data-plane audit — evidence completeness + company legitimacy (2026-08-06, audit only, render untouched)
+
+**Trigger:** after §15 restored quote DISPLAY, most jobs still show no evidence and company legitimacy is inconsistent within the same company/source. Ordered audit of the two write planes; raw persisted rows cross-checked against the preview via the public `/api/jobs` merge (jobs + job_ai_intelligence + queue status). No code changed, no merges, no backfills, preview only. Gates after: tsc clean, harness 148/148.
+
+**Headline counters (homepage, live):** 4,867 active · 1,981 "Nexa Intelligence" rows (41%, `model_version LIKE '%:%' AND NOT LIKE 'regex%'`) · 1,626 rule-based rows (33%, `model_version LIKE 'regex%' OR 'no-ai%'`) · 1 pending. ⇒ **~1,260 active jobs (26%) are in neither bucket** — no JAI row at all, or rows stamped with historical version strings (e.g. `rule-based-v1-fast`) that neither bucket counts.
+
+### Sampled raw rows (via `/api/jobs`), all four planes visible
+
+| Job | JAI model_version | company_legitimacy | evidence_state | evidence_refs | queue |
+|---|---|---|---|---|---|
+| Reddit Dir. FP&A `4b8cd491` | `regex-extracted-7880bytes` (7/29) | unknown · 0 | **null** | null | completed |
+| Reddit Sr Staff DS `bc3598d8` | `mistral:mistral-medium-2505` (7/30, page 200) | unknown · 0 | **null** | null | completed |
+| Reddit Staff PM Ads T&S `b52093f7` | `github_models:gpt-4o-mini` (7/30, page 200) | unknown · 0 | **null** | null | completed |
+| MongoDB Solutions Architect `0a509e15` | `regex-extracted-45bytes` (8/1) | unknown · 0 | **null** | null | completed |
+| MongoDB Assoc HR `e501432b` | `mistral:mistral-medium-2505` (7/29) | **verified · 90** | **null** | null | completed |
+| MongoDB Dir Critical Comms `7b85bc41` (NEW 8/6) | `regex-extracted-33bytes` (**8/6 04:26**) | unknown · 0 | **fetched** | present (pageStatus 200, dimCount 3) | completed |
+| Stripe Consultant `f234b74c` | `regex-extracted-8036bytes` (8/5 04:27) | unknown · 0 | **fetched** | present (dimCount 2) | completed |
+| Stripe Consultant `9f32e3b0` | `regex-extracted-8169bytes` (**8/6 04:24**) | unknown · 0 | **fetched** | present (dimCount 2) | completed |
+
+Simultaneously, every one of these rows' `jobs.trust_signals` asserts **"Verified employer" +15** (`employerLegitimacySignal`, curated-registry hit). Homepage intelligence section shows MongoDB "Company verified · 90/100" and MongoDB/Pinterest "Company legitimacy unknown" on cards **in the same section, same company** (`/`, 2026-08-06).
+
+### Evidence completeness — exact reasons, in order
+
+1. **The evidence plane works — only jobs drained after V1.1 carry it.** Signature is binary in the sample: every row processed after the V1.1 deploy has `evidence_state` + `evidence_refs`; every row processed before has both `null`. Nothing vanished — it was simply never collected for historical rows.
+2. **Completed queue rows are sealed forever.** Ingest re-sight upsert uses `ignoreDuplicates: true` (lib/ingest/run.ts) and only resets `failed → pending`; `completed` rows (including every pre-V1 row and every regex row) are never re-drained. There is no requeue heuristic for "processed before the evidence plane existed".
+3. **Provider failure is persisted as terminal success.** When the AI call fails, `consolidated.ts:597` returns `regex-extracted-<len>bytes`; the engine's `allProvidersFailed` guard only matches `no-ai-providers|failed-no-evidence|verifyJobReal-threw` (engine.ts). Regex rows are therefore upserted and the queue row marked `completed`. BOTH drains in this audit window (8/5 04:24-27, 8/6 04:24-26) sealed fresh rows at regex tier.
+4. **Admission-rejected jobs skip evidence collection** (engine returns before `collectPageEvidence`) — by design, but it means "no evidence" on those rows conflates "never attempted" with "attempted and none".
+5. **Jobs with no queue row at all never enter the pipeline.** Engine's orphan-heal requeues `completed`-without-JAI, but missing queue rows are invisible. The ~1,260 out-of-bucket population can't be enumerated from the public surface (service-role only).
+
+### Company legitimacy — mis-owned across planes
+
+Three writers, no canonical owner:
+- **Trust plane (deterministic):** `employerLegitimacySignal` — "Verified employer +15" if `job.company` ∈ 22-company curated ingest registry. Per-company decision in the CODE, projected identically onto every job row.
+- **JAI plane (nondeterministic):** consolidated single-call sets `company_legitimacy` per JOB run. `consolidated.ts` rule 5 zeroes any non-unknown verdict to `unknown · 0` whenever `fetchCompanyPage` failed for that run — and for ATS-hosted apply URLs the "company page" is a domain GUESS (`https://{company}.com|.io|.co/careers`). Guesses that succeed (mongodb.com, stripe.com) sometimes yield `verified · 90/100` ("MongoDB: The World's Leading Modern Data Platform" — a <title> quote); guesses that fail (reddit.com/careers unreachable, timeouts, transient errors) yield `unknown · 0`. Same company ⇒ different stored verdicts at 90%-per-fetch-luck fidelity.
+- **Learning plane:** `company_intelligence` aggregates measured hiring metrics, renders facts, carries no legitimacy verdict.
+Result: a company-level fact ("is this employer legitimate") is re-derived per job at AI-call time from liveness of a domain guess, then rendered side-by-side with a deterministic plane that asserts the opposite. **Canonical owner must be company-level**: one verdict per company, written once, read by every surface (cards, detail panel, trust signal); per-job AI should emit scam/evidence signals about the posting, not company identity verdicts.
+
+### What must be fixed (write path / crawler path — none executed here)
+
+1. **Engine:** treat `regex-extracted-*` like provider failure — no JAI upsert (or write with `pending + retry`), never `completed`. Terminal success must require a real provider model version. Also add `regex-extracted-*` to the engine's misleading-version list so future protection checks classify it correctly.
+2. **Drain start:** requeue class — JAI rows with `model_version LIKE 'regex%' OR 'no-ai%'` (and rows with `evidence_refs IS NULL` from pre-V1 processing) set back to `pending` with capped attempts; orphan detection extended to jobs with NO queue row at all. Merge-gated; run as heal-backfill after merge, never silently.
+3. **Ingest:** write the `ats_api` evidence row + set `jobs.evidence_state` at ingest time for every accepted job (the stored description IS preference-1 evidence per the evidence-service's own source order) — then no job ever has an empty evidence plane.
+4. **Company legitimacy:** single company-plane owner. Short-term deterministic: verdict derives from the SAME curated registry the trust plane uses (one source of truth), per-job AI prohibited from emitting company identity verdicts (it may still attach posting-level scam evidence). Long-term: `company_intelligence` becomes the verdict store (verified_at, basis), job surfaces read it; `employerLegitimacySignal` reads it too instead of hardcoding the registry.
+5. Priority honored: drain order stays `priority DESC, created_at ASC` with verified jobs first; Matching-Your-Experience remains verified-only; trust labels untouched.
+
+No UI masking was added, no trust recomputed in render, nothing merged or deployed.

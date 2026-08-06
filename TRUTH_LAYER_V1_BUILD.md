@@ -595,3 +595,68 @@ eligible coverage **100%** (84/84).
    the canonical planes — reconciled by design, not silently.
 6. Corpus-scope judgment debt from §18 ("physical presence" outreach →
    likely) and duplicate detection beyond slugs remain documented debt.
+
+## 19r · Post-push revalidation (2026-08-06, deployment FpJaraC6)
+
+Recovery incident first (honest record): the sandbox workspace was re-cloned
+mid-session and the three local-only commit objects (0d488e0/5f67221/926a2e1)
+were lost with the local object DB. Disk content survived intact; every file
+was verified byte-for-byte against pushed 9e14c08 before the commits were
+recreated as 2ef9b1e (§19d write-path fixes) and 315aab4 (§19 doc). No
+content altered. Pushed fast-forward 9e14c08 → 315aab4. Environment checks:
+auth = arena-ai-coding-agent[bot], rate limit 4997/5000; IPv6 absent
+(link-local only, curl -6 dead); GitHub api 200 over 140.82.116.5 (IPv4);
+Vercel preview A-records IPv4-only, TLS blocked at sandbox proxy by design
+(platform fetch tool used instead — verified, not assumed).
+
+Fresh-run deltas vs the previous deployment (6kAVmgzf) — real changes only:
+
+- Channel-aware owner is live: the Reddit cohort splits honestly into
+  official-ATS ×17 (owner verified) + other-channel ×3 (owner likely_legit —
+  himalayas/open-board rows). company_vs_owner 74 → 73; matchesOwner 9 → 10.
+- Projected quote integrity: 188/195 with 7 africa failures → **195/195, 0
+  failed** — the short-location self-churn class is eliminated in projection.
+- Projected contradictions: 10 → **4**, all one classified residue kind:
+  trust_signal_vs_owner[ingest_rescore] — persisted trust snapshot rows whose
+  employer claim predates the channel-aware signal; every one named with
+  channel + direction:
+  · senior-staff-data-scientist-consumer-relevance-reddit-united-states
+    (himalayas, admission-rejected, persisted claims +15 verified, owner
+    likely_legit) — an OVER-claim the old name-matching signal wrote; the
+    exact impersonation class §19d closed. Row is region-locked out of UI.
+  · senior-technical-product-manager-ads-ml-platform-reddit-united-states
+    (himalayas, admission-rejected, same class).
+  · staff-sre-ads-reddit-07aeab (greenhouse:reddit via source_id, persisted
+    claims new-employer, owner verified) — under-claim, rescore at sight.
+  · head-of-backstage-marketing-spotify-66efd7 (lever:spotify, same).
+  All four heal inside the EXISTING canonical owners (ingest-plane trust
+  rescore writes calculateTrustScore with the channel-aware signal; no new
+  owner, no render logic).
+- Africa/adjudicator determinism: unchanged (27/83 → 84/84 projected) — the
+  deterministic judge was unaffected by the company-plane change.
+- Simulated drain: unchanged (thin 490 + pre-V1 261 of the first-1,000
+  window; window advances per authorized drain).
+- Rendering plane re-audit (same deployment): /jobs cards show the stored
+  flips honestly (verified 4 / unknown 9 cards; evidence badges only where
+  quotes are traceable — no masking added); the messaging-reddit detail page
+  shows africa unknown + company verified + salary $190,800—$267,100 +
+  Moderate-51 cap note — all matching stored canonical planes 1:1.
+
+NEW live finding (remaining known issue, evidence-backed):
+7. **Learning-plane cross-company contamination (Meta-on-Reddit).** The
+   Reddit company card renders a stored verification-sources JSON blob about
+   META ("NYSE: META … Mark Zuckerberg … #R123456789") on a REDDIT row —
+   model-era fabrication that entered the company_intelligence plane.
+   Canonical owner: the learning-plane writer that produces
+   company_intelligence (not render — render shows the stored plane
+   honestly). Next engineering task (below) owns it.
+
+### Exact next engineering task
+**§20 — learning-plane provenance gate + full-lake census.** (a) Locate the
+writer(s) of company_intelligence verification-sources; add a write-time
+gate: a source blob is stored only when traceable to fetched page evidence
+for THAT company, else null (fabricated cross-company blobs die at the
+write path; per-company recompute heals Reddit's row on the next pass).
+(b) Add `?census=1` paged mode to the validation endpoint (1,000-row pages
+over all ~4.8k active jobs) so the contradiction census covers the full
+lake before merge, not only the 122-job sample. Both are preview-safe.

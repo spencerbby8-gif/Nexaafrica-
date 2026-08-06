@@ -896,6 +896,15 @@ import {
   check("v2: thin tier keeps base precedence over contradiction classes", repairClassFor(mkRec({ jai: mkJai({ model_version: "regex-extracted-8079bytes", africa_eligibility: "likely", company_legitimacy: "unknown" }) })) === "thin_tier")
   check("v2: pre-V1 keeps base precedence over contradiction classes", repairClassFor(mkRec({ jai: mkJai({ evidence_refs: null, africa_eligibility: "likely" }) })) === "pre_v1_evidence")
   check("v2: pending rows are not repair-scanned (already moving)", repairClassFor(mkRec({ queue: { status: "pending", error: null }, jai: mkJai({ africa_eligibility: "likely" }) })) === null)
+  check("v2 loop-guard: terminal admission rows never requeue, even with drifting JAI",
+    repairClassFor(mkRec({ queue: { status: "completed", error: "Rejected: region lock [africa_eligibility]" }, jai: mkJai({ africa_eligibility: "likely", company_legitimacy: "unknown" }) })) === null,
+    repairClassFor(mkRec({ queue: { status: "completed", error: "Rejected: region lock [africa_eligibility]" }, jai: mkJai({ africa_eligibility: "likely", company_legitimacy: "unknown" }) })))
+  {
+    const rejected = evaluateRecord(mkRec({ queue: { status: "completed", error: "Rejected: region lock [africa_eligibility]" }, jai: mkJai({ africa_eligibility: "likely", company_legitimacy: "unknown" }) }))
+    check("v2 loop-guard: rejected-row contradictions are admission_terminal, never needs_fix",
+      rejected.contradictions.length > 0 && rejected.contradictions.every((c) => c.heal === "admission_terminal"),
+      rejected.contradictions)
+  }
 
   {
     const evDrift = evaluateRecord(mkRec({ jai: mkJai({ africa_eligibility: "likely" }) }))

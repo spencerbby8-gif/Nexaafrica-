@@ -6,7 +6,7 @@ import { PROVIDERS } from "./providers/types"
 import { asInt, clamp100, asEnum, asStringOrNull, asStringArray, asSkillList, cleanEvidenceText } from "./normalize"
 import { formatSalary } from "@/lib/intelligence"
 import { companyLegitimacyOwner, type CompanyLearningInput } from "@/lib/company/legitimacy"
-import { isFailedModelVersion, queueRepairDecision, contradictionRepairDecision, preserveQuote, REQUEUE_ERROR_LABEL, type RequeueReason } from "./queue-repair"
+import { isFailedModelVersion, queueRepairDecision, contradictionRepairDecision, isTerminalAdmissionError, preserveQuote, REQUEUE_ERROR_LABEL, type RequeueReason } from "./queue-repair"
 import { contradictionFlags } from "@/lib/validation/truth-v2"
 
 /** PostgREST reads `.in()` filters from the request URL; beyond a few
@@ -564,6 +564,7 @@ export async function processAIQueue(batchSize = 100) {
       }
 
       const decide = (d: any): RequeueReason => {
+        if (isTerminalAdmissionError(d.error)) return null // loop-guard: terminal means terminal
         const jai = jaiMap.get(d.job_id)
         const base = queueRepairDecision(d, jai)
         if (base) return base

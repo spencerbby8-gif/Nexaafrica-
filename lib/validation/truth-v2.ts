@@ -21,10 +21,11 @@
  * drain" can never diverge.
  *
  * A contradiction is EXPLAINED when it has a heal class that converges
- * (drain requeue / scheduled processing / ingest rescore), or when it is a
- * genuine data limitation (the posting itself lacks the information). It is
- * UNEXPLAINED only when nothing in the write path would ever repair it —
- * those must be zero before merge.
+ * (drain requeue / scheduled processing / ingest rescore), when it sits on
+ * a terminal admission-rejected row that is region-locked out of every UI
+ * gate by design, or when it is a genuine data limitation (the posting
+ * itself lacks the information). It is UNEXPLAINED only when nothing in
+ * the write path would ever repair it — those must be zero before merge.
  */
 
 import { adjudicateAfricaEligibility, type AfricaAdjudication } from "@/lib/geo/eligibility"
@@ -38,6 +39,7 @@ import {
   queueRepairDecision,
   contradictionRepairDecision,
   isRuleBasedModelVersion,
+  isAdmissionRejected,
   type RequeueReason,
 } from "@/lib/ai/queue-repair"
 
@@ -197,6 +199,11 @@ export type ContradictionKind =
  *                           ingest-owned), so it converges on the daily cron.
  *  - genuine_data_limit   — the posting itself lacks the information; nothing
  *                           to heal, the honest value is displayed.
+ *  - admission_terminal    — the queue row was terminally rejected by the
+ *                           admission gate (region lock / dead listing); the
+ *                           stored values are never repair-scanned ON
+ *                           PURPOSE (loop-guard) and the row is locked out
+ *                           of every UI list/detail gate either way.
  *  - needs_fix            — NOTHING in the write path repairs it. Must be 0.
  */
 export type HealClass =
@@ -205,6 +212,7 @@ export type HealClass =
   | "awaiting_rerun"
   | "ingest_rescore"
   | "genuine_data_limit"
+  | "admission_terminal"
   | "needs_fix"
 
 export interface Contradiction {
@@ -298,6 +306,7 @@ export function contradictionFlags(
  */
 export function repairClassFor(rec: ValidationRecord): RequeueReason {
   if (!rec.queue || rec.queue.status !== "completed") return null
+  if (isAdmissionRejected(rec.queue)) return null // loop-guard: terminal means terminal
   const base = queueRepairDecision(rec.queue, rec.jai)
   if (base) return base
   if (!rec.jai) return null
@@ -322,7 +331,7 @@ const USABLE_EVIDENCE_STATUSES = new Set(["verified", "fetched", "partial"])
 export function evidenceCaseFor(rec: ValidationRecord): EvidenceCase {
   const q = rec.queue
   if (!q) return "never_written"
-  if ((q.error || "").startsWith("Rejected:")) return "admission_rejected"
+  if (isAdmissionRejected(q)) return "admission_rejected"
   if (q.status === "pending" || q.status === "processing") return "never_written"
   if (q.status === "failed") return "collection_failed"
   // completed:
@@ -367,6 +376,7 @@ export interface JobEvaluation {
 
 function healFor(rec: ValidationRecord, repairClass: RequeueReason): HealClass {
   if (repairClass) return "drain_requeue"
+  if (isAdmissionRejected(rec.queue)) return "admission_terminal"
   const st = rec.queue?.status
   if (st === "pending" || st === "processing") return "awaiting_processing"
   if (st === "failed") return "awaiting_rerun"
@@ -627,6 +637,12 @@ export interface TruthMetrics {
   evidenceCoverage: {
     usable: number
     rate: number
+    /** Same metric over UI-eligible rows only: terminally admission-rejected
+     *  jobs are region-locked out of every list by design and are NOT part
+     *  of the coverage promise. */
+    eligibleTotal: number
+    eligibleUsable: number
+    eligibleRate: number
     byCase: Record<EvidenceCase, number>
   }
   companyConsistency: {
@@ -681,9 +697,16 @@ export function summarize(evaluations: JobEvaluation[]): TruthMetrics {
   const byKind: Record<string, number> = {}
   const cohortMap = new Map<string, JobEvaluation[]>()
 
+  let eligibleTotal = 0
+  let eligibleUsable = 0
+
   for (const ev of evaluations) {
     byCase[ev.evidenceCase] = (byCase[ev.evidenceCase] || 0) + 1
     if (ev.usableEvidence) usable++
+    if (ev.evidenceCase !== "admission_rejected") {
+      eligibleTotal++
+      if (ev.usableEvidence) eligibleUsable++
+    }
 
     if (ev.storedAfrica != null) {
       africaT++
@@ -765,6 +788,9 @@ export function summarize(evaluations: JobEvaluation[]): TruthMetrics {
     evidenceCoverage: {
       usable,
       rate: evaluations.length ? Math.round((usable / evaluations.length) * 1000) / 10 : 0,
+      eligibleTotal,
+      eligibleUsable,
+      eligibleRate: eligibleTotal ? Math.round((eligibleUsable / eligibleTotal) * 1000) / 10 : 0,
       byCase,
     },
     companyConsistency: {

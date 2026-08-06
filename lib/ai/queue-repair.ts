@@ -47,6 +47,26 @@ export type RequeueReason =
   | "untraceable_quote"
   | null
 
+/** Admission verdicts ("Rejected: <reason> [gate]", "Skipped…") are
+ *  intentional terminal states — never requeue them, from any class.
+ *  [V2 loop-guard] A rejected row can still carry a stale JAI row whose
+ *  stored values drift from the deterministic owners; without this guard
+ *  the contradiction classes would requeue it, admission would reject it
+ *  again, and the row would churn between scans forever. Terminal means
+ *  terminal: the stored row is region-locked out of every UI gate. */
+export function isTerminalAdmissionError(error: string | null | undefined): boolean {
+  const err = error || ""
+  return err.startsWith("Rejected:") || err.startsWith("Skipped")
+}
+
+/** Status-aware form: an admission verdict is a COMPLETED row carrying a
+ *  Rejected/Skipped note. The exhausted-providers path reuses the same
+ *  "Rejected:" prefix but on FAILED rows — those must keep their
+ *  awaiting_rerun semantics, not admission-terminal. */
+export function isAdmissionRejected(queueRow: { status?: string | null; error?: string | null } | null | undefined): boolean {
+  return (queueRow?.status ?? null) === "completed" && isTerminalAdmissionError(queueRow?.error)
+}
+
 /** Should a COMPLETED queue row be sent back to pending for reprocessing?
  *  - Admission rejections ("Rejected: <reason> [gate]") are intentional
  *    terminal states — never requeue them.
@@ -59,8 +79,7 @@ export function queueRepairDecision(
   queueRow: { error?: string | null },
   jaiRow: { model_version?: string | null; evidence_refs?: unknown } | null | undefined,
 ): RequeueReason {
-  const err = queueRow.error || ""
-  if (err.startsWith("Rejected:") || err.startsWith("Skipped")) return null
+  if (isTerminalAdmissionError(queueRow.error)) return null
   if (!jaiRow) return null
   if (isRuleBasedModelVersion(jaiRow.model_version)) return "thin_tier"
   if (jaiRow.evidence_refs == null) return "pre_v1_evidence"

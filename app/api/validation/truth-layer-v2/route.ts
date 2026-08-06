@@ -45,6 +45,7 @@ import {
 import {
   queueRepairDecision,
   contradictionRepairDecision,
+  isTerminalAdmissionError,
   type RequeueReason,
 } from "@/lib/ai/queue-repair"
 import type { CompanyLearningInput } from "@/lib/company/legitimacy"
@@ -252,6 +253,7 @@ export async function GET(request: NextRequest) {
     }
 
     for (const d of doneRows as any[]) {
+      if (isTerminalAdmissionError(d.error)) continue // loop-guard: terminal means terminal
       const jai = jaiMap.get(d.job_id)
       const base = queueRepairDecision(d, jai)
       let reason: RequeueReason = base

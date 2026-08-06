@@ -445,3 +445,153 @@ Ordered audit of the live preview (deployment 9CPfwReAd) using only rendered pag
 - Slug identity (lib/slug.ts + run.ts both loops): oldest active base-slug row owns base; later dupes resolve deterministic `-dup-<key>` slugs (adoption case pinned verbatim).
 
 No backfills, no drains invoked, no merges, preview-only code proof; healing executes on the next authorized ingest/drain.
+
+## 19 · TRUTH LAYER V2 — VALIDATION (2026-08-06, preview-only, read-only)
+
+Validation lane: new read-only endpoint `GET /api/validation/truth-layer-v2`
+(provably no DML in source; provider names never leave the server — bucketed
+real-model/rule-based/none; evidence excerpts never leave the DB —
+counts/kinds/statuses only). Judges: the deterministic owners only
+(Africa corpus adjudicator · canonical company owner · word-aligned quote
+traceability · trust arithmetic). Same pure functions drive (a) this
+endpoint, (b) the drain-start repair pass in lib/ai/engine.ts, (c) harness
+suite 15 — simulated drain and real drain cannot diverge.
+
+Audit: 122 jobs end-to-end — Reddit/Pinterest/MongoDB/Stripe × 20 each +
+remoteok/greenhouse/ashby/lever × 12 each (deduped). Queue health at run:
+pending 1 · processing 0 · completed 6,484 · failed 0.
+
+### 1 · Zero contradictions — measured
+
+| Kind (current stored lake) | Count | Heal class |
+|---|---|---|
+| company_vs_owner | 74 | drain_requeue |
+| quote_untraceable | 71 | drain_requeue |
+| africa_vs_adjudicator | 56 | drain_requeue |
+| trust_signal_vs_owner | 3 | ingest_rescore |
+| **Total** | **204** | **UNEXPLAINED: 0** |
+
+Same-company cohorts today (stored verdicts): Reddit verified 4/unknown 9/
+likely_legit 1/none 6 · MongoDB verified 2/unknown 16/none 2 · Stripe
+verified 1/unknown 12/likely_legit 2/none 5 · Spotify likely_legit 8/unknown
+2/none 2 → 4 divergent cohorts of 10 (the live flip the doctrine bans).
+Africa determinism today: matches 27/83 (32%) — model-era values.
+
+### 2 · Evidence coverage — measured
+
+usable evidence: 75/122 (61.5%); eligible-only denominator (admission-
+rejected rows are region-locked out of every UI gate): **75/84 = 89.3%**.
+Missing reasons, classified per job: overwritten_by_thin_tier 50 (the
+failed-run-sealed-regex era) · stale_pre_v1 27 · never_written 1 ·
+collection_failed 0 in sample · admission_rejected 38 (none by design —
+not part of the coverage promise).
+Raise path (write-path only, merge-gated): 751 of the oldest-1,000 completed
+queue rows requeue (thin_tier 490 + pre_v1_evidence 261), §17 ingest-plane
+ats evidence lands at sight, drain collects page evidence → projected
+eligible coverage **100%** (84/84).
+
+### 3 · Pipeline validation — simulated drain (same decisions as the engine)
+
+- Regex/thin rows → requeue thin_tier → become real-model rows on success;
+  the §17 seal-guard makes regex re-persistence structurally impossible
+  (fixture-pinned): a failed run never upserts, never seals completed.
+- Pre-V1 rows → requeue pre_v1_evidence → gain the evidence plane
+  (evidence_refs + job_evidence_v1) on their next pass.
+- Contradiction classes (new §19) → rows that drifted from the deterministic
+  owners requeue and converge in ONE pass (incl. when confidence-protection
+  skips the wholesale upsert — canonical-plane sync).
+- Projected post-drain over the same 122 jobs: company 84/84 owner-matched,
+  0 divergent cohorts · africa 84/84 adjudicator-matched · quote integrity
+  188/195 · contradictions 10, unexplained 0.
+
+### 4 · End-to-end per-dimension findings (122 jobs)
+
+- Company: 9/83 rows currently match the owner — mis-ownership era proven
+  live at scale (§16/§17 carry the fix; lake awaits drains).
+- Africa: 56/83 currently contradict the adjudicator (corpus bases observed:
+  us-state-remote, location-lock, no-signal) — all drain-healable.
+- Salary: 0 conflicts (jobs row ↔ intelligence) in sample; salary 0–0 junk
+  absent from sample.
+- Trust: arithmetic 122/122; employer-claim 119/122.
+- Quote integrity: 72/163 traceable today; remote quotes are the dominant
+  fabrication class (62) from the pre-verbatim-nulling verifier era — all
+  drain-requeue healable (post-§15 verifier nulls non-verbatim).
+- Remote: no canonical owner assigned (known debt) — divergences reported
+  as notes, never counted unexplained.
+
+### 5 · Metrics that prove it (current → projected)
+
+- Evidence coverage: 89.3% eligible → 100% (simulated).
+- Company consistency: 4 divergent cohorts → 0.
+- Africa consistency: 27/83 → 84/84 stored-vs-adjudicator.
+- Trust consistency: 119/122 → heals at ingest rescore.
+- Salary consistency: 122/122 (stable).
+- Quote integrity: 72/163 → 188/195 (residue explained below).
+- Contradictions: 204, 0 unexplained → ≤10 residue classified.
+
+### Proven root causes (new this phase)
+
+1. **Admission-terminal requeue loop (latent)** — contradiction classes
+   would have requeued terminally admission-rejected rows forever (requeue →
+   reject → requeue). Caught by the simulated drain before any real drain
+   ran; guard: `isAdmissionRejected` (status-aware: completed+Rejected is
+   terminal; failed+Rejected is provider exhaustion, different semantics).
+2. **Channel-vs-name registry breach** — the 3 trust_signal_vs_owner rows
+   proved the §17 owner verified registry companies by NAME alone; a Reddit
+   posting via himalayas (third-party board) inherited "verified" — an
+   impersonation hole and a cross-channel flip cause.
+3. **Checker-vs-owner quote churn (latent)** — 7 rows (mongodb
+   executive-assistant, stripe deal-strategist/business-value×2/
+   head-of-enterprise-sales/staff-full-stack/software-engineer-vuln) whose
+   corpus quotes come from short location fields would requeue → re-mint
+   the same deterministic corpus quote → fail the checker → requeue ∞.
+4. PostgREST URL limits could silently no-op repair passes (engine `.in()`
+   calls with up to 1,000 UUIDs) — chunked everywhere.
+5. Historical causes reconfirmed at scale: thin-tier sealing, pre-V1 rows,
+   pre-owner company writing, pre-verbatim nulling quote fabrication —
+   every one routes to a drain requeue class (no orphans in policy).
+
+### Exact write-path fixes (this phase)
+
+- `lib/ai/queue-repair.ts` — three contradiction requeue classes
+  (company_vs_owner, africa_vs_adjudicator, untraceable_quote) decided from
+  shared pure flags; `isAdmissionRejected` loop-guard.
+- `lib/validation/truth-v2.ts` — the measurement module (single judge):
+  expected Africa/company, quote traceability (title+description+location
+  surface, owner-sentence + corpus-quote + salary-range equivalence), trust
+  arithmetic, six honest evidence cases, heal routing, fixture-tested
+  `projectRecord` drain projection.
+- `lib/ai/engine.ts` — repair pass extends to contradiction classes (same
+  flags), canonical-plane sync on the protected path, chunked `.in()`.
+- `lib/company/legitimacy.ts` — channel-authenticated registry
+  (source `ats:slug` or legacy source_id prefix); name match alone never
+  verifies; owner sentence now reads "this job arrived via…".
+- `lib/trust/signals/employerLegitimacy.ts` — passes channel identity.
+- `app/api/validation/truth-layer-v2/route.ts` — the read-only metrics
+  endpoint (+ `?probe=<slug>`); cohorts key on company × channel class.
+- Harness 254/254 (suite 15 incl. both loop-guards, channel-auth,
+  impersonation, projection idempotence); tsc clean.
+
+### Remaining known issues after the fixes
+
+1. Two commits (channel-auth §19d, quote-churn guard §19e) verified locally
+   (254/254, tsc clean) and pending push — GitHub auth dropped mid-session;
+   live re-run of the endpoint with these two lands the residue classes:
+   projected contradictions → 3 trust rows resolve (owner no longer
+   over-claims; one becomes company_vs_owner[drain_requeue] on the
+   himalayas row itself) and the 7 short-location quote rows drop out.
+2. Stored-lake heal throughput: ≤250 requeues + batch window per drain;
+   drains are production-cron-authorized and merge-gated. The old-code
+   production deployment keeps writing its own rows into the shared DB
+   until merge — every stored contradiction above is classified
+   expected-stale-healable; none is architecture-surprising.
+3. 5 orphan rows (completed, no JAI) inside the first 1,000-scan window —
+   orphan-heal owns them; window advances monotonically.
+4. Remote plane has no canonical owner (feed metadata vs JAI verdict
+   divergences are notes, not contradictions) — needs an owner assignment
+   decision before any write-path sync (not implemented by design).
+5. jobs-row ingest eligibility/remote/salary fields remain ingest-plane
+   values between ingest sights (heals each sight); render/list gates read
+   the canonical planes — reconciled by design, not silently.
+6. Corpus-scope judgment debt from §18 ("physical presence" outreach →
+   likely) and duplicate detection beyond slugs remain documented debt.

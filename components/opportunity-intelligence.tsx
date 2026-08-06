@@ -5,6 +5,7 @@ import { pipelineState } from '@/lib/ai/pipelineState'
 import { renderEligibility, type RenderEligibility } from '@/lib/geo/render-eligibility'
 import { plainifyPosting, traceableQuote } from '@/lib/evidence'
 import { asSkillList } from '@/lib/ai/normalize'
+import { salaryDisplay } from '@/lib/format'
 
 interface Props {
   intelligence: JobAIIntelligenceRow | null | undefined
@@ -82,6 +83,17 @@ function remoteLabel(elig: string | null | undefined, isRemote?: boolean | null,
 }
 
 function salaryTruthLabel(row: JobAIIntelligenceRow | null | undefined, job?: Job | null) {
+  // [V1.2] Feed fallbacks inherit the SAME junk guard as the chip: a stored
+  // "USD0.03k - USD0.1k" range is data corruption, and rendering it verbatim
+  // while the chip stays silent is a same-card contradiction (live on
+  // Autodesk/Video Editor cards, 2026-08-05).
+  let feedRange: string | null = null
+  if (job?.salary_range) {
+    try {
+      const sd = salaryDisplay(job.salary_range, { openToAfrica: job.is_open_to_africa })
+      if (sd.isExplicit) feedRange = job.salary_range
+    } catch {}
+  }
   if (row) {
     const trans = row.salary_transparency
     const isEst = row.salary_is_estimated
@@ -113,14 +125,14 @@ function salaryTruthLabel(row: JobAIIntelligenceRow | null | undefined, job?: Jo
       return { label: `Salary estimated`, detail: min || max ? `${currency} ${min ?? ''} – ${max ?? ''} (estimated)` : 'Based on market data', hasSalary: true }
     }
     if (trans === 'undisclosed') {
-      if (job?.salary_range) {
-        return { label: `Salary disclosed: ${job.salary_range}`, detail: 'From job feed (AI says undisclosed)', hasSalary: true }
+      if (feedRange) {
+        return { label: `Salary disclosed: ${feedRange}`, detail: 'From job feed (AI says undisclosed)', hasSalary: true }
       }
       return { label: 'Salary not disclosed', detail: 'No salary in posting', hasSalary: false }
     }
   }
-  if (job?.salary_range) {
-    return { label: `Salary disclosed: ${job.salary_range}`, detail: 'From job feed, AI pending', hasSalary: true }
+  if (feedRange) {
+    return { label: `Salary disclosed: ${feedRange}`, detail: 'From job feed, AI pending', hasSalary: true }
   }
   if (!row) return { label: 'Salary intelligence pending', detail: job ? 'No salary in original feed' : '', hasSalary: false }
   return { label: 'Salary not disclosed', detail: 'No salary in posting', hasSalary: false }

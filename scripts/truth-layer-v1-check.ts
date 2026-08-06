@@ -539,3 +539,13 @@ function probeSalaryLabel(row: any): { junk: boolean; disclosed: boolean } {
   const eurSmall = probeSalaryLabel({ salary_transparency: "disclosed", salary_min: 50, salary_max: 90, salary_currency: "EUR", salary_period: "hour" })
   check("non-USD hourly survives", eurSmall.junk === false, eurSmall)
 }
+
+// 11b · feed-range fallback inherits the chip's junk guard (same-card truth)
+{
+  const junk = salaryDisplay("USD0.03k - USD0.1k" as any, {} as any)
+  check("stored 'USD0.03k - USD0.1k' is junk-guarded (same test the chip uses)", junk.isExplicit === false, junk)
+  const zero = salaryDisplay("USD 0 – 0" as any, {} as any)
+  check("stored 'USD 0 – 0' is junk-guarded", zero.isExplicit === false, zero)
+  const real = salaryDisplay("USD120k - USD150k" as any, {} as any)
+  check("genuine range stays explicit", real.isExplicit === true, real)
+}

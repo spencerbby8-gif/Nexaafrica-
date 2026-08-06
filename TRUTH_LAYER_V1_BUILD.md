@@ -234,3 +234,43 @@ Persisted skills-as-JSON (8 objects on micro1) · salary split (badge USD70–11
 - Collector-side improvements (retry deference, hash versioning) take effect on the next drain/worker run against existing rows — write-plane, same expected-stale rule as §6; preview render-plane behavior verified above.
 
 **Deferred (documented, not skipped):** the `stale` state remains reserved-but-unused — nothing fabricates it; age-based trust decay already runs off `last_verified_at`. A stale-marker belongs with drain-side scheduling, post-merge, with DB-plane verification tooling.
+
+---
+
+## 13 · Evidence Intelligence V1.2 (preview lane, 2026-08-05) — one evidence plane, quote traceability, junk hygiene
+
+**Mandate scope:** every UI evidence item from the latest verified source · quotes accurate/word-aligned/traceable · eliminate stale/duplicated/fabricated/conflicting evidence · confidence from real evidence depth · every badge/chip/explanation backed by the SAME underlying plane · no contradictions across cards/detail/hubs/search/APIs/summaries · heuristics → evidence-driven where possible. Preview only; PR #32 unmerged.
+
+### Re-audit first (fresh fetch of EVERY prior fixture before writing code)
+Trust planes (52/75/30/32 + rawSums) ✓ unchanged · cap notes ✓ · chips/bullets ✓ · OG 200 via r.jina.ai ✓ · positive control Hostaway explicit ✓ (but see D1 below) · nigeria hub & intent page: **original P0/P1 findings STILL LIVE in the render plane** (Oben Romania on /remote-jobs/nigeria + /open-to-africa; MindPlus "Likely open to Africa • 75%"; mali "Explicitly open to Africa • 75%" + fabricated quote; "Finance, Finance"; mangled quotes) — previously classified "expected-stale (backfill-gated)". **The V1.2 insight: none of them needed the backfill — they were all treatable at the render plane by re-deriving truth from the posting text we already hold.**
+
+### New defects found & fixed (each live-proven, then fixture-locked)
+| # | Live defect (before) | Fix |
+|---|---|---|
+| D1 | Render-time quote extractor sliced markdown: `"app) Worldwide"`, `"Hostaway(https://himalayas."`, `"…United Stat"` (Hostaway), benefit fragments `"app/companies/micro1) provides…` | `plainifyPosting` + word-aligned `extractExcerpt` + per-segment extraction (no cross-field splices) in `lib/evidence.ts` |
+| D2 | Stored quotes rendered unverified: mali quote; escaped `"\*\*NOTE…"`; mid-word `"ues to ensure…"` on hub cards | `traceableQuote` — quotes render only when present word-aligned in the plain posting; applied to EvidencePanel persisted excerpts + all EvidenceQuote sites |
+| D3 | Three stored eligibility stores drifted; surfaces disagreed: mali explicit everywhere; Oben/MindPlus/Decision on Africa pages | `lib/geo/render-eligibility.ts` arbitration plane — corpus re-reads the posting at render; stored claims show as verified only when corpus-corroborated; consumed by card chip, opportunity intelligence, EvidencePanel, trust cap, cap note, intent page (explicit/likely only), country hubs (restricted excluded) |
+| D4 | Stored confidence attached to uncorroborated claims ("Likely open · unverified • 75%" risk; "unknown • 75%") | confidence % gated on `corroborated` in both panel variants |
+| D5 | "Required: Finance, Finance" duplicates; tags masquerading as required skills | `asSkillList` at render + "Tagged in the feed:" honesty |
+| D6 | "Required: {\"skill\":…}" 8 JSON objects (micro1) | `asSkillList` unwraps stringified-JSON entries; broken JSON dropped |
+| D7 | Same-page salary split: badge 70–110k vs JAI 50–70k quoted from posting | `jaiSalaryDisplay` — quote-traceable JAI salary outranks conflicting feed range on card AND detail |
+| D8 | Salary junk asserted as fact: "USD 0 – 0 • 100%", "USD0.03k – 0.1k" ×4 surfaces, missing period | zero/k-collapse guards in `salaryTruthLabel`, feed-range fallbacks, EvidencePanel metadata branch — one junk test everywhere; hourly keeps `/hour` |
+| D9 | Intent-page copy overclaimed the evidence ("only when explicitly accepts…", "every six hours" refresh) | copy now states the real policy (corpus explicit/likely, exclusions, daily refresh) |
+
+### Live verification (deployments rRqY5wds→4KbKfpKQ, commits e9a436f..be92eb8, 2026-08-05)
+- **mali row** (`/role/finance-operations-audit-leader-openai-worldwide`): "Explicitly open to Africa • 75%" + fabricated quote → **gone**; Africa Fits reads "Africa eligibility unknown" (no stray confidence), unified **75 → 50 Moderate** with honest note "Capped: Africa eligibility is unverified…"; "Required: Finance, Finance" → "Tagged in the feed: Finance". Zero fabricated claims remain on the page.
+- **Oben Romania**: removed from `/remote-jobs/nigeria` and `/remote-jobs/search/open-to-africa`.
+- **Intent page**: 12+ guess-listings → 3 corpus-confirmed (Hostaway "Open to Africa", iManage/EMCD "Likely open" corroborated); copy matches the real policy.
+- **micro1 detail**: 8 JSON objects → clean skill names; salary **one number** ("USD50k - USD70k", posting-verbatim) on panel + JAI + card; mangled quotes gone; worldwide signal quote honestly omitted (single-word fragment).
+- **Nigeria hub**: MindPlus/Decision junk claims gone; "Salary unclear" replaces "USD 0 – 0 • 100%" and k-collapses; chip-vs-bullet contradictions closed; Hostaway corroborated "Explicitly open to Africa".
+- **Variance preserved** (mandate): unified 52 (micro1 blocked) / 46 (video editor, hostaway) / 50 (audit-leader capped-unknown) / 55 (workflow annotator) / 30–32 queued hubs — scores move with evidence, never flat.
+- Gates at final HEAD: `tsc` PASS · fixtures **140/140** (suites 9–11 = +49 real live cases; two suite-7 fixtures updated to V1.2 semantics: "explicit" now requires Africa traceable in the posting; mali regression guarded).
+
+### Truth Audit answers (V1.2)
+Fabricated data? None — every rendered quote is containment-verified; dropped evidence is omitted, never replaced with plausible text. Contradictory UI? The card, panel, hub, intent, and trust planes now read one arbitrated tier/one salary rule/one quote test — the audit produced 3 same-page contradictions DURING the build (salary fallback, panel metadata, confidence gate) and all were closed before stopping. Static trust? No — arbiter is pure recomputation from posting text; scores spread with evidence. Misleading labels? Intent copy, "Tagged in the feed", "Salary unclear", unverified classes all state their provenance. Evidence inconsistencies? Stored claims survive ONLY with corpus corroboration; everything uncorroborated is labeled unverified or unknown.
+
+### Intentionally deferred
+- Stored-row healing still belongs to the post-merge backfill + drain (write plane; the render plane now shields users from the stale rows, but the rows themselves await `kind=all` + re-verify).
+- `stale` crawler state remains reserved (no fabricated staleness marker).
+- `/api/jobs` exposes persisted raw `trust_score` (machine surface; aligning it requires the same AI join the detail page does — deferred rather than half-aligned).
+- posted_at=ingest fabrication (DB trigger + adapter plumbing), seo-status caps, duplicate migration versions — unchanged from §10b.

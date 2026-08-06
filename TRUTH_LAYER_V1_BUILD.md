@@ -336,3 +336,22 @@ Every surface verified on the preview alias after the cleanup. Doctrine-conseque
 **Kept presentation work (B):** quotes all word-aligned/traceable ("We use a hybrid work model…", "Location: Remote", "Job Type: Contractor"); skills unwrapped clean ("large-cohort onboarding at scale…", "Excel, Power Query…"); "Tagged in the feed:" honesty; crawler label "Page blocked — evidence unavailable, retrying later" byte-stable.
 
 **Single-owner confirmation:** every displayed Africa verdict, salary figure, trust score, skills list, crawler state and confidence on these surfaces traces to exactly one canonical plane (persisted `jobs`/`job_ai_intelligence` rows computed by ingest/verifier/trust-engine), with render limited to junk-guards, quote traceability, de-duping and provenance labels. Harness suite 12 guards the boundary structurally (139/139).
+
+## 15 · Evidence-plane audit + restore (2026-08-06, deployment `BjDj7EnzJ1f9RFZXNk9zo62KrMRt`)
+
+**Trigger:** user report — most jobs showed empty evidence after the §14 cleanup. Ordered audit; cross-checked stored rows (via the public `/api/jobs` merge of persisted `jobs` + `job_ai_intelligence`) against rendered pages for a 7-job sample.
+
+**Verdict: persistence was never broken.** `job_evidence_v1` writers untouched since `92c1191` (git log); `jobs.evidence_state` populated (blocked/null per collector state — state is only written together with a store row); `job_ai_intelligence` rows carry full evidence fields (quotes, urls, `evidence_refs` {sources, pageStatus, provenance, dimensionCount}, `evidence_provenance`, `last_verified_at`) — all verified present in raw rows. The disappearance was **two render-time suppressions** at the final quote boundary:
+
+| Where evidence vanished | Root cause | Live proof (before → after) |
+|---|---|---|
+| Benefit/async/scope quotes on detail panels ("Quoted from the posting" with NO quote under it) | `traceableQuote` demanded strict full-containment; extractor-written stored excerpts are truncation-marked (`...`/"…") and can never satisfy it. Structural incompatibility, not missing evidence. | Veeam: healthcare/retirement/PTO rows had provenance label and zero quote → now show the real stored excerpts with marks. Hostaway healthcare likewise. |
+| Card "Evidence" blocks (homepage + jobs page) | Block picked the FIRST stored quote string; when it failed traceability it rendered a bare "Evidence" heading with nothing under it — and hid traceable stored quotes positioned after it (salary/remote) in the same row. | Homepage intelligence cards: 3/8 quotes visible before → SPM MongoDB `“$136,000—$266,000”` and Pinterest `“$123,684—$254,644”` restored; MindPlus/Decision/Sourcer now show NO block — honest, because their stored rows contain no posting-quote (MindPlus `africa_evidence: null`, `salary_evidence: null`, `remote_evidence: "Marked as remote in source feed"` — its own stored quality row: "no strong evidence; hallucination risk detected"). |
+
+**Fixes (render-plane, display-safety only — no recompute, no substitute text, no writes):**
+1. `traceableQuote` is ellipsis-aware: a segment bounded by a truncation mark may start/end mid-word (that is exactly what the mark means); segments under 12 chars never pass; order is enforced; **unmarked mid-word slices still die** — Veeam "privat..." renders, mali stored "d AI to improve…" stays suppressed, "…United Stat" stays suppressed, "app) Worldwide…" href fragments stay suppressed.
+2. Card Evidence block selects the first DISPLAY-SAFE stored quote among africa/remote/salary; when none survives, the block renders nothing (pipeline badge already communicates pending/degraded).
+
+**Cross-check sample (stored ↔ displayed), all consistent post-restore:** video-editor (remote quote shown; africa unknown 0% — stored null; junk feed range guarded), talent-ops (both salary planes + traceable posting salary quote; skills unwrapped), audit-leader (stored explicit 75% shown; stored quote is an unmarked mid-word slice → not shown; africa-fp backfill heals at write path), Veeam (3 benefit quotes restored; blocked crawler honest), Oben (stored rule-based verdicts; EET timezone; blocked honest), MindPlus (claim without stored quote — honestly nothing to quote), Hostaway (equity quote shown; healthcare restored).
+
+**Gates:** tsc clean; harness 148/148 (new suite 9f pins every restore/keep-dead vector from real stored rows). No rows written, no healers executed, no backfills, preview lane only.

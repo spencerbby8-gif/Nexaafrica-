@@ -4,6 +4,7 @@ import {
   type IntelligenceSignal,
 } from '@/lib/intelligence'
 import { renderEligibility } from '@/lib/geo/render-eligibility'
+import { salaryDisplay } from '@/lib/format'
 
 /**
  * Job Evidence Layer V1
@@ -408,7 +409,7 @@ export function deriveEvidence(job: Job, opts?: { storedAITier?: string | null; 
       excerpt: traceableQuote(ai?.salary_evidence ?? null, haystack) ?? undefined,
       source: 'posting-text',
     })
-  } else if (job.salary_range) {
+  } else if (job.salary_range && isRealSalaryRange(job)) {
     signals.push({
       id: 'salary-disclosed',
       tone: 'positive',
@@ -486,6 +487,17 @@ export function sortEvidence(signals: EvidenceSignal[]): EvidenceSignal[] {
     neutral: 2,
   }
   return [...signals].sort((a, b) => order[a.tone] - order[b.tone])
+}
+
+/** [V1.2] A stored range only earns the "disclosed" claim after the same
+ *  junk guard as every other surface ("USD0.03k - USD0.08k"-class ranges are
+ *  corruption, not compensation). */
+function isRealSalaryRange(job: Job): boolean {
+  try {
+    return salaryDisplay(job.salary_range as any, { openToAfrica: (job as any).is_open_to_africa }).isExplicit
+  } catch {
+    return false
+  }
 }
 
 /**

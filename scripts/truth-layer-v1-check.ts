@@ -549,3 +549,11 @@ function probeSalaryLabel(row: any): { junk: boolean; disclosed: boolean } {
   const real = salaryDisplay("USD120k - USD150k" as any, {} as any)
   check("genuine range stays explicit", real.isExplicit === true, real)
 }
+
+// 11c · EvidencePanel metadata branch applies the same guard (same-page truth)
+{
+  const sigs = deriveEvidence(mkJob({ salary_range: "USD0.03k - USD0.08k" }) as any)
+  check("EvidencePanel never asserts junk as disclosed salary", !sigs.some((x: any) => x.id === "salary-disclosed"), sigs.filter((x: any) => x.id.startsWith("salary")).map((x: any) => x.id))
+  const real = deriveEvidence(mkJob({}) as any)
+  check("EvidencePanel keeps genuine disclosed salary", real.some((x: any) => x.id === "salary-disclosed"), real.filter((x: any) => x.id.startsWith("salary")).map((x: any) => x.id))
+}

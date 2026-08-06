@@ -54,3 +54,16 @@ Preview lane only. Nothing merged, no production, no backfills.
 2. Re-pin fixtures to the restored semantics (suite 9's arbitration fixtures move to the verifier-domain harness; quote/junk/skills fixtures stay).
 3. Gates (tsc + harness) per change; preview-verify each revert; update `TRUTH_LAYER_V1_BUILD.md` with an explicit architecture note.
 4. No merge, no production, no backfills — preview lane throughout.
+
+---
+
+## Addendum — decisions executed (2026-08-05)
+
+User approved the cleanup with this doctrine: "The render layer may sanitize objectively malformed data, improve presentation, expose provenance, and communicate uncertainty. It must never reinterpret, recompute, replace, downgrade, or silently override canonical intelligence." Executed on `arena/019fd268-nexaafrica`:
+
+- **A1–A5 reverted + moved** (commits `cd27b98`, `c2cf73e`): arbitration → verifier domain (`corroborateAfricaClaim`, consumed by the africa-fp healer); membership → stored flags; trust cap → stored verdict; salary authority → write path (healer extended with stale-quote requeue); confidence-verdict pairing restored. B-keepers retained; B9 copy fixed.
+- **C1 reverted** (commit `bcbd19a`): render trust correction deleted; `rescoreTrustSignals` is write-plane-only (backfill-trust route upgraded, `TRUST_VERSION` 3). Plateaus return until the merge-gated rescore — accepted: stale truth over fabricated freshness.
+- **C2 kept under constraint:** blend over persisted inputs only; dynamic render adjustments removed.
+- **C3 kept:** monotone presentation of the pre-existing cap rule over stored inputs.
+- **C4 kept:** arithmetic over displayed persisted signals.
+- Harness re-pinned to 139/139 incl. new suite 12 (verifier-domain corroboration + structural boundary guard). Gates green per commit. Preview lane only; nothing merged/deployed/backfilled.

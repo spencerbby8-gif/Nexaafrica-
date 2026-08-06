@@ -274,3 +274,44 @@ Fabricated data? None — every rendered quote is containment-verified; dropped 
 - `stale` crawler state remains reserved (no fabricated staleness marker).
 - `/api/jobs` exposes persisted raw `trust_score` (machine surface; aligning it requires the same AI join the detail page does — deferred rather than half-aligned).
 - posted_at=ingest fabrication (DB trigger + adapter plumbing), seo-status caps, duplicate migration versions — unchanged from §10b.
+
+## 14 · Architecture cleanup — single canonical owner per intelligence decision (2026-08-05, doctrine-mandated)
+
+**Doctrine (user, governing):** the render layer is never allowed to become an intelligence engine. It may sanitize objectively malformed data, improve presentation, expose provenance, and communicate uncertainty — never reinterpret, recompute, replace, downgrade, or silently override canonical intelligence. Triggered by RENDER_BOUNDARY_AUDIT_2026-08-05.md.
+
+**Owner map (final architecture):**
+
+| Decision | Canonical owner | Where |
+|---|---|---|
+| Ingestion (rows, ingest tier) | Ingest | `lib/ingest/*` |
+| Verification (Africa verdicts, salary/remote authority, AI conclusions) | Verifier / AI engine | `lib/geo/eligibility.ts`, `lib/ai/verifiers/*`, `lib/ai/engine.ts` |
+| Company intelligence | Company Intelligence plane | `job_ai_intelligence` rows |
+| Evidence (crawler states, store) | Evidence pipeline | `lib/ai/evidence.ts`, `scripts/evidence-worker.ts` |
+| Trust (scores, signals, rescoring) | Trust Engine (write plane) | `lib/trust/engine.ts` (`calculateTrustScore`, `rescoreTrustSignals`), persisted `jobs.trust_*` |
+| Healing historical data | Backfill | `app/api/ai/backfill`, `app/api/jobs/backfill-trust` |
+| Display | Render | sanitize malformed values, label provenance, show uncertainty — nothing more |
+
+**Executed reverts (A1–A5):**
+- **A1** render-time eligibility arbitration deleted (`lib/geo/render-eligibility.ts` gone). The corpus re-read moved to the verifier domain as `corroborateAfricaClaim()` in `lib/geo/eligibility.ts`, consumed by the africa-fp backfill healer (which now also re-reads the CURRENT posting, not just the stored quote) and future re-verification. All render consumers display the canonical stored verdict chain (JAI verdict first, ingest tier as fallback) with P0-4 provenance classes.
+- **A2** country-hub and intent-page membership follow stored flags again; render no longer re-decides page membership.
+- **A3** trust cap + cap note gate on the stored `africa_eligibility` verdict.
+- **A4** render salary authority deleted (`jaiSalaryDisplay` gone). Card and evidence panel display the canonical feed plane (junk guard kept); the JAI range displays in the Opportunity panel with its own provenance. Write path owns reconciliation (`salary_authority_applied` at verification; salary-conflict healer extended with the stale-quote requeue class).
+- **A5** confidence display pairs with its stored verdict again (no render corroboration gating).
+
+**Kept presentation/sanitization (B):** traceable quoting, plainified word-aligned excerpts, junk-salary guards (with the corrected copy: "Raw value failed quality checks — we don't display it as compensation."), skills de-duping/unwrap, claim-class provenance labels, crawler-state labels, presentation bug fixes, OG restore.
+
+**Judgment calls (C):**
+- **C1 REVERTED.** The render-time trust correction is gone from every render file. The identical computation exists only as `rescoreTrustSignals` (write plane), consumed by `POST /api/jobs/backfill-trust` (now preserves persisted measured-learning entries); `TRUST_VERSION` bumped 2 → 3 so pre-doctrine rows are rescore-eligible. Accepted consequence: plateaus (raw 100s, 59-band) return in render until the merge-gated rescore runs — **stale truth over fabricated freshness**.
+- **C2 kept with doctrine constraint:** `unifiedTrustScore` is a presentation metric over canonical persisted inputs only (persisted `trust_score` + persisted `overall_confidence`). The render-time dynamic adjustments (freshness decay, richness/provenance bonuses, dead-page penalty) were removed from render; evidence age/depth is the verifier plane's business at write time.
+- **C3 kept:** `softCapTrust` is a monotone presentation of the pre-existing cap rule over canonical stored inputs; no business decision consumes the transformed number.
+- **C4 kept:** ceiling marker is pure arithmetic over displayed persisted signals.
+
+**Structural enforcement:** harness suite 12 walks `app/`, `components/`, `lib/` and fails if any reverted override identifier (`render-eligibility`, `correctedTrustSignals`, `displayLegitimacy`, `jaiSalaryDisplay`, render `corroborated` gating) ever returns; plus the verifier-domain corroboration matrix. 139/139.
+
+**Honest display consequences (doctrine-accepted, heal at the write path):**
+- mali-class rows display their stored (wrong) "Explicitly open to Africa • 75%" verdict again — visibly stale until merge + `africa-fp` backfill re-verifies them.
+- Oben's Romania-locked role re-appears on /remote-jobs/nigeria and the Africa intent page until ingest/re-verify corrects stored flags.
+- Micro1-class salary splits display both planes with provenance (card: feed; panel: JAI range) until the write-path authority + salary-conflict backfill settle them.
+- Trust plateaus return until the rescore backfill runs.
+
+**Backfill runbook (unchanged, merge-gated, never run in preview):** `GET /api/ai/backfill?kind=africa-fp|salary-conflict|skills-json|all&execute=1` (Bearer CRON_SECRET; dry-run first) + `POST /api/jobs/backfill-trust?batch=500`. Preview lane throughout: nothing merged, no production, no backfills executed.

@@ -1,6 +1,11 @@
 import type { Job } from "@/lib/types"
 
-export const TRUST_VERSION = 2
+// v3 (2026-08-05): marks rows that need a WRITE-PATH rescore under the
+// single-owner doctrine — rows scored before the honest-weight fixes (logo
+// +8→+3, fabricated-freshness zeroed) carry stale weights until the trust
+// rescore backfill (POST /api/jobs/backfill-trust) re-persists them. The
+// render layer displays the stored plane and never self-corrects.
+export const TRUST_VERSION = 3
 
 export type TrustConfidence = "high" | "medium" | "low" | "unknown"
 export type TrustTone = "positive" | "caution" | "warning" | "neutral"

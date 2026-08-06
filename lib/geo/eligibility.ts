@@ -383,13 +383,13 @@ export function classifyGeoEligibility(opts: {
 
 /**
  * [ARCHITECTURE 2026-08-05 — single-owner doctrine] Claim corroboration
- * lives in the VERIFIER DOMAIN. This check used to run inside the render
- * layer (`lib/geo/render-eligibility.ts`), where it re-read the corpus at
- * display time and silently superseded persisted verdicts — a second
- * intelligence engine in the UI. It was moved here under the doctrine:
- * the verifier corpus re-judges stale claims; backfill/re-verification
- * heals the stored rows; the render layer displays the canonical stored
- * verdict with its provenance class and never imports this function.
+ * lives in the VERIFIER DOMAIN. This check used to run inside a render-
+ * plane module, where it re-read the corpus at display time and silently
+ * superseded persisted verdicts — a second intelligence engine in the UI.
+ * It was moved here under the doctrine: the verifier corpus re-judges
+ * stale claims; backfill/re-verification heals the stored rows; the render
+ * layer displays the canonical stored verdict with its provenance class
+ * and never imports this function.
  *
  * Consumers: the africa-fp backfill healer (requeues rows whose stored
  * affirmative verdict the current corpus can no longer find in the

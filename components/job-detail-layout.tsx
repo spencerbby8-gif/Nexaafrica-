@@ -10,7 +10,7 @@ import { RoleViewTracker } from '@/components/role-view-tracker'
 import { EvidencePanel } from '@/components/evidence-panel'
 import { TrustCard } from '@/components/trust/trust-card'
 import { ReportButton } from '@/components/trust/report-button'
-import { calculateTrustScore, correctedTrustSignals, unifiedTrustScore, unifiedCapNote } from '@/lib/trust/engine'
+import { calculateTrustScore, unifiedTrustScore, unifiedCapNote } from '@/lib/trust/engine'
 import { crawlerStateLabel } from '@/lib/ai/evidence'
 import { employmentLabel, isFresh, postedLabel } from '@/lib/format'
 import { cleanDescription, getCleanMarkdownForRender } from '@/lib/cleanDescription'
@@ -328,25 +328,32 @@ export function JobDetailLayout({ companyJobCount,
           // Calculate trust score on the fly if not persisted, else use persisted if available
           // For SSR, this is pure and fast (<5ms)
           try {
-            // [TRUTH LAYER v1] corrected read-time plane: stateless signals
-            // recomputed with current weights, learning entries kept from the
-            // persisted set, score = 50 + sum(displayed signals). The number
-            // always matches the list beneath it; nothing stale or clamp-hidden.
+            // [ARCHITECTURE — single-owner doctrine] The trust plane displays
+            // the PERSISTED Trust Engine output (canonical): stored score,
+            // stored signals, stored confidence. Nothing is recomputed at
+            // render; rows scored under older weights heal via the write-path
+            // rescore backfill (POST /api/jobs/backfill-trust), never via a
+            // read-time correction. The ceiling marker is pure arithmetic
+            // over the signals listed beneath it — display honesty only (C4).
             let detTrust: any
             let legitimacyRaw: number | null = null
-            try {
-              const corrected = correctedTrustSignals(job)
-              legitimacyRaw = corrected.rawSum
+            const persistedSignals: any[] = Array.isArray((job as any).trust_signals) ? (job as any).trust_signals : []
+            const persistedScore = typeof (job as any).trust_score === 'number' ? (job as any).trust_score : null
+            if (persistedScore != null && persistedSignals.length > 0) {
+              legitimacyRaw = Math.round(50 + persistedSignals.reduce((acc, s) => acc + (Number((s as any)?.scoreImpact) || 0), 0))
               detTrust = {
-                score: corrected.score,
+                score: persistedScore,
                 confidence: (job as any).trust_confidence || "medium",
                 version: (job as any).trust_version || 2,
-                signals: corrected.signals,
+                signals: persistedSignals,
                 isFlagged: !!(job as any).is_flagged,
                 flaggedReason: (job as any).flagged_reason,
-                isWarning: corrected.score < 40,
+                isWarning: persistedScore < 40,
               }
-            } catch {
+            } else {
+              // Never scored by the write path: the Trust Engine itself (the
+              // canonical owner) scores it on miss — no render-invented
+              // logic. New ingests persist scores; legacy fallback only.
               detTrust = calculateTrustScore(job)
             }
             // Unified: listing legitimacy blended with AI opportunity-evidence.

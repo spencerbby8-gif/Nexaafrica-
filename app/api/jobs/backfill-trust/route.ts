@@ -1,8 +1,17 @@
 import { NextResponse } from 'next/server'
 import { isPipelineAuthorized, pipelineAuthConfigured } from '@/lib/server/auth'
 import { createServiceClient } from '@/lib/supabase/service'
-import { calculateTrustScore } from '@/lib/trust/engine'
+import { rescoreTrustSignals } from '@/lib/trust/engine'
 import { TRUST_VERSION } from '@/lib/trust/types'
+
+/**
+ * [ARCHITECTURE 2026-08-05 — single-owner doctrine] Trust rescore — the
+ * WRITE-PATH owner of trust healing for historical rows. Uses the Trust
+ * Engine's rescore (current weights + persisted measured-learning entries
+ * preserved) and PERSISTS the result; the render layer displays only the
+ * stored plane and never self-corrects. Stale truth heals here, not at
+ * render. (Preview lane: never executed until authorized post-merge.)
+ */
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -22,7 +31,7 @@ export async function POST(req: Request) {
 
   const { data: rows, error } = await supabase
     .from('jobs')
-    .select('id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, salary_min, salary_max, salary_currency, salary_period, employment_type, tags, is_remote, is_open_to_africa, eligibility, posted_at, created_at, expires_at, source, source_id, intelligence, trust_version')
+    .select('id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, salary_min, salary_max, salary_currency, salary_period, employment_type, tags, is_remote, is_open_to_africa, eligibility, posted_at, created_at, expires_at, source, source_id, intelligence, trust_version, trust_signals')
     .eq('is_active', true)
     .or(`trust_version.is.null,trust_version.lt.${TRUST_VERSION}`)
     .order('created_at', { ascending: true })
@@ -36,7 +45,11 @@ export async function POST(req: Request) {
 
   for (const row of rows ?? []) {
     try {
-      const trust = calculateTrustScore(row as any, { companyJobCount: 0 })
+      // Rescore WITHOUT learning context: stateless signals recompute with
+      // current weights; the row's persisted measured-learning entries
+      // (company_history / company_learning / source_learning) are kept by
+      // the rescore — they encode real history a per-row pass cannot rebuild.
+      const trust = rescoreTrustSignals(row as any)
       const { error: upErr } = await supabase
         .from('jobs')
         .update({

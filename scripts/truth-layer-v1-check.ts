@@ -191,8 +191,7 @@ function v1Reason(v: { tier: string; reason: string }) {
 import {
   unifiedTrustScore,
   softCapTrust,
-  correctedTrustSignals,
-  displayLegitimacy,
+  rescoreTrustSignals,
 } from "../lib/trust/engine"
 
 console.log("7 · Trust differentiation")
@@ -280,24 +279,26 @@ function mkJob(over: Record<string, any>): any {
 }
 
 // 7e · fabricated posted_at (== created_at) yields honest zero-impact signal
+// (asserted through the WRITE-PLANE rescore math — render consumes persisted)
 {
   const fabricated = mkJob({ posted_at: "2026-08-05T04:21:24.938Z", created_at: "2026-08-05T04:21:24.938Z", trust_signals: [
     { id: "posting_freshness", label: "Fresh • 0 days ago", scoreImpact: 12, confidence: "high", tone: "positive", explanation: "x", source: "freshness" },
   ] })
-  const { signals, score } = correctedTrustSignals(fabricated)
+  const { signals, score } = rescoreTrustSignals(fabricated)
   const freshSig = signals.find((s: any) => s.id === "posting_freshness") as any
   check("fabricated freshness gets 0 impact", freshSig?.scoreImpact === 0, freshSig && { label: freshSig.label, scoreImpact: freshSig.scoreImpact })
   check("fabricated freshness is labeled honestly (no date from source)", /no date|cannot verify freshness/i.test((freshSig?.label || "") + " " + (freshSig?.explanation || "")))
   check("the +12 illusion is removed from the number", score <= 100 - 12 + 1, score)
 }
 
-// 7f · learning entries survive the read-time rebuild (ctx-free renders)
+// 7f · measured learning entries survive the WRITE-PLANE rescore
+// (they encode real history a ctx-free rescore cannot rebuild)
 {
   const job = mkJob({ trust_signals: [
     { id: "company_history", label: "Established employer • 407 roles", scoreImpact: 8, confidence: "high", tone: "positive", explanation: "x", source: "history" },
     { id: "source_learning", label: "Source track record", scoreImpact: 8, confidence: "medium", tone: "positive", explanation: "x", source: "learning" },
   ] })
-  const { signals } = correctedTrustSignals(job)
+  const { signals } = rescoreTrustSignals(job)
   check("company_history kept from persisted set", signals.some((s: any) => s.id === "company_history"))
   check("source_learning kept from persisted set", signals.some((s: any) => s.id === "source_learning"))
 }
@@ -305,7 +306,7 @@ function mkJob(over: Record<string, any>): any {
 // 7g · first-seen logo employer no longer pins legitimacy at 100
 // (rot-era: MindPackets/MindPlus raw 100 with logo+8 & board-domain +8)
 {
-  const legit = displayLegitimacy(mkJob({}))
+  const legit = rescoreTrustSignals(mkJob({})).score
   check("legitimacy for logo-first-seen feed job < 100", legit < 100, legit)
   check("legitimacy still lands in a sane band (>= 60)", legit >= 60, legit)
 }
@@ -320,7 +321,7 @@ function mkJob(over: Record<string, any>): any {
 
 // 7i · ceiling honesty: rich-signal listings report their overrun out loud
 {
-  const rich = correctedTrustSignals(mkJob({}) as any)
+  const rich = rescoreTrustSignals(mkJob({}) as any)
   check("clamped score stays ≤ 100", rich.score <= 100, rich.score)
   check("rawSum exposed for ceiling marking", typeof rich.rawSum === "number")
   check("score equals min(100, rawSum)", rich.score === Math.min(100, Math.max(0, rich.rawSum)), { score: rich.score, rawSum: rich.rawSum })
@@ -513,4 +514,70 @@ function probeSalaryLabel(row: any): { junk: boolean; disclosed: boolean } {
   check("EvidencePanel never asserts junk as disclosed salary", !sigs.some((x: any) => x.id === "salary-disclosed"), sigs.filter((x: any) => x.id.startsWith("salary")).map((x: any) => x.id))
   const real = deriveEvidence(mkJob({}) as any)
   check("EvidencePanel keeps genuine disclosed salary", real.some((x: any) => x.id === "salary-disclosed"), real.filter((x: any) => x.id.startsWith("salary")).map((x: any) => x.id))
+}
+
+console.log("12 · Architecture boundary — one canonical owner per decision")
+
+import { corroborateAfricaClaim } from "../lib/geo/eligibility"
+import { readFileSync, readdirSync, statSync, existsSync } from "node:fs"
+import { join, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
+
+// 12a · Verifier-domain corroboration — the checks that briefly ran inside
+// the render layer (A1) now pin in their canonical home (verifier corpus),
+// consumed by re-verification/backfill, never by the UI.
+{
+  // Positive control: Africa named in location -> corpus-explicit claim holds.
+  const hostaway = corroborateAfricaClaim({ text: "NOTE: This is a FULLY remote role, but the candidate must be within EMEA to collaborate with their team, peers, and internal customers.", locationField: "Australia, Canada, Ghana, India, Ireland, New Zealand, Nigeria, South Africa, United Kingdom, United States" }, "explicit")
+  check("hostaway stored explicit is corpus-corroborated (no requeue)", hostaway.supported === true && hostaway.corpusTier === "explicit", hostaway)
+  // Oben Romania (live): stored likely vs Romania-locked text -> NOT supported.
+  const oben = corroborateAfricaClaim({ text: "Job details Job Location: Remote (Anywhere Romania) Effort Schedule:8 Hours/Day Business Hours: EET Timeframe Language: English, Romanian Customers Background: (EU, WorldWide)", locationField: "Romania" }, "likely")
+  check("oben stored likely contradicted by corpus (requeue for re-verification)", oben.supported === false && oben.corpusTier === "restricted", oben)
+  // mali FP (live audit-leader): stored explicit, no Africa in posting -> NOT supported.
+  const mali = corroborateAfricaClaim({ text: "This role is based in San Francisco, CA. We use a hybrid work model of 3 days in the office per week and offer relocation assistance to new employees.", locationField: "San Francisco" }, "explicit")
+  check("mali stored explicit not supported by corpus (requeue)", mali.supported === false && mali.reason === "stored-explicit-not-in-current-text", mali)
+  // MindPlus (live): marketing worldwide is a dead zone; stored likely unsupported.
+  const mind = corroborateAfricaClaim({ text: "The organization partners with businesses worldwide to deliver innovative, data-driven solutions that enhance operational efficiency and business growth.", locationField: "Sri Lanka" }, "likely")
+  check("mindplus marketing worldwide does not support stored likely", mind.supported === false, mind)
+  // Genuine worldwide hiring supports stored likely.
+  const genuine = corroborateAfricaClaim({ text: "This is a fully remote role. Work from anywhere in the world. We hire globally across all time zones.", locationField: "Worldwide" }, "likely")
+  check("genuine worldwide hiring supports stored likely", genuine.supported === true, genuine)
+  // Nigeria-named text supports a stored explicit.
+  const named = corroborateAfricaClaim({ text: "Open to applicants in Nigeria and Kenya. Fully remote.", locationField: "Worldwide" }, "explicit")
+  check("Africa-named text supports stored explicit", named.supported === true && named.corpusTier === "explicit", named)
+  // Protective stored verdicts are never auto-cleared by corpus silence.
+  const silent = corroborateAfricaClaim({ text: "A role with no location language at all.", locationField: null }, "restricted")
+  check("stored restricted survives corpus silence (protective)", silent.supported === true, silent)
+  const storedUnknown = corroborateAfricaClaim({ text: "A role with no location language at all.", locationField: null }, "unknown")
+  check("stored unknown is never a corroboration suspect", storedUnknown.supported === true, storedUnknown)
+}
+
+// 12b · Structural boundary: the render layer CANNOT quietly become a second
+// intelligence engine again — the modules/identifiers of the reverted
+// overrides are absent from every app/components/lib file. If one returns,
+// this suite fails loudly.
+{
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..")
+  check("render arbitration module is deleted", !existsSync(join(root, "lib", "geo", "render-eligibility.ts")))
+  const walk = (dir: string): string[] => {
+    const out: string[] = []
+    for (const e of readdirSync(dir)) {
+      if (e === "node_modules" || e.startsWith(".")) continue
+      const p = join(dir, e)
+      const st = statSync(p)
+      if (st.isDirectory()) out.push(...walk(p))
+      else if (/\.(ts|tsx)$/.test(e)) out.push(p)
+    }
+    return out
+  }
+  const planeFiles = [...walk(join(root, "app")), ...walk(join(root, "components")), ...walk(join(root, "lib"))]
+  const offenders = (needle: string) => planeFiles.filter((p) => readFileSync(p, "utf8").includes(needle))
+  check("no app/components/lib file references the deleted arbitration module", offenders("render-eligibility").length === 0, offenders("render-eligibility"))
+  check("render trust correction is gone everywhere", offenders("correctedTrustSignals").length === 0 && offenders("displayLegitimacy").length === 0, [...offenders("correctedTrustSignals"), ...offenders("displayLegitimacy")])
+  check("render-plane salary authority is gone", offenders("jaiSalaryDisplay").length === 0, offenders("jaiSalaryDisplay"))
+  check("render confidence gating on corroboration is gone", offenders("corroborated").length === 0, offenders("corroborated"))
+  const engine = readFileSync(join(root, "lib", "trust", "engine.ts"), "utf8")
+  check("unified trust performs no render-time freshness/richness recompute", !/verifiedDays|dimensionCount|Date\.now\(/.test(engine), null)
+  const layout = readFileSync(join(root, "components", "job-detail-layout.tsx"), "utf8")
+  check("detail page displays the persisted trust plane only", layout.includes("trust_signals") && !layout.includes("rescoreTrustSignals"), null)
 }

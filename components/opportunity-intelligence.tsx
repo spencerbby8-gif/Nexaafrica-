@@ -294,12 +294,25 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
           <span className="font-medium text-accent">Why this matches you:</span> {matchReasons.join(' · ')}
         </p>
       )}
-      {(intelligence.africa_evidence || intelligence.remote_evidence || intelligence.salary_evidence) && (
-        <div className="mt-2">
-          <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70">Evidence</p>
-          <EvidenceQuote text={intelligence.africa_evidence || intelligence.remote_evidence || intelligence.salary_evidence} url={intelligence.africa_source_urls?.[0] || intelligence.evidence_urls?.[0]} allowLink={false} plain={plain} />
-        </div>
-      )}
+      {(() => {
+        // [EVIDENCE PLANE RESTORE 2026-08-06] Display the first DISPLAY-SAFE
+        // stored quote — never a bare "Evidence" heading, and never let one
+        // malformed stored quote (e.g. a mid-word africa_evidence slice) hide
+        // a traceable stored quote sitting beside it in the same row. When
+        // nothing stored is safely displayable, the block renders nothing;
+        // the pipeline-state badge above already says verification is pending
+        // or degraded. Selection is display-safety only — no recompute, never
+        // a substitute sentence.
+        const candidates = [intelligence.africa_evidence, intelligence.remote_evidence, intelligence.salary_evidence]
+        const firstTraceable = plain != null ? (candidates.find((t) => t && traceableQuote(t, plain)) ?? null) : null
+        if (!firstTraceable) return null
+        return (
+          <div className="mt-2">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70">Evidence</p>
+            <EvidenceQuote text={firstTraceable} url={intelligence.africa_source_urls?.[0] || intelligence.evidence_urls?.[0]} allowLink={false} plain={plain} />
+          </div>
+        )
+      })()}
     </div>
   )
 }

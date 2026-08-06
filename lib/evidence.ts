@@ -101,12 +101,34 @@ export function traceableQuote(quote: string | null | undefined, sourcePlainText
   const hay = normalizeForMatch(sourcePlainText)
   const needle = normalizeForMatch(cleaned)
   if (!needle || needle.length < 12) return null
-  const idx = hay.indexOf(needle)
-  if (idx === -1) return null
-  const before = idx === 0 ? '' : hay[idx - 1]
-  const after = idx + needle.length >= hay.length ? '' : hay[idx + needle.length]
-  if (before && WORD_CHAR.test(before)) return null // starts mid-word
-  if (after && WORD_CHAR.test(after)) return null // ends mid-word
+
+  // [EVIDENCE PLANE RESTORE 2026-08-06] Ellipsis-aware: persisted excerpts
+  // are TRUNCATION-MARKED by the extractor (segments cut/joined with "..."
+  // or "…"). Strict full-containment could never match them, so good stored
+  // evidence silently vanished (live: benefit quotes on Veeam/Hostaway
+  // rendered "Quoted from the posting" with no quote). A segment bounded by
+  // an ellipsis may start/end mid-word — that is what the mark means.
+  // Unmarked mid-word slices without the mark still die — the truncation
+  // affordance never rescues mangling.
+  const leading = /^(?:\.{3,}|…)/.test(needle)
+  const trailing = /(?:\.{3,}|…)$/.test(needle)
+  const segs = needle.split(/\.{3,}|…/).map((s) => s.trim()).filter((s) => s.length > 0)
+  if (segs.length === 0) return null
+
+  let pos = 0
+  for (let i = 0; i < segs.length; i++) {
+    const seg = segs[i]
+    if (seg.length < 12) return null // too fragmentary to trust as a quote
+    const idx = hay.indexOf(seg, pos)
+    if (idx === -1) return null
+    const startTruncated = i > 0 || (i === 0 && leading)
+    const endTruncated = i < segs.length - 1 || (i === segs.length - 1 && trailing)
+    const before = idx === 0 ? '' : hay[idx - 1]
+    const after = idx + seg.length >= hay.length ? '' : hay[idx + seg.length]
+    if (!startTruncated && before && WORD_CHAR.test(before)) return null // starts mid-word
+    if (!endTruncated && after && WORD_CHAR.test(after)) return null // ends mid-word
+    pos = idx + seg.length
+  }
   return cleaned
 }
 

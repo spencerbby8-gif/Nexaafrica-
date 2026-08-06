@@ -581,3 +581,36 @@ import { fileURLToPath } from "node:url"
   const layout = readFileSync(join(root, "components", "job-detail-layout.tsx"), "utf8")
   check("detail page displays the persisted trust plane only", layout.includes("trust_signals") && !layout.includes("rescoreTrustSignals"), null)
 }
+
+// 9f · [EVIDENCE PLANE RESTORE 2026-08-06] Truncation-marked stored excerpts
+// render again; unmarked mangling stays dead. Every vector below is a REAL
+// stored row captured from the live preview during the evidence-plane audit.
+{
+  const veeamPlain = plainifyPosting("What You’ll Get \n- 26 paid vacation days, plus 4 extra global VeeaMe Days for self-care and 24 paid volunteer hours annually through Veeam Cares\n- Annual allowance for private healthcare plan\n- Supplementary pension scheme with employer and employee contributions\n- Long-term sickness coverage: salary protection for up to two years\n\nPlease note: If an applicant is permanently located outside of Netherlands, Veeam reserves the right to decline the application.")
+  // REAL stored excerpt (jobs.intelligence, benefit=paid time off, Veeam row)
+  const ptoStored = "- 26 paid vacation days, plus 4 extra global VeeaMe Days for self-care and 24 paid volunteer hours annually through Veeam Cares - Annual allowance for privat..."
+  check("truncation-marked stored benefit excerpt renders again", traceableQuote(ptoStored, veeamPlain) !== null)
+  const scopeStored = "Headquartered in Seattle with offices in more than 30 countries, Veeam protects over 550,000 customers worldwide, who trust Veeam to keep their businesses ru..."
+  const veeamScopePlain = plainifyPosting("Headquartered in Seattle with offices in more than 30 countries, Veeam protects over 550,000 customers worldwide, who trust Veeam to keep their businesses running. Join us.")
+  check("stored scope excerpt truncated mid-word renders with its mark", traceableQuote(scopeStored, veeamScopePlain) !== null)
+  check("interior-ellipsis stored excerpt matches in order", traceableQuote("26 paid vacation days, plus 4 extra global VeeaMe Days ... Veeam Cares - Annual allowance for privat...", veeamPlain) !== null)
+  check("reversed segments are NOT a quote (order matters)", traceableQuote("Veeam Cares - Annual allowance for privat ... 26 paid vacation days, plus 4 extra global", veeamPlain) === null)
+  check("fragmentary segments under 12 chars are not quotes", traceableQuote("abcdef ... 26 paid vacation days, plus 4 extra global VeeaMe Days", veeamPlain) === null)
+
+  // REAL stored africa_evidence (the mali row) — unmarked mid-word slice: dead.
+  const auditPlain = plainifyPosting("This role is based in San Francisco, CA. We use a hybrid work model of 3 days in the office per week and offer relocation assistance to new employees. Use data analytics, automation, and AI to improve risk assessment, audit scoping, testing, continuous monitoring, and reporting, including identifying anomalies, control weaknesses, and emerging risks. - Build trusted relationships across Finance, Accounting, Operations, Legal, Compliance.")
+  const maliStored = "d AI to improve risk assessment, audit scoping, testing, continuous monitoring, and reporting, including identifying anomalies, control weaknesses, and emerging risks. - Build trusted relationships ac"
+  check("unmarked mid-word slice (mali stored quote) stays dead", traceableQuote(maliStored, auditPlain) === null)
+
+  // REAL stored scope evidence (video editor row) — href-adjacent slice: dead.
+  const videoPlain = plainifyPosting("Job Title: Video Editor. Originally posted on Himalayas")
+  check("href-adjacent stored fragment stays dead", traceableQuote("app) Worldwide Video-Editor Video-Editing Video-Content-Editor Creative-Video-Editor Social-Vid", videoPlain) === null)
+
+  // Card Evidence block: a malformed stored quote must never HIDE a
+  // traceable stored quote beside it; nothing renders when none survives.
+  const candidatesMali = [maliStored, "We use a hybrid work model of 3 days in the office per week", null]
+  const firstT = candidatesMali.find((t) => t && traceableQuote(t as any, auditPlain))
+  check("first TRACEABLE stored quote wins over a malformed first", firstT === "We use a hybrid work model of 3 days in the office per week", firstT)
+  const noneT = [maliStored, "pl"].find((t) => t && traceableQuote(t as any, auditPlain)) ?? null
+  check("no traceable stored quote -> block renders nothing (no bare heading)", noneT === null, noneT)
+}

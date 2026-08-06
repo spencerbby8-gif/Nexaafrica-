@@ -420,3 +420,28 @@ The §16 audit's fixes, built in the preview branch. No backfills executed, no d
 **5. Render untouched.** Zero edits under app/ or components/.
 
 **Fixtures:** harness suite 13 (35 checks) — every seal/requeue vector uses the real live versions from §16's table (regex-extracted-33bytes/-8036bytes/-7880bytes, mistral:…, github_models:…); owner fixtures pin registry-verified immutable-vs-scam, AI-cannot-elevate, scam-demotes-with-quote, measured-likely bounded, placeholder guard, volatility guard; trust-signal parity (same owner → same +15 verified basis; logo stays +3 cosmetic; new employer 0); ingest evidence row shape + honest-absence; structural boundary (no render importer of the owner; seal guard precedes the upsert). **Suite: 183/183. tsc clean.**
+
+## 18 · Fresh render-vs-storage audit + deterministic Africa/slug fixes (2026-08-06)
+
+Ordered audit of the live preview (deployment 9CPfwReAd) using only rendered pages and the persisted `/api/jobs` merge. ~18 raw rows fully captured + ~25 rendered cards/catalog entries.
+
+**Per-job evidence classification (stored ↔ rendered):**
+- Renders correctly (salary/benefit quotes): MongoDB SPM `$136,000—$266,000`, Pinterest `$123,684—$254,644`, Reddit rows on /jobs with salary quotes, adoption detail benefit quotes, Hostaway healthcare/equity.
+- Exists but hidden (display-safety traceability, §15): contract-sourcer africa quote "oss a broad range of functions…" (unmarked mid-word); audit-leader mali stored slice.
+- Never written: 8/6 regex-sealed rows (MongoDB Dir Comms 7b85bc41, Stripe 9f32e3b0/f234b74c) — V1 evidence collected (evidence_state fetched, evidence_refs present) but intelligence dimensions sealed at regex tier; + historical pre-V1 rows (evidence_state null, evidence_refs null).
+- OVERWRITTEN — proven once: adoption-duplicate 9fd3f065 was a real-model row (render snapshot: verified·100, overall 80, prose skills) overwritten 2026-07-29T16:51Z by `regex-extracted-8079bytes` (overall 22, dims nulled) via the failed-run-upserts-anyway hole closed in §17.
+- Stale: all 7/29–8/4 real-model rows (llama/mistral/gpt) — pre-hardening prompt, fabricated-provenance evidence (llama company_evidence = About-boilerplate; PRS africa quote = marketing corpus; assoc-hr africa = EMEA-coverage sentence; contract sourcer queue error stale text "Retry #1 scheduled" on a completed row — fixed: completions now clear error).
+- Collection failed: evidence_state blocked (MindPlus himalayas, Veeam, video-editor) — honest recorded state.
+
+**Company-legitimacy/Africa variance root causes (≥20 same-company rows):**
+1. Per-job AI verdict from per-run company-page fetch luck + prompt-version drift (proven: Reddit llama rows → verified·100 citing About-text; mistral/gpt/regex rows → unknown — one company, identical channel).
+2. Two un-synced persistence points for Africa written by different judges (corpus at ingest vs AI hunches at drain; mali-marketing fabrications stood as africa_evidence).
+3. Duplicate postings with identical display slugs (adoption pair j7997020 vs j8081271 — near-identical posted_at: 00:26:56 vs 00:26:53; distinct salaries) — the suspected render/cache divergence was DISPROVEN: no UI bug; surfaces rendered different ROWs behind one URL. Retracted honestly.
+4. §16/§17 fixes are drain-gated; existing stored rows cannot become consistent without the authorized pipeline.
+
+**Fixes (write path only, fixture-pinned 200/200, tsc clean):**
+- `adjudicateAfricaEligibility` (lib/geo/eligibility.ts) — deterministic corpus owner of the Africa decision; `enrichJobWithAI` writes it into the JAI africa dimension (model `adjudicator:corpus-v1`), so ingest and JAI write ONE judge's verdict; per-run AI can never re-decide. Evidence differs honestly → verdicts differ honestly (eng-manager "any country…" likely vs adoption restricted).
+- Queue hygiene: completed rows now store `error: null`.
+- Slug identity (lib/slug.ts + run.ts both loops): oldest active base-slug row owns base; later dupes resolve deterministic `-dup-<key>` slugs (adoption case pinned verbatim).
+
+No backfills, no drains invoked, no merges, preview-only code proof; healing executes on the next authorized ingest/drain.

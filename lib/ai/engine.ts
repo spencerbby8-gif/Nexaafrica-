@@ -197,6 +197,30 @@ export async function enrichJobWithAI(job: Job, opts?: { learning?: CompanyLearn
   // africa — double-counts) and quality (subjective / deterministic).
   // Includes experience (output of the real experience+skills verifier).
   // Formula matches the truth cleanup migration (20260727000000).
+  // [§18 DETERMINISTIC AFRICA] The corpus adjudicator owns the verdict —
+  // per-run AI output can never re-decide Africa eligibility. The same judge
+  // classifies at ingest (jobs.eligibility via classifyEligibility) and here;
+  // identical postings can't drift apart across runs or companies, while
+  // postings with genuinely different evidence keep genuinely different
+  // verdicts.
+  try {
+    const { adjudicateAfricaEligibility } = await import("@/lib/geo/eligibility")
+    const geo = adjudicateAfricaEligibility({
+      title: job.title,
+      description_md: job.description_md || "",
+      location: (job as any).location ?? null,
+    })
+    result.africa = {
+      value: geo.value,
+      confidence: geo.confidence,
+      evidence: geo.evidence ? [{ text: geo.evidence, url: job.apply_url, type: "job_description" as const }] : [],
+      sourceUrls: result.africa.sourceUrls,
+      lastVerified: now,
+      modelVersion: `adjudicator:corpus-v1`,
+      countryRestrictions: geo.countryRestrictions,
+    }
+  } catch {}
+
   result.overallConfidence = Math.round(
     (result.africa.confidence + result.remote.confidence + result.salary.confidence + result.company.confidence + result.experience.confidence) / 5
   )
@@ -889,7 +913,7 @@ export async function processAIQueue(batchSize = 100) {
         durationMs: (diags as any[]).find((d: any) => d.event === "success")?.durationMs ?? null,
         attempt: item.attempts + 1,
       })
-      await supabase.from("ai_processing_queue").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", item.id)
+      await supabase.from("ai_processing_queue").update({ status: "completed", completed_at: new Date().toISOString(), error: null }).eq("id", item.id)
       processed++
       consecutiveItemFailures = 0
     } catch (e) {

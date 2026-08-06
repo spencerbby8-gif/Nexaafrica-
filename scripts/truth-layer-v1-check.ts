@@ -24,6 +24,8 @@ import { isFailedModelVersion, queueRepairDecision, preserveQuote } from "../lib
 import { companyLegitimacyOwner, isCuratedEmployer } from "../lib/company/legitimacy"
 import { employerLegitimacySignal } from "../lib/trust/signals/employerLegitimacy"
 import { ingestEvidenceRow } from "../lib/ai/evidence"
+import { adjudicateAfricaEligibility } from "../lib/geo/eligibility"
+import { chooseJobSlug, postingSlugKey } from "../lib/slug"
 
 let passed = 0
 let failed = 0
@@ -705,5 +707,75 @@ console.log("\n13 · Write-path repair — evidence plane + canonical company le
     check("boundary: ingest writes preference-1 evidence in the crawler path", readFileSync(join(root, "lib", "ingest", "run.ts"), "utf8").includes("recordIngestEvidence"))
     const consolidatedSrc = readFileSync(join(root, "lib", "ai", "verifiers", "consolidated.ts"), "utf8")
     check("boundary: per-job AI is forbidden from identity verdicts in the prompt", consolidatedSrc.includes('NEVER return "verified" or "likely_legit"'))
+  }
+}
+
+/* -------------------------------------------------------------------- */
+/* 14 · Deterministic Africa + slug identity (§18) — live-pinned values   */
+/* -------------------------------------------------------------------- */
+console.log("\n14 · Deterministic Africa eligibility + duplicate slug identity")
+{
+  // REAL Reddit adoption posting (both duplicates share this evidence shape).
+  const adoptionText = `**Location:** Remote from NYC, Chicago, SF or LA
+We're growing our collaborative team of individuals to drive Reddit Ads product adoption within our Global Sales organization and with advertisers. In this role, you will be responsible for scaling ads product adoption and scale across the Large Customer Sales advertisers in the United States.`
+  const a1 = adjudicateAfricaEligibility({ title: "Senior Product Adoption Strategist, Shopping", description_md: adoptionText, location: "Remote - United States" })
+  const a2 = adjudicateAfricaEligibility({ title: "Senior Product Adoption Strategist, Shopping", description_md: adoptionText, location: "Remote - United States" })
+  check("adjudicator: identical posting, identical verdict across runs", JSON.stringify(a1) === JSON.stringify(a2), [a1, a2])
+  check("adjudicator: US-locked Reddit posting is restricted (was ingest-likely)", a1.value === "restricted" && a1.confidence === 80 && a1.basis === "corpus:us-state-remote", a1)
+  check("adjudicator: restriction quote is the raw location evidence", a1.evidence === "Remote - United States" && a1.countryRestrictions.includes("United States"), a1)
+
+  // REAL PRS marketing text (fabricated-explicit class must stay dead).
+  const prsText = "MongoDB is built for change. MongoDB's unified database platform, the most widely available, globally distributed data platform on the market, helps organizations modernize legacy workloads."
+  const prs = adjudicateAfricaEligibility({ title: "Principal Research Scientist", description_md: prsText, location: "New York City; Palo Alto" })
+  check("adjudicator: business-coverage marketing cannot mint an eligibility verdict", prs.value !== "explicit" && prs.value !== "likely", prs)
+  check("adjudicator: no signal -> honest unknown with no quote", prs.value === "unknown" && prs.confidence === 0 && prs.evidence === null, prs)
+
+  // Positive control: Africa named in hiring context.
+  const africaText = "We are hiring globally. This role is open to candidates in Ghana, Nigeria, South Africa and all of Africa."
+  const af = adjudicateAfricaEligibility({ title: "Staff Product Manager", description_md: africaText, location: "Worldwide" })
+  check("adjudicator: Africa-named hiring text is explicit with corpus quote", af.value === "explicit" && af.confidence === 85 && !!af.evidence && af.evidence.toLowerCase().includes("africa"), af)
+
+  // Evidence differs honestly -> verdicts may differ honestly.
+  const engMgrText = "Reddit has a flexible workforce! Don't live near one of our offices? No worries: You can apply to work remotely in any country in which we have a physical presence."
+  const eng = adjudicateAfricaEligibility({ title: "Engineering Manager, Ads ML Efficiency", description_md: engMgrText, location: "Remote - United States" })
+  check("adjudicator: genuine work-anywhere language yields likely (evidence truly differs)", eng.value === "likely" && eng.confidence === 60, eng)
+  check("adjudicator: same company, different evidence -> honestly different verdicts", eng.value !== a1.value, [eng.value, a1.value])
+
+  // REAL duplicate-slug case (adoption pair, exact live contenders).
+  const dupBase = "senior-product-adoption-strategist-shopping-reddit-worldwide"
+  const dupContenders = [
+    { slug: dupBase, source_id: "greenhouse:reddit:7997020", created_at: "2026-07-23T15:18:50.995442+00:00" },
+    { slug: dupBase, source_id: "greenhouse:reddit:8081271", created_at: "2026-07-26T09:20:01.071347+00:00" },
+  ]
+  const key1 = postingSlugKey("greenhouse", "greenhouse:reddit:7997020")
+  const key2 = postingSlugKey("greenhouse", "greenhouse:reddit:8081271")
+  check("slug: source keys are deterministic and distinct per posting", key1.length > 0 && key1 !== key2, [key1, key2])
+  check("slug: oldest posting owns the base slug", chooseJobSlug({ base: dupBase, sourceId: "greenhouse:reddit:7997020", contenders: dupContenders, key: key1 }) === dupBase)
+  const resolved = chooseJobSlug({ base: dupBase, sourceId: "greenhouse:reddit:8081271", contenders: dupContenders, key: key2 })
+  check("slug: later duplicate resolves to a deterministic suffixed slug", resolved.startsWith(`${dupBase}-dup-`) && resolved !== dupBase, resolved)
+  check("slug: resolution is stable across runs", chooseJobSlug({ base: dupBase, sourceId: "greenhouse:reddit:8081271", contenders: dupContenders, key: key2 }) === resolved)
+  check("slug: solo posting takes the base slug", chooseJobSlug({ base: dupBase, sourceId: "greenhouse:reddit:9999999", contenders: [], key: key1 }) === dupBase)
+
+  // Structural ownership + hygiene.
+  {
+    const root = join(dirname(fileURLToPath(import.meta.url)), "..")
+    const engineSrc = readFileSync(join(root, "lib", "ai", "engine.ts"), "utf8")
+    check("boundary: adjudic incoherence impossible — adjudicator assigned before upsert", engineSrc.indexOf("adjudicateAfricaEligibility(") > -1 && engineSrc.indexOf("adjudicateAfricaEligibility(") < engineSrc.indexOf("Main upsert"))
+    check("boundary: completed queue rows clear their stale error", engineSrc.includes('status: "completed", completed_at: new Date().toISOString(), error: null'))
+    check("boundary: ingest resolves unique slugs", readFileSync(join(root, "lib", "ingest", "run.ts"), "utf8").includes("chooseJobSlug("))
+    const walk = (dir: string): string[] => {
+      const out: string[] = []
+      for (const e of readdirSync(dir)) {
+        if (e === "node_modules" || e.startsWith(".")) continue
+        const p = join(dir, e)
+        const st = statSync(p)
+        if (st.isDirectory()) out.push(...walk(p))
+        else if (/\.(ts|tsx)$/.test(e)) out.push(p)
+      }
+      return out
+    }
+    const uiFiles = [...walk(join(root, "app")), ...walk(join(root, "components"))]
+    const leaked = uiFiles.filter((p) => { const s = readFileSync(p, "utf8"); return s.includes("adjudicateAfricaEligibility") || s.includes("chooseJobSlug") })
+    check("boundary: render never imports the adjudicator or slug chooser", leaked.length === 0, leaked)
   }
 }

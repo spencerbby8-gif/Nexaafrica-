@@ -378,6 +378,51 @@ export function classifyGeoEligibility(opts: {
 }
 
 /* ------------------------------------------------------------------ */
+/* Verifier-plane Africa adjudication (§18)                            */
+/* ------------------------------------------------------------------ */
+
+export interface AfricaAdjudication {
+  value: AfricaTier
+  confidence: number
+  /** Corpus-derived, word-aligned quote. Null when the text carries no signal — never a fabricated substitute. */
+  evidence: string | null
+  /** Human-readable provenance of the verdict (corpus class). */
+  basis: string
+  countryRestrictions: string[]
+}
+
+/**
+ * [§18 CANONICAL AFRICA ADJUDICATOR] The deterministic owner of the Africa
+ * eligibility decision. The verdict is a PURE FUNCTION of the posting
+ * evidence (text + location field) — never of model runs, fetch timing,
+ * or company-level priors. Same posting on any day, in any company,
+ * produces the same verdict; postings with genuinely different evidence
+ * keep their genuinely different verdicts (job-specific evidence is
+ * preserved, job-random verdicts are eliminated).
+ *
+ * Writers: ingest normalizer (classifyEligibility — same corpus inputs)
+ * and the JAI write path (enrichJobWithAI). Render must never call this.
+ */
+export function adjudicateAfricaEligibility(opts: {
+  title?: string | null
+  description_md: string
+  location?: string | null
+}): AfricaAdjudication {
+  const geo = classifyGeoEligibility({
+    text: `${opts.title || ""}\n${opts.description_md || ""}`,
+    locationField: (opts.location || "").trim() || undefined,
+  })
+  const confidence = geo.tier === "explicit" ? 85 : geo.tier === "restricted" ? 80 : geo.tier === "likely" ? 60 : 0
+  return {
+    value: geo.tier,
+    confidence,
+    evidence: geo.quote ?? null,
+    basis: `corpus:${geo.reason}`,
+    countryRestrictions: geo.restrictions,
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Verifier-plane claim corroboration                                  */
 /* ------------------------------------------------------------------ */
 

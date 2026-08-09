@@ -75,6 +75,24 @@ export interface ProviderCatalog {
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
+// [RELIABILITY] Gemini candidate hygiene. The raw /models listing returns every
+// model family (image, TTS, Lyria music, robotics, agent research, computer
+// use) plus legacy 2.x text models — some already shut down (2.0 line June
+// 2026, gemini-2.5-flash pulled early for new users ~Jul 2026). model-sync
+// verifies the configured model + the FIRST discovered candidates, so ordering
+// decides what actually gets a live verification call. Only stable current
+// text-generation models belong at the top of that pool.
+const GEMINI_NON_TEXT_RE = /image|tts|lyria|robotics|nano-banana|antigravity|deep-research|computer-use|audio/i
+const GEMINI_PREFERRED_ORDER = [
+  'gemini-3.5-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash-lite',
+  'gemini-flash-latest',
+  'gemini-flash-lite-latest',
+]
+
 /**
  * Discover models from Gemini API
  * Endpoint: https://generativelanguage.googleapis.com/v1beta/models
@@ -108,6 +126,11 @@ async function discoverGeminiModels(apiKey: string): Promise<DiscoveredModel[]> 
         console.log(`[Gemini Discovery] Skipping ${modelId} (no generateContent)`)
         continue
       }
+      // Only text chat models — non-text families would burn verification calls.
+      if (GEMINI_NON_TEXT_RE.test(modelId)) {
+        console.log(`[Gemini Discovery] Skipping ${modelId} (non-text family)`)
+        continue
+      }
       
       console.log(`[Gemini Discovery] Discovered ${modelId}`)
       
@@ -139,6 +162,20 @@ async function discoverGeminiModels(apiKey: string): Promise<DiscoveredModel[]> 
     console.error(`[Gemini Discovery] FAILED: ${error.message}`)
     throw error  // Do not fall back to hardcoded lists
   }
+
+  // [RELIABILITY] Stable current models first (see GEMINI_PREFERRED_ORDER
+  // above): model-sync's verification shortlist takes the configured model +
+  // top discovered candidates, so this ordering is what actually gets tested.
+  // Legacy 2.x models sink to the bottom — they get verified only if the
+  // preferred pool is empty.
+  models.sort((a, b) => {
+    const ai = GEMINI_PREFERRED_ORDER.indexOf(a.modelId)
+    const bi = GEMINI_PREFERRED_ORDER.indexOf(b.modelId)
+    const ra = ai === -1 ? 99 : ai
+    const rb = bi === -1 ? 99 : bi
+    if (ra !== rb) return ra - rb
+    return a.modelId < b.modelId ? -1 : 1
+  })
   
   return models
 }

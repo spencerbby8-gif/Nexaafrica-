@@ -248,7 +248,9 @@ export async function saveParsedProfile(
       profile_id: userId,
       version_number: nextVersion,
       prompt_version: options?.promptVersion || "2026-07-23.god-tier-v1",
-      model: options?.model || "gemini-2.5-flash",
+      // Metadata label only: gemini-2.5-flash is dead (pulled early 2026-07);
+      // record the current live default so version history labels stay truthful.
+      model: options?.model || "gemini-3.5-flash",
       headline,
       summary,
       skills: skillsArr,

@@ -94,6 +94,33 @@ const GEMINI_PREFERRED_ORDER = [
 ]
 
 /**
+ * [RELIABILITY] Select which Gemini models deserve a live probe/verification
+ * call, from the provider's live catalog. Rules:
+ *   - configured models first (they are what the router would call)
+ *   - non-text families filtered out (image/tts/lyria/robotics/…)
+ *   - remaining candidates in GEMINI_PREFERRED_ORDER (stable current 3.x
+ *     first, legacy 2.x last — legacy is only probed if nothing newer exists)
+ *   - capped so an audit/verification run never wastes quota on a long list
+ * Returns a de-duplicated array; never includes dead/unknown IDs.
+ */
+export function selectGeminiProbeModels(
+  catalogModelIds: string[],
+  configured: string[] = [],
+  cap = 5,
+): string[] {
+  const out: string[] = []
+  const push = (id: string) => {
+    if (id && !out.includes(id)) out.push(id)
+  }
+  for (const c of configured) push(c)
+  const textModels = catalogModelIds.filter((id) => !GEMINI_NON_TEXT_RE.test(id))
+  const preferred = [...GEMINI_PREFERRED_ORDER].filter((id) => textModels.includes(id))
+  for (const id of preferred) push(id)
+  for (const id of textModels) push(id) // anything else discovered, stable order
+  return out.slice(0, Math.max(1, cap))
+}
+
+/**
  * Discover models from Gemini API
  * Endpoint: https://generativelanguage.googleapis.com/v1beta/models
  */

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isPipelineAuthorized } from '@/lib/server/auth'
+import { selectGeminiProbeModels } from '@/lib/ai/model-discovery'
+import { PROVIDERS } from '@/lib/ai/providers/types'
 
 /**
  * Provider Audit Endpoint
@@ -76,7 +78,12 @@ export async function GET(request: NextRequest) {
 }
 
 async function testGemini(apiKey: string) {
-  const models = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']
+  // [RELIABILITY] Probe list derived from the LIVE catalog + the configured
+  // provider models — never hardcoded. The old hardcoded list
+  // (gemini-2.5-flash / 2.5-pro / 2.0-flash / 1.5-flash / 1.5-pro) was 100%
+  // dead models (1.5 shut down, 2.0 shut down 2026-06-01, 2.5-flash pulled
+  // early for new users) and wasted 5 live calls on guaranteed 404s per audit.
+  const configured = PROVIDERS.filter((p) => p.id === 'gemini' || p.id === 'gemini_backup').map((p) => p.model)
   const results: any[] = []
   
   // Query catalog
@@ -92,6 +99,8 @@ async function testGemini(apiKey: string) {
   } catch (e: any) {
     console.log('Gemini catalog error:', e.message)
   }
+  
+  const models = selectGeminiProbeModels(catalog, configured, 5)
   
   // Test each model
   for (const model of models) {
@@ -303,7 +312,10 @@ async function testCerebras(apiKey: string) {
 }
 
 async function testOpenRouter(apiKey: string) {
-  const models = ['meta-llama/llama-3.3-70b-instruct', 'google/gemini-2.0-flash-exp:free', 'anthropic/claude-3.5-sonnet', 'openai/gpt-4o-mini', 'mistralai/mixtral-8x7b-instruct']
+  // [RELIABILITY] google/gemini-2.0-flash-exp:free is shut down (2.0 line
+  // ended 2026-06-01; no Gemini :free variants remain on OpenRouter — verified
+  // via the live models API). Replaced with the current stable gemini-3.5-flash.
+  const models = ['meta-llama/llama-3.3-70b-instruct', 'google/gemini-3.5-flash', 'anthropic/claude-3.5-sonnet', 'openai/gpt-4o-mini', 'mistralai/mixtral-8x7b-instruct']
   const results: any[] = []
   
   // Query catalog

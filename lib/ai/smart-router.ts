@@ -282,7 +282,7 @@ export function routeTaskAll(taskType?: TaskType): RoutingDecision[] {
 
 // ─── Persistence (best-effort write-through to ai_orch_health) ──
 
-function persistHealth(id: ProviderId): void {
+function persistHealth(id: ProviderId, errorCode: string | null = null): void {
   const h = healthState.get(id)
   if (!h) return
   const row = {
@@ -292,7 +292,7 @@ function persistHealth(id: ProviderId): void {
     last_failure_at: h.lastFailureAt ? new Date(h.lastFailureAt).toISOString() : null,
     last_success_at: h.lastSuccessAt ? new Date(h.lastSuccessAt).toISOString() : null,
     cooldown_until: h.cooldownUntil ? new Date(h.cooldownUntil).toISOString() : null,
-    last_error_code: null as string | null,
+    last_error_code: errorCode,
     last_error_message: (h.lastError || '').slice(0, 500) || null,
     avg_latency_ms: h.avgLatencyMs > 0 ? Math.round(h.avgLatencyMs) : null,
     is_quota_exhausted: h.isQuotaExhausted,
@@ -357,28 +357,48 @@ export function recordRouterFailure(providerId: ProviderId, errMsg: string): voi
   pendingTask.delete(providerId)
 
   const msg = errMsg.toLowerCase()
-  const isQuota = msg.includes('429') || msg.includes('resource_exhausted') || msg.includes('quota exceeded')
-  const isRateLimit = msg.includes('rate_limit') || msg.includes('rate limit') || msg.includes('tokens per day')
-  const isAuth = msg.includes('401') || msg.includes('403') || msg.includes('invalid api key') || msg.includes('not_found_error') || msg.includes('does not exist')
+  const isQuota = msg.includes('429') || msg.includes('resource_exhausted') || msg.includes('quota') || msg.includes('insufficient credits')
+  const isRateLimit = msg.includes('rate_limit') || msg.includes('rate limit') || msg.includes('too many requests')
+  const isAuth = msg.includes('401') || msg.includes('403') || msg.includes('invalid api key') || msg.includes('unauthorized')
+  // Dead/unavailable model (e.g. gemini-2.5-flash pulled early → 404
+  // "no longer available to new users"): a model that cannot exist will never
+  // heal on a 30s retry — long backoff, re-evaluated when the registry syncs.
+  const isInvalidModel = msg.includes('404') || msg.includes('no longer available') || msg.includes('not found') || msg.includes('does not exist') || msg.includes('invalid model') || msg.includes('not_found_error')
+  // Daily-quota exhaustion (RPD) resets on a wall clock, not in 30 minutes.
+  const isDailyQuota = /per day|tokens per day|daily quota|requests per day/i.test(msg)
+  // Honor provider-provided Retry-After (seconds) when present.
+  const raMatch = /retry-after:\s*(\d+)/i.exec(errMsg)
+  const retryAfterMs = raMatch ? Math.max(0, parseInt(raMatch[1], 10) * 1000) : 0
 
-  if (isQuota) {
-    // Daily-quota classes (Groq TPD etc.) get a long backoff instead of the
-    // old 60s spin that re-hammered a provider that cannot recover for hours.
+  let errorCode: string | null = null
+  const codeMatch = /^[a-z_]+ (\d{3})/.exec(errMsg)
+  if (codeMatch) errorCode = codeMatch[1]
+  else if (/empty response/.test(msg)) errorCode = 'EMPTY_RESPONSE'
+
+  if (isQuota || isDailyQuota) {
+    // Quota-class failures: long backoff so we stop re-hammering an exhausted
+    // bucket. Daily quotas get hours (they reset on a wall clock); per-minute
+    // quotas get 30 min; provider Retry-After overrides both when provided.
     h.isQuotaExhausted = true
-    h.quotaResetAt = Date.now() + 30 * 60_000
+    const baseMs = isDailyQuota ? 6 * 60 * 60_000 : 30 * 60_000
+    h.quotaResetAt = Date.now() + Math.max(baseMs, retryAfterMs)
     h.cooldownUntil = h.quotaResetAt
   } else if (isRateLimit) {
     h.isRateLimited = true
-    h.cooldownUntil = Date.now() + 5 * 60_000
+    h.cooldownUntil = Date.now() + Math.max(5 * 60_000, retryAfterMs)
+  } else if (isInvalidModel) {
+    // Dead model ID — 12h backoff (aligns with model-sync freshness window);
+    // the next discovery/sync cycle is what can actually fix this.
+    h.cooldownUntil = Date.now() + Math.max(12 * 60 * 60_000, retryAfterMs)
   } else if (isAuth) {
-    // Key/model-level failure: long backoff, but never a permanent ban.
-    h.cooldownUntil = Date.now() + 30 * 60_000
+    // Key-level failure: long backoff, but never a permanent ban.
+    h.cooldownUntil = Date.now() + Math.max(30 * 60_000, retryAfterMs)
   } else {
     // Generic failure: exponential cooldown 30s → 30m cap, then re-eligible.
     const backoff = Math.min(30_000 * 2 ** Math.min(h.consecutiveFailures - 1, 10), 30 * 60_000)
-    h.cooldownUntil = Date.now() + backoff
+    h.cooldownUntil = Date.now() + Math.max(backoff, retryAfterMs)
   }
-  persistHealth(providerId)
+  persistHealth(providerId, errorCode)
 }
 
 /** Sync health state from DB — warms cold instances with measured history. */

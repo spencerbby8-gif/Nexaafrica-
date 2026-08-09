@@ -10,7 +10,7 @@ export interface CouncilResult {
   finalModel: string
 }
 
-export async function runCouncil(task: string, inputs: any, models: string[] = ["gemini-2.5-flash", "gpt-4o", "claude-3.5-sonnet"]): Promise<CouncilResult> {
+export async function runCouncil(task: string, inputs: any, models: string[] = ["gemini", "gpt-4o", "claude-3.5-sonnet"]): Promise<CouncilResult> {
   // Foundation: simulate council with rule-based + placeholder for real multi-model calls
   // In production, this would call 3 models in parallel, then have one challenge another
 

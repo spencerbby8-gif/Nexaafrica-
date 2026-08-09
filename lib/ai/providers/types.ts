@@ -24,9 +24,15 @@ export interface ProviderConfig {
 }
 
 export const PROVIDERS: ProviderConfig[] = [
-  // Gemini: free-tier 429 at >20 RPM. Works for single requests (CV parsing).
-  { id: "gemini", name: "Gemini 2.5 Flash", envKey: "GEMINI_API_KEY", model: "gemini-2.5-flash", enabled: true, priority: 1, rateLimitPerSec: 2, timeoutMs: 15000, costPer1kTokens: 1, taskTypes: ["cv_parsing", "profile_transform", "complex_analysis"] },
-  { id: "gemini_backup", name: "Gemini Backup", envKey: "GEMINI_API_KEY_BACKUP", model: "gemini-2.5-flash", enabled: true, priority: 2, rateLimitPerSec: 2, timeoutMs: 15000, costPer1kTokens: 1, taskTypes: ["cv_parsing", "profile_transform", "complex_analysis"] },
+  // Gemini: gemini-2.5-flash is DEAD for new users since ~Jul 2026 (404
+  // "no longer available to new users"; official deprecation 2026-10-16, pulled
+  // early — verified live in ai_orch_health 2026-07-29). Free-tier replacements
+  // per ai.google.dev: gemini-3.5-flash (GA 2026-05-19, free tier) primary,
+  // gemini-3.1-flash-lite (GA 2026-05-07) backup — different model = separate
+  // quota bucket. rateLimitPerSec now ENFORCED by gateway pacing: 0.25 rps ≈
+  // 15 RPM, the free-tier ceiling for Flash-class models (1,500 RPD / 1M TPM).
+  { id: "gemini", name: "Gemini 3.5 Flash", envKey: "GEMINI_API_KEY", model: "gemini-3.5-flash", enabled: true, priority: 1, rateLimitPerSec: 0.25, timeoutMs: 15000, costPer1kTokens: 1, taskTypes: ["cv_parsing", "profile_transform", "complex_analysis"] },
+  { id: "gemini_backup", name: "Gemini 3.1 Flash Lite", envKey: "GEMINI_API_KEY_BACKUP", model: "gemini-3.1-flash-lite", enabled: true, priority: 2, rateLimitPerSec: 0.25, timeoutMs: 15000, costPer1kTokens: 1, taskTypes: ["cv_parsing", "profile_transform", "complex_analysis"] },
   // Groq: proven working. On-demand: 100K TPD, ~30 RPM.
   { id: "groq", name: "Groq Llama 3.3", envKey: "GROQ_API_KEY", model: "llama-3.3-70b-versatile", enabled: true, priority: 3, rateLimitPerSec: 5, timeoutMs: 10000, costPer1kTokens: 2, taskTypes: ["job_intelligence", "fast_extraction", "simple_analysis"] },
   // Cerebras: verified working. GET /v1/models confirmed gpt-oss-120b.

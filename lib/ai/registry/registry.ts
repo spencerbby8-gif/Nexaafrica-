@@ -4,7 +4,7 @@
  */
 
 export type AgentCategory = "observer" | "verifier" | "council" | "policy" | "action" | "audit"
-export type AgentModel = "gemini-2.5-flash" | "gemini-2.0-flash" | "gpt-4o" | "claude-3.5-sonnet" | "rule-based"
+export type AgentModel = "gemini" | "gpt-4o" | "claude-3.5-sonnet" | "rule-based"
 
 export interface AIAgentDefinition {
   id: string // e.g. "observer:job-posts", "verifier:salary", "council:profile-transform"
@@ -63,7 +63,7 @@ export const AI_REGISTRY: AIAgentDefinition[] = [
     name: "Salary Verifier",
     category: "verifier",
     description: "Verifies salary truthfulness, range, currency, period, transparency",
-    models: ["gemini-2.5-flash"],
+    models: ["gemini"],
     inputs: ["job.description_md", "job.salary_range", "job.apply_url"],
     outputs: ["salary_min", "salary_max", "salary_currency", "salary_is_estimated", "salary_transparency", "confidence", "evidence", "source_urls"],
     triggers: ["ingest"],
@@ -79,7 +79,7 @@ export const AI_REGISTRY: AIAgentDefinition[] = [
     name: "Africa Eligibility Verifier",
     category: "verifier",
     description: "Verifies Africa eligibility, country restrictions, visa sponsorship",
-    models: ["gemini-2.5-flash"],
+    models: ["gemini"],
     inputs: ["job.description_md", "job.location", "job.company"],
     outputs: ["africa_eligibility", "country_restrictions", "visa_sponsorship", "confidence", "evidence"],
     triggers: ["ingest"],
@@ -95,7 +95,7 @@ export const AI_REGISTRY: AIAgentDefinition[] = [
     name: "Remote Policy Verifier",
     category: "verifier",
     description: "Verifies remote policy, timezone requirements, relocation",
-    models: ["rule-based", "gemini-2.5-flash"],
+    models: ["rule-based", "gemini"],
     inputs: ["job.description_md", "job.location", "job.is_remote"],
     outputs: ["remote_eligibility", "timezone_requirements", "confidence", "evidence"],
     triggers: ["ingest"],
@@ -111,7 +111,7 @@ export const AI_REGISTRY: AIAgentDefinition[] = [
     name: "Company Legitimacy Verifier",
     category: "verifier",
     description: "Verifies company legitimacy via website, LinkedIn, logo, curated list",
-    models: ["rule-based", "gemini-2.5-flash"],
+    models: ["rule-based", "gemini"],
     inputs: ["job.company", "job.company_logo", "job.apply_url"],
     outputs: ["company_legitimacy", "confidence", "evidence"],
     triggers: ["ingest"],
@@ -128,7 +128,7 @@ export const AI_REGISTRY: AIAgentDefinition[] = [
     name: "Profile Transform Council",
     category: "council",
     description: "Uses 2-3 models together for profile transformation: one checks, another challenges, third resolves. Stores disagreements and consensus.",
-    models: ["gemini-2.5-flash", "gpt-4o", "claude-3.5-sonnet"],
+    models: ["gemini", "gpt-4o", "claude-3.5-sonnet"],
     inputs: ["profile.raw_cv_text", "profile.skills", "profile.experience"],
     outputs: ["headline", "summary", "skills", "experience", "consensus", "disagreements", "confidence"],
     triggers: ["profile_edit"],
@@ -144,7 +144,7 @@ export const AI_REGISTRY: AIAgentDefinition[] = [
     name: "Fraud Detection Council",
     category: "council",
     description: "Detects fake recruiters, suspicious employers, spam jobs via multi-model consensus",
-    models: ["gemini-2.5-flash", "gpt-4o"],
+    models: ["gemini", "gpt-4o"],
     inputs: ["job", "company", "recruiter.actions", "reports"],
     outputs: ["is_fraud", "confidence", "evidence", "disagreement", "consensus"],
     triggers: ["ingest", "report"],

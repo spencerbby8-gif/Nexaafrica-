@@ -1,4 +1,4 @@
-export type ProviderId = "cerebras" | "gemini" | "gemini_backup" | "groq" | "openrouter" | "huggingface" | "github_models" | "cloudflare" | "mistral" | "nvidia"
+export type ProviderId = "cerebras" | "gemini" | "gemini_backup" | "groq" | "openrouter" | "huggingface" | "github_models" | "cloudflare" | "mistral" | "nvidia" | "cohere"
 
 export interface ProviderConfig {
   id: ProviderId
@@ -49,6 +49,12 @@ export const PROVIDERS: ProviderConfig[] = [
   { id: "mistral", name: "Mistral Large", envKey: "MISTRAL_API_KEY", model: "mistral-large-latest", enabled: true, priority: 9, rateLimitPerSec: 3, timeoutMs: 15000, costPer1kTokens: 3, taskTypes: ["complex_analysis", "european_jobs"] },
   // NVIDIA NIM: NVIDIA's inference microservice
   { id: "nvidia", name: "NVIDIA NIM", envKey: "NVIDIA_API_KEY", model: "meta/llama-3.1-70b-instruct", enabled: true, priority: 10, rateLimitPerSec: 5, timeoutMs: 30000, costPer1kTokens: 2, taskTypes: ["job_intelligence", "gpu_accelerated"] },
+  // Cohere: wired 2026-08-09 (COHERE_API_KEY added to Vercel). OpenAI-compatible
+  // endpoint https://api.cohere.ai/compatibility/v1/chat/completions. Trial keys:
+  // 1,000 calls/month, 20 req/min → pacing 0.3 rps ≈ 18/min (under limit).
+  // command-r-plus-08-2024 = current stable Command R+ (verified via Cohere docs);
+  // model-sync discovery will re-verify live candidates each cycle.
+  { id: "cohere", name: "Cohere Command R+", envKey: "COHERE_API_KEY", model: "command-r-plus-08-2024", enabled: true, priority: 11, rateLimitPerSec: 0.3, timeoutMs: 30000, costPer1kTokens: 2, taskTypes: ["job_intelligence", "fast_extraction", "complex_analysis"] },
 ]
 
 export interface ProviderHealth {

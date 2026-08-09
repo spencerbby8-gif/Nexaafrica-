@@ -216,8 +216,9 @@ describe('fallback', () => {
 
   it('gated (cooldown/quota) providers are skipped in ranking', async () => {
     const { recordRouterFailure, routeTaskAll } = await import('@/lib/ai/smart-router')
-    for (const p of ['gemini', 'gemini_backup', 'groq', 'cerebras', 'openrouter', 'huggingface', 'github_models', 'cloudflare', 'mistral', 'nvidia']) {
-      recordRouterFailure(p as any, `${p} 500 (server_error): simulated outage`)
+    const { PROVIDERS } = await import('@/lib/ai/providers/types')
+    for (const p of PROVIDERS) {
+      recordRouterFailure(p.id, `${p.id} 500 (server_error): simulated outage`)
     }
     const ranked = routeTaskAll('fast_extraction')
     expect(ranked.length).toBe(0) // all gated → no candidates

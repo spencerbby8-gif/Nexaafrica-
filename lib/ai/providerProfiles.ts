@@ -84,6 +84,13 @@ const FIXED_PROFILES: Record<ProviderId, ProviderProfile> = {
     avoidFor: ["cv_parsing"],
     avgQualityScore: 0, avgLatencyMs: 2000, successRate: 0, totalEvaluations: 0, taskQuality: {},
   },
+  cohere: {
+    id: "cohere",
+    strengths: ["long context (128k)", "RAG-friendly", "grounding", "structured extraction"],
+    bestFor: ["job_intelligence", "complex_analysis"],
+    avoidFor: ["high_throughput", "batch_processing"],
+    avgQualityScore: 0, avgLatencyMs: 900, successRate: 0, totalEvaluations: 0, taskQuality: {},
+  },
   nvidia: {
     id: "nvidia",
     strengths: ["NIM microservice", "Llama 3.1", "Nemotron"],

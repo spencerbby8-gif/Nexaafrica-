@@ -74,7 +74,101 @@ export async function GET(request: NextRequest) {
     results.nvidia = await testNvidia(process.env.NVIDIA_API_KEY)
   }
   
+  // Test Cohere
+  if (process.env.COHERE_API_KEY) {
+    console.log('Testing Cohere...')
+    results.cohere = await testCohere(process.env.COHERE_API_KEY)
+  }
+  
   return NextResponse.json(results)
+}
+
+/**
+ * Test Cohere (OpenAI-compatible endpoint).
+ * Probes the configured model + up to 2 additional command-family models
+ * from the live catalog — never a hardcoded dead list.
+ */
+async function testCohere(apiKey: string) {
+  const configured = PROVIDERS.find((p) => p.id === 'cohere')?.model || 'command-r-plus-08-2024'
+  const models = [configured]
+  const results: any[] = []
+  
+  // Query catalog
+  let catalog: any[] = []
+  try {
+    const response = await fetch('https://api.cohere.ai/compatibility/v1/models', {
+      headers: { 'Authorization': `Bearer ${apiKey}` }
+    })
+    if (response.ok) {
+      const data = await response.json() as any
+      catalog = (data.data || [])
+        .map((m: any) => m.id)
+        .filter((id: string) => /^command/i.test(id))
+      // add the top 2 additional command models for coverage
+      for (const id of catalog) {
+        if (!models.includes(id)) models.push(id)
+        if (models.length >= 3) break
+      }
+    }
+  } catch (e: any) {
+    console.log('Cohere catalog error:', e.message)
+  }
+  
+  // Test each model
+  for (const model of models) {
+    const start = Date.now()
+    try {
+      const response = await fetch('https://api.cohere.ai/compatibility/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: 'Say "test"' }],
+          max_tokens: 20
+        })
+      })
+      
+      const latency = Date.now() - start
+      
+      if (response.ok) {
+        const data = await response.json() as any
+        const text = data.choices?.[0]?.message?.content || ''
+        results.push({
+          model,
+          success: true,
+          latency,
+          response: text.substring(0, 50),
+          inCatalog: catalog.includes(model)
+        })
+      } else {
+        const error = await response.text()
+        results.push({
+          model,
+          success: false,
+          latency,
+          error: `${response.status}: ${error.substring(0, 100)}`,
+          inCatalog: catalog.includes(model)
+        })
+      }
+    } catch (e: any) {
+      results.push({
+        model,
+        success: false,
+        latency: Date.now() - start,
+        error: e.message
+      })
+    }
+  }
+  
+  return {
+    catalog: catalog.length,
+    tested: results.length,
+    successful: results.filter((r) => r.success).length,
+    results
+  }
 }
 
 async function testGemini(apiKey: string) {

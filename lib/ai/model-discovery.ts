@@ -266,6 +266,64 @@ async function discoverGroqModels(apiKey: string): Promise<DiscoveredModel[]> {
 }
 
 /**
+ * Discover models from Cohere API (OpenAI-compatible endpoint)
+ * Endpoint: https://api.cohere.ai/compatibility/v1/models
+ */
+async function discoverCohereModels(apiKey: string): Promise<DiscoveredModel[]> {
+  const endpoint = 'https://api.cohere.ai/compatibility/v1/models'
+  const models: DiscoveredModel[] = []
+  
+  console.log(`[Cohere Discovery] Querying ${endpoint}`)
+  
+  try {
+    const response = await fetch(endpoint, {
+      headers: { 'Authorization': `Bearer ${apiKey}` }
+    })
+    
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`Cohere API error ${response.status}: ${errorText.substring(0, 200)}`)
+    }
+    
+    const data = await response.json() as any
+    const modelList = data.data || []
+    
+    console.log(`[Cohere Discovery] Found ${modelList.length} models`)
+    
+    for (const model of modelList) {
+      // Only chat/command models — skip embed/rerank/classify
+      if (!/^command/i.test(model.id || '')) continue
+      console.log(`[Cohere Discovery] Discovered ${model.id}`)
+      
+      models.push({
+        provider: 'cohere',
+        modelId: model.id,
+        modelName: model.id,
+        discoveredAt: new Date().toISOString(),
+        discoveryEndpoint: endpoint,
+        rawResponse: model,
+        capabilities: {},
+        health: {
+          verified: false,
+          usable: false,
+          healthScore: 0,
+          successRate: 0,
+          failureRate: 0,
+          avgLatencyMs: 0,
+          quotaStatus: 'ok'
+        },
+        routingPriority: 0
+      })
+    }
+  } catch (error: any) {
+    console.error(`[Cohere Discovery] FAILED: ${error.message}`)
+    throw error
+  }
+  
+  return models
+}
+
+/**
  * Discover models from Cerebras API
  * Endpoint: https://api.cerebras.ai/v1/models
  */
@@ -941,6 +999,34 @@ export async function discoverAllModels(): Promise<ProviderCatalog[]> {
       catalogs.push({
         provider: 'huggingface',
         discoveryEndpoint: 'https://router.huggingface.co/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models: [],
+        totalModels: 0,
+        verifiedModels: 0,
+        usableModels: 0,
+        discoveryError: error.message
+      })
+    }
+  }
+
+  // Cohere (OpenAI-compatible endpoint)
+  if (process.env.COHERE_API_KEY) {
+    try {
+      const models = await discoverCohereModels(process.env.COHERE_API_KEY)
+      catalogs.push({
+        provider: 'cohere',
+        discoveryEndpoint: 'https://api.cohere.ai/compatibility/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models,
+        totalModels: models.length,
+        verifiedModels: 0,
+        usableModels: 0
+      })
+    } catch (error: any) {
+      console.error(`[Discovery] Cohere discovery failed: ${error.message}`)
+      catalogs.push({
+        provider: 'cohere',
+        discoveryEndpoint: 'https://api.cohere.ai/compatibility/v1/models',
         discoveredAt: new Date().toISOString(),
         models: [],
         totalModels: 0,

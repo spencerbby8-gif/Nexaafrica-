@@ -3,6 +3,7 @@ import type { Job } from "@/lib/types"
 import { AI_MODEL_VERSION, AI_INTELLIGENCE_VERSION, type JobAIIntelligence } from "./types"
 import type { ProviderCallDiag } from "./gateway"
 import { PROVIDERS } from "./providers/types"
+import { isRepairableArtifactJai, isRepairableJob } from "./jaiRepair"
 
 
 
@@ -443,6 +444,55 @@ async function traceEvent(
 export async function processAIQueue(batchSize = 100) {
   const { createServiceClient } = await import("@/lib/supabase/service")
   const supabase = createServiceClient()
+
+  // [JAI REPAIR] Self-healing of historical artifact JAI rows (PR #34).
+  // Completed+clean queue rows whose JAI is a pre-fix artifact
+  // (regex-extracted-0bytes / no-ai-providers / failed-*) are re-queued so the
+  // CURRENT pipeline (which no longer produces 0-byte seals) can regenerate
+  // real intelligence. Bounded (REPAIR_BATCH_PER_DRAIN, default 200),
+  // idempotent (only when a repairable artifact exists), and only for
+  // active/visible jobs. Re-runs go through the normal retry/backoff path
+  // (max_attempts=3, overdue-first ordering) — nothing is force-completed.
+  try {
+    const repairBatch = Math.max(1, Math.min(500, Number(process.env.JAI_REPAIR_BATCH) || 200))
+    const { data: repairCandidates } = await supabase
+      .from("ai_processing_queue")
+      .select("id, job_id, jobs!inner(is_active, eligibility, is_open_to_africa), job_ai_intelligence!inner(model_version)")
+      .eq("status", "completed")
+      .is("error", null)
+      .eq("jobs.is_active", true)
+      .limit(repairBatch)
+    if (repairCandidates && repairCandidates.length > 0) {
+      const repairIds: string[] = []
+      for (const c of repairCandidates as any[]) {
+        const jai = c.job_ai_intelligence?.[0]
+        const job = c.jobs
+        if (!jai || !job) continue
+        if (!isRepairableJob(job)) continue
+        if (!isRepairableArtifactJai(jai.model_version)) continue
+        repairIds.push(c.id)
+      }
+      if (repairIds.length > 0) {
+        const healNow = new Date().toISOString()
+        const { error: repairErr } = await supabase
+          .from("ai_processing_queue")
+          .update({
+            status: "pending",
+            error: "Requeued: JAI artifact repair (regex/0-byte/no-ai sealed row)",
+            attempts: 0,
+            completed_at: null,
+            started_at: null,
+            next_retry_at: healNow,
+          })
+          .in("id", repairIds)
+        if (!repairErr) {
+          console.log(JSON.stringify({ scope: "ai_engine", event: "jai_artifact_requeued", count: repairIds.length }))
+        }
+      }
+    }
+  } catch (e) {
+    console.log(JSON.stringify({ scope: "ai_engine", event: "jai_repair_error", error: (e instanceof Error ? e.message : String(e)).slice(0,150) }))
+  }
 
   // [FIX #13] Single stuck-recovery query (was duplicated with overlapping windows).
   // Reset any items stuck in "processing" for >5 minutes or with NULL started_at.

@@ -24,13 +24,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // Optional per-provider model override for diagnostics (e.g.
+  // ?provider=openrouter&model=candidate:free) — lets us verify a candidate
+  // model in the runtime path without touching config.
+  const overProvider = req.nextUrl.searchParams.get('provider')
+  const overModel = req.nextUrl.searchParams.get('model')
+
   const out: Record<string, unknown> = {}
   for (const p of PROVIDERS) {
     if (!p.enabled) { out[p.id] = { envPresent: !!process.env[p.envKey], enabled: false }; continue }
+    if (overProvider && p.id !== overProvider) continue
     const key = process.env[p.envKey]
     if (!key) { out[p.id] = { envPresent: false, model: p.model, ok: false, class: 'other', note: 'missing env' }; continue }
-    const r = await probeRuntime(p.id, p.model, key)
-    out[p.id] = { envPresent: true, model: p.model, ...r }
+    const model = overProvider === p.id && overModel ? overModel : p.model
+    const r = await probeRuntime(p.id, model, key)
+    out[p.id] = { envPresent: true, model, ...r }
   }
   return NextResponse.json({ generatedAt: new Date().toISOString(), providers: out })
 }
@@ -46,10 +54,13 @@ interface ProbeResult {
 async function probeRuntime(providerId: string, model: string, apiKey: string): Promise<ProbeResult> {
   const start = Date.now()
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }
+  // 64 tokens, not 8: reasoning models (gemini-3.5-flash thinking, gpt-oss-120b)
+  // burn the entire 8-token budget on reasoning and return EMPTY text — an
+  // artifact that would (and did) misclassify healthy providers as dead.
   const body = {
     model,
     messages: [{ role: 'user', content: 'Reply with exactly: ok' }],
-    max_tokens: 8,
+    max_tokens: 64,
   }
   const compat: Record<string, string> = {
     groq: 'https://api.groq.com/openai/v1/chat/completions',
@@ -67,7 +78,7 @@ async function probeRuntime(providerId: string, model: string, apiKey: string): 
       res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify({ contents: [{ parts: [{ text: 'Reply with exactly: ok' }] }], generationConfig: { maxOutputTokens: 8 } }),
+        body: JSON.stringify({ contents: [{ parts: [{ text: 'Reply with exactly: ok' }] }], generationConfig: { maxOutputTokens: 64 } }),
         signal: AbortSignal.timeout(15000),
       })
     } else if (providerId === 'cloudflare') {
@@ -76,7 +87,7 @@ async function probeRuntime(providerId: string, model: string, apiKey: string): 
       res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${model}`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ messages: body.messages, max_tokens: 8 }),
+        body: JSON.stringify({ messages: body.messages, max_tokens: 64 }),
         signal: AbortSignal.timeout(15000),
       })
     } else if (compat[providerId]) {

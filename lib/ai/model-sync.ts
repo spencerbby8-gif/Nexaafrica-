@@ -83,7 +83,7 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
       res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 8 } }),
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 64 } }),
         signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
       })
     } else if (provider === 'cloudflare') {
@@ -91,7 +91,7 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
       res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${modelId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], max_tokens: 8 }),
+        body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], max_tokens: 64 }),
         signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
       })
     } else {
@@ -109,7 +109,7 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
       if (provider === 'openrouter') { headers['HTTP-Referer'] = 'https://v0-nexaafrica.vercel.app'; headers['X-Title'] = 'Nexa Africa' }
       res = await fetch(endpoints[provider], {
         method: 'POST', headers,
-        body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: prompt }], max_tokens: 8 }),
+        body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: prompt }], max_tokens: 64 }),
         signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
       })
     }

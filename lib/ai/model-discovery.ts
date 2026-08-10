@@ -75,6 +75,51 @@ export interface ProviderCatalog {
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
+// [RELIABILITY] Gemini candidate hygiene. The raw /models listing returns every
+// model family (image, TTS, Lyria music, robotics, agent research, computer
+// use) plus legacy 2.x text models — some already shut down (2.0 line June
+// 2026, gemini-2.5-flash pulled early for new users ~Jul 2026). model-sync
+// verifies the configured model + the FIRST discovered candidates, so ordering
+// decides what actually gets a live verification call. Only stable current
+// text-generation models belong at the top of that pool.
+const GEMINI_NON_TEXT_RE = /image|tts|lyria|robotics|nano-banana|antigravity|deep-research|computer-use|audio/i
+const GEMINI_PREFERRED_ORDER = [
+  'gemini-3.5-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash-lite',
+  'gemini-flash-latest',
+  'gemini-flash-lite-latest',
+]
+
+/**
+ * [RELIABILITY] Select which Gemini models deserve a live probe/verification
+ * call, from the provider's live catalog. Rules:
+ *   - configured models first (they are what the router would call)
+ *   - non-text families filtered out (image/tts/lyria/robotics/…)
+ *   - remaining candidates in GEMINI_PREFERRED_ORDER (stable current 3.x
+ *     first, legacy 2.x last — legacy is only probed if nothing newer exists)
+ *   - capped so an audit/verification run never wastes quota on a long list
+ * Returns a de-duplicated array; never includes dead/unknown IDs.
+ */
+export function selectGeminiProbeModels(
+  catalogModelIds: string[],
+  configured: string[] = [],
+  cap = 5,
+): string[] {
+  const out: string[] = []
+  const push = (id: string) => {
+    if (id && !out.includes(id)) out.push(id)
+  }
+  for (const c of configured) push(c)
+  const textModels = catalogModelIds.filter((id) => !GEMINI_NON_TEXT_RE.test(id))
+  const preferred = [...GEMINI_PREFERRED_ORDER].filter((id) => textModels.includes(id))
+  for (const id of preferred) push(id)
+  for (const id of textModels) push(id) // anything else discovered, stable order
+  return out.slice(0, Math.max(1, cap))
+}
+
 /**
  * Discover models from Gemini API
  * Endpoint: https://generativelanguage.googleapis.com/v1beta/models
@@ -108,6 +153,11 @@ async function discoverGeminiModels(apiKey: string): Promise<DiscoveredModel[]> 
         console.log(`[Gemini Discovery] Skipping ${modelId} (no generateContent)`)
         continue
       }
+      // Only text chat models — non-text families would burn verification calls.
+      if (GEMINI_NON_TEXT_RE.test(modelId)) {
+        console.log(`[Gemini Discovery] Skipping ${modelId} (non-text family)`)
+        continue
+      }
       
       console.log(`[Gemini Discovery] Discovered ${modelId}`)
       
@@ -139,6 +189,20 @@ async function discoverGeminiModels(apiKey: string): Promise<DiscoveredModel[]> 
     console.error(`[Gemini Discovery] FAILED: ${error.message}`)
     throw error  // Do not fall back to hardcoded lists
   }
+
+  // [RELIABILITY] Stable current models first (see GEMINI_PREFERRED_ORDER
+  // above): model-sync's verification shortlist takes the configured model +
+  // top discovered candidates, so this ordering is what actually gets tested.
+  // Legacy 2.x models sink to the bottom — they get verified only if the
+  // preferred pool is empty.
+  models.sort((a, b) => {
+    const ai = GEMINI_PREFERRED_ORDER.indexOf(a.modelId)
+    const bi = GEMINI_PREFERRED_ORDER.indexOf(b.modelId)
+    const ra = ai === -1 ? 99 : ai
+    const rb = bi === -1 ? 99 : bi
+    if (ra !== rb) return ra - rb
+    return a.modelId < b.modelId ? -1 : 1
+  })
   
   return models
 }
@@ -195,6 +259,64 @@ async function discoverGroqModels(apiKey: string): Promise<DiscoveredModel[]> {
     }
   } catch (error: any) {
     console.error(`[Groq Discovery] FAILED: ${error.message}`)
+    throw error
+  }
+  
+  return models
+}
+
+/**
+ * Discover models from Cohere API (OpenAI-compatible endpoint)
+ * Endpoint: https://api.cohere.ai/compatibility/v1/models
+ */
+async function discoverCohereModels(apiKey: string): Promise<DiscoveredModel[]> {
+  const endpoint = 'https://api.cohere.ai/compatibility/v1/models'
+  const models: DiscoveredModel[] = []
+  
+  console.log(`[Cohere Discovery] Querying ${endpoint}`)
+  
+  try {
+    const response = await fetch(endpoint, {
+      headers: { 'Authorization': `Bearer ${apiKey}` }
+    })
+    
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`Cohere API error ${response.status}: ${errorText.substring(0, 200)}`)
+    }
+    
+    const data = await response.json() as any
+    const modelList = data.data || []
+    
+    console.log(`[Cohere Discovery] Found ${modelList.length} models`)
+    
+    for (const model of modelList) {
+      // Only chat/command models — skip embed/rerank/classify
+      if (!/^command/i.test(model.id || '')) continue
+      console.log(`[Cohere Discovery] Discovered ${model.id}`)
+      
+      models.push({
+        provider: 'cohere',
+        modelId: model.id,
+        modelName: model.id,
+        discoveredAt: new Date().toISOString(),
+        discoveryEndpoint: endpoint,
+        rawResponse: model,
+        capabilities: {},
+        health: {
+          verified: false,
+          usable: false,
+          healthScore: 0,
+          successRate: 0,
+          failureRate: 0,
+          avgLatencyMs: 0,
+          quotaStatus: 'ok'
+        },
+        routingPriority: 0
+      })
+    }
+  } catch (error: any) {
+    console.error(`[Cohere Discovery] FAILED: ${error.message}`)
     throw error
   }
   
@@ -327,10 +449,10 @@ async function discoverOpenRouterModels(apiKey: string): Promise<DiscoveredModel
 
 /**
  * Discover models from GitHub Models API
- * Endpoint: https://models.inference.ai.azure.com/models
+ * Endpoint: https://models.github.ai/inference/models
  */
 async function discoverGitHubModels(apiKey: string): Promise<DiscoveredModel[]> {
-  const endpoint = 'https://models.inference.ai.azure.com/models'
+  const endpoint = 'https://models.github.ai/inference/models'
   const models: DiscoveredModel[] = []
   
   console.log(`[GitHub Models Discovery] Querying ${endpoint}`)
@@ -338,8 +460,7 @@ async function discoverGitHubModels(apiKey: string): Promise<DiscoveredModel[]> 
   try {
     const response = await fetch(endpoint, {
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'api-version': '2024-05-01-preview'
+        'Authorization': `Bearer ${apiKey}`
       }
     })
     
@@ -749,7 +870,7 @@ export async function discoverAllModels(): Promise<ProviderCatalog[]> {
       const models = await discoverGitHubModels(process.env.GITHUB_MODELS_TOKEN)
       catalogs.push({
         provider: 'github_models',
-        discoveryEndpoint: 'https://models.inference.ai.azure.com/models',
+        discoveryEndpoint: 'https://models.github.ai/inference/models',
         discoveredAt: new Date().toISOString(),
         models,
         totalModels: models.length,
@@ -760,7 +881,7 @@ export async function discoverAllModels(): Promise<ProviderCatalog[]> {
       console.error(`[Discovery] GitHub Models discovery failed: ${error.message}`)
       catalogs.push({
         provider: 'github_models',
-        discoveryEndpoint: 'https://models.inference.ai.azure.com/models',
+        discoveryEndpoint: 'https://models.github.ai/inference/models',
         discoveredAt: new Date().toISOString(),
         models: [],
         totalModels: 0,
@@ -877,6 +998,34 @@ export async function discoverAllModels(): Promise<ProviderCatalog[]> {
       catalogs.push({
         provider: 'huggingface',
         discoveryEndpoint: 'https://router.huggingface.co/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models: [],
+        totalModels: 0,
+        verifiedModels: 0,
+        usableModels: 0,
+        discoveryError: error.message
+      })
+    }
+  }
+
+  // Cohere (OpenAI-compatible endpoint)
+  if (process.env.COHERE_API_KEY) {
+    try {
+      const models = await discoverCohereModels(process.env.COHERE_API_KEY)
+      catalogs.push({
+        provider: 'cohere',
+        discoveryEndpoint: 'https://api.cohere.ai/compatibility/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models,
+        totalModels: models.length,
+        verifiedModels: 0,
+        usableModels: 0
+      })
+    } catch (error: any) {
+      console.error(`[Discovery] Cohere discovery failed: ${error.message}`)
+      catalogs.push({
+        provider: 'cohere',
+        discoveryEndpoint: 'https://api.cohere.ai/compatibility/v1/models',
         discoveredAt: new Date().toISOString(),
         models: [],
         totalModels: 0,

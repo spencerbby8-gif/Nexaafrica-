@@ -36,6 +36,27 @@ export interface GatewayResult {
 const cache = new Map<string, { result: GatewayResult; timestamp: number }>()
 const CACHE_TTL = 24 * 60 * 60 * 1000
 
+// Per-provider pacing: rateLimitPerSec was declared in config but never
+// enforced — bursts (engine concurrency × 1.5s pacing) exceeded free-tier RPM
+// (Gemini Flash ≈ 15 RPM) and caused the 429 quota storms seen in production.
+// Each provider is now limited to 1 call per (1000 / rateLimitPerSec) ms.
+const lastCallAt = new Map<string, number>()
+const PACING_FLOOR_MS = 200
+const MAX_PACING_MS = 60_000
+
+function providerMinIntervalMs(cfg: { id: string; rateLimitPerSec: number }): number {
+  if (!cfg.rateLimitPerSec || cfg.rateLimitPerSec <= 0) return PACING_FLOOR_MS
+  return Math.min(MAX_PACING_MS, Math.max(PACING_FLOOR_MS, Math.round(1000 / cfg.rateLimitPerSec)))
+}
+
+async function paceProvider(cfg: { id: string; rateLimitPerSec: number }): Promise<void> {
+  const minInterval = providerMinIntervalMs(cfg)
+  const nextAllowedAt = lastCallAt.get(cfg.id) || 0
+  const waitMs = nextAllowedAt - Date.now()
+  if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs))
+  lastCallAt.set(cfg.id, Date.now() + minInterval)
+}
+
 function cacheKey(req: AIRequest): string {
   // [FIX #5] Use SHA-256 hash of full prompt + system instruction to prevent
   // collisions between different jobs with similar prompt prefixes.
@@ -58,6 +79,9 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
 
   diag.push({ provider: providerId, model: cfg.model, event: "attempt", retryCount, promptLen })
 
+  // [RELIABILITY] Enforce the provider's declared rate limit (free-tier safe).
+  await paceProvider(cfg)
+
   try {
     if (providerId.startsWith('gemini')) {
       const { GoogleGenAI } = await import("@google/genai")
@@ -77,20 +101,30 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
       ])
       const text = result.text || ""
       const latency = Date.now() - start
+      // [RELIABILITY] False-success prevention: HTTP 200 with empty content is
+      // a failed run, not a success. Production showed hundreds of 0-byte
+      // "success" rows (162 cloudflare + 108 mistral in 7 days) that masked
+      // total provider failure. Empty output must fail over + be recorded.
+      if (!text.trim()) {
+        diag.push({ provider: providerId, model: cfg.model, event: "failure", errorCode: "EMPTY_RESPONSE", errorMessage: "Empty response (0 bytes)", retryCount, durationMs: latency, promptLen, responseLen: 0 })
+        gwLog(req.jobId, req.agentId, "provider_empty_response", { provider: providerId, latencyMs: latency })
+        throw new Error(`${providerId} empty response (0 bytes)`)
+      }
       diag.push({ provider: providerId, model: cfg.model, event: "success", retryCount, durationMs: latency, promptLen, responseLen: text.length })
       gwLog(req.jobId, req.agentId, "provider_success", { provider: providerId, latencyMs: latency, tokensIn: result.usageMetadata?.promptTokenCount, tokensOut: result.usageMetadata?.candidatesTokenCount })
       return { text, provider: providerId, model: cfg.model, latencyMs: latency, tokensInput: result.usageMetadata?.promptTokenCount, tokensOutput: result.usageMetadata?.candidatesTokenCount, costCents: Math.round(((result.usageMetadata?.promptTokenCount||0)+(result.usageMetadata?.candidatesTokenCount||0))*cfg.costPer1kTokens/1000) }
     }
 
-    const openAICompat: ProviderId[] = ["groq","cerebras","openrouter","github_models","mistral","nvidia"]
+    const openAICompat: ProviderId[] = ["groq","cerebras","openrouter","github_models","mistral","nvidia","cohere"]
     if (openAICompat.includes(providerId)) {
       const urls: Record<string,string> = {
         groq: "https://api.groq.com/openai/v1/chat/completions",
         cerebras: "https://api.cerebras.ai/v1/chat/completions",
         openrouter: "https://openrouter.ai/api/v1/chat/completions",
-        github_models: "https://models.inference.ai.azure.com/chat/completions",
+        github_models: "https://models.github.ai/inference/chat/completions",
         mistral: "https://api.mistral.ai/v1/chat/completions",
         nvidia: "https://integrate.api.nvidia.com/v1/chat/completions",
+        cohere: "https://api.cohere.ai/compatibility/v1/chat/completions",
       }
       const body: any = {
         model: cfg.model,
@@ -101,11 +135,9 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
       if (providerId === "openrouter") {
         body.provider = { order: ["deepinfra"], allow_fallbacks: false }
       }
-      // GitHub Models requires api-version header
+      // GitHub Models (models.github.ai) uses Bearer PAT auth — no api-version
+      // header (that was Azure-endpoint-specific and the Azure endpoint is dead).
       const headers: any = { "Content-Type":"application/json", "Authorization":`Bearer ${apiKey}` }
-      if (providerId === "github_models") {
-        headers["api-version"] = "2024-05-01-preview"
-      }
       const res = await fetch(urls[providerId], {
         method: "POST",
         headers,
@@ -121,11 +153,20 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
         try { const j=JSON.parse(errText); ec=j.error?.code||j.error?.type||ec; em=j.error?.message||em } catch {}
         diag.push({ provider: providerId, model: cfg.model, event: "failure", httpStatus: res.status, errorCode: ec, errorMessage: em, errorBody: errText.slice(0,1000), retryCount, durationMs: latency, promptLen })
         gwLog(req.jobId, req.agentId, "provider_error", { provider: providerId, status: res.status, errorCode: ec, errorMessage: em.slice(0,200) })
-        throw new Error(`${providerId} ${res.status} (${ec}): ${em.slice(0,200)}`)
+        // Carry Retry-After (when the provider sends it) so the Smart Router can
+        // schedule an accurate backoff instead of guessing.
+        const retryAfter = res.headers.get('retry-after')
+        throw new Error(`${providerId} ${res.status} (${ec}): ${em.slice(0,200)}${retryAfter ? ` Retry-After: ${retryAfter}` : ""}`)
       }
       const data = await res.json() as any
       const text = data.choices?.[0]?.message?.content || ""
       const latency = Date.now() - start
+      // [RELIABILITY] False-success prevention — empty 200 body is a failure.
+      if (!text.trim()) {
+        diag.push({ provider: providerId, model: cfg.model, event: "failure", errorCode: "EMPTY_RESPONSE", errorMessage: "Empty response (0 bytes)", retryCount, durationMs: latency, promptLen, responseLen: 0 })
+        gwLog(req.jobId, req.agentId, "provider_empty_response", { provider: providerId, latencyMs: latency })
+        throw new Error(`${providerId} empty response (0 bytes)`)
+      }
       diag.push({ provider: providerId, model: cfg.model, event: "success", retryCount, durationMs: latency, promptLen, responseLen: text.length })
       gwLog(req.jobId, req.agentId, "provider_success", { provider: providerId, latencyMs: latency, tokensIn: data.usage?.prompt_tokens, tokensOut: data.usage?.completion_tokens })
       return { text, provider: providerId, model: cfg.model, latencyMs: latency, tokensInput: data.usage?.prompt_tokens, tokensOutput: data.usage?.completion_tokens, costCents: Math.round(((data.usage?.prompt_tokens||0)+(data.usage?.completion_tokens||0))*cfg.costPer1kTokens/1000) }
@@ -150,11 +191,17 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
         let ec = `${res.status}`, em = errText.slice(0,500)
         try { const j=JSON.parse(errText); ec=j.errors?.[0]?.code||ec; em=j.errors?.[0]?.message||em } catch {}
         diag.push({ provider: providerId, model: cfg.model, event: "failure", httpStatus: res.status, errorCode: ec, errorMessage: em, errorBody: errText.slice(0,1000), retryCount, durationMs: latency, promptLen })
-        throw new Error(`Cloudflare ${res.status} (${ec}): ${em.slice(0,200)}`)
+        const retryAfter = res.headers.get('retry-after')
+        throw new Error(`Cloudflare ${res.status} (${ec}): ${em.slice(0,200)}${retryAfter ? ` Retry-After: ${retryAfter}` : ""}`)
       }
       const data = await res.json() as any
       const text = data.result?.response || ""
       const latency = Date.now() - start
+      if (!text.trim()) {
+        diag.push({ provider: providerId, model: cfg.model, event: "failure", errorCode: "EMPTY_RESPONSE", errorMessage: "Empty response (0 bytes)", retryCount, durationMs: latency, promptLen, responseLen: 0 })
+        gwLog(req.jobId, req.agentId, "provider_empty_response", { provider: providerId, latencyMs: latency })
+        throw new Error(`Cloudflare empty response (0 bytes)`)
+      }
       diag.push({ provider: providerId, model: cfg.model, event: "success", retryCount, durationMs: latency, promptLen, responseLen: text.length })
       return { text, provider: providerId, model: cfg.model, latencyMs: latency }
     }
@@ -172,11 +219,17 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
         const latency = Date.now() - start
         let ec = `${res.status}`; try { const j=JSON.parse(errText); ec=j.error||ec } catch {}
         diag.push({ provider: providerId, model: cfg.model, event: "failure", httpStatus: res.status, errorCode: ec, errorMessage: errText.slice(0,500), errorBody: errText.slice(0,1000), retryCount, durationMs: latency, promptLen })
-        throw new Error(`HuggingFace ${res.status}: ${errText.slice(0,200)}`)
+        const retryAfter = res.headers.get('retry-after')
+        throw new Error(`HuggingFace ${res.status}: ${errText.slice(0,200)}${retryAfter ? ` Retry-After: ${retryAfter}` : ""}`)
       }
       const data = await res.json() as any
       const text = data.choices?.[0]?.message?.content || ""
       const latency = Date.now() - start
+      if (!text.trim()) {
+        diag.push({ provider: providerId, model: cfg.model, event: "failure", errorCode: "EMPTY_RESPONSE", errorMessage: "Empty response (0 bytes)", retryCount, durationMs: latency, promptLen, responseLen: 0 })
+        gwLog(req.jobId, req.agentId, "provider_empty_response", { provider: providerId, latencyMs: latency })
+        throw new Error(`HuggingFace empty response (0 bytes)`)
+      }
       diag.push({ provider: providerId, model: cfg.model, event: "success", retryCount, durationMs: latency, promptLen, responseLen: text.length })
       return { text, provider: providerId, model: cfg.model, latencyMs: latency }
     }

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isPipelineAuthorized } from '@/lib/server/auth'
+import { selectGeminiProbeModels } from '@/lib/ai/model-discovery'
+import { PROVIDERS } from '@/lib/ai/providers/types'
 
 /**
  * Provider Audit Endpoint
@@ -72,11 +74,110 @@ export async function GET(request: NextRequest) {
     results.nvidia = await testNvidia(process.env.NVIDIA_API_KEY)
   }
   
+  // Test Cohere
+  if (process.env.COHERE_API_KEY) {
+    console.log('Testing Cohere...')
+    results.cohere = await testCohere(process.env.COHERE_API_KEY)
+  }
+  
   return NextResponse.json(results)
 }
 
+/**
+ * Test Cohere (OpenAI-compatible endpoint).
+ * Probes the configured model + up to 2 additional command-family models
+ * from the live catalog — never a hardcoded dead list.
+ */
+async function testCohere(apiKey: string) {
+  const configured = PROVIDERS.find((p) => p.id === 'cohere')?.model || 'command-r-plus-08-2024'
+  const models = [configured]
+  const results: any[] = []
+  
+  // Query catalog
+  let catalog: any[] = []
+  try {
+    const response = await fetch('https://api.cohere.ai/compatibility/v1/models', {
+      headers: { 'Authorization': `Bearer ${apiKey}` }
+    })
+    if (response.ok) {
+      const data = await response.json() as any
+      catalog = (data.data || [])
+        .map((m: any) => m.id)
+        .filter((id: string) => /^command/i.test(id))
+      // add the top 2 additional command models for coverage
+      for (const id of catalog) {
+        if (!models.includes(id)) models.push(id)
+        if (models.length >= 3) break
+      }
+    }
+  } catch (e: any) {
+    console.log('Cohere catalog error:', e.message)
+  }
+  
+  // Test each model
+  for (const model of models) {
+    const start = Date.now()
+    try {
+      const response = await fetch('https://api.cohere.ai/compatibility/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: 'Say "test"' }],
+          max_tokens: 20
+        })
+      })
+      
+      const latency = Date.now() - start
+      
+      if (response.ok) {
+        const data = await response.json() as any
+        const text = data.choices?.[0]?.message?.content || ''
+        results.push({
+          model,
+          success: true,
+          latency,
+          response: text.substring(0, 50),
+          inCatalog: catalog.includes(model)
+        })
+      } else {
+        const error = await response.text()
+        results.push({
+          model,
+          success: false,
+          latency,
+          error: `${response.status}: ${error.substring(0, 100)}`,
+          inCatalog: catalog.includes(model)
+        })
+      }
+    } catch (e: any) {
+      results.push({
+        model,
+        success: false,
+        latency: Date.now() - start,
+        error: e.message
+      })
+    }
+  }
+  
+  return {
+    catalog: catalog.length,
+    tested: results.length,
+    successful: results.filter((r) => r.success).length,
+    results
+  }
+}
+
 async function testGemini(apiKey: string) {
-  const models = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']
+  // [RELIABILITY] Probe list derived from the LIVE catalog + the configured
+  // provider models — never hardcoded. The old hardcoded list
+  // (gemini-2.5-flash / 2.5-pro / 2.0-flash / 1.5-flash / 1.5-pro) was 100%
+  // dead models (1.5 shut down, 2.0 shut down 2026-06-01, 2.5-flash pulled
+  // early for new users) and wasted 5 live calls on guaranteed 404s per audit.
+  const configured = PROVIDERS.filter((p) => p.id === 'gemini' || p.id === 'gemini_backup').map((p) => p.model)
   const results: any[] = []
   
   // Query catalog
@@ -92,6 +193,8 @@ async function testGemini(apiKey: string) {
   } catch (e: any) {
     console.log('Gemini catalog error:', e.message)
   }
+  
+  const models = selectGeminiProbeModels(catalog, configured, 5)
   
   // Test each model
   for (const model of models) {
@@ -303,7 +406,10 @@ async function testCerebras(apiKey: string) {
 }
 
 async function testOpenRouter(apiKey: string) {
-  const models = ['meta-llama/llama-3.3-70b-instruct', 'google/gemini-2.0-flash-exp:free', 'anthropic/claude-3.5-sonnet', 'openai/gpt-4o-mini', 'mistralai/mixtral-8x7b-instruct']
+  // [RELIABILITY] google/gemini-2.0-flash-exp:free is shut down (2.0 line
+  // ended 2026-06-01; no Gemini :free variants remain on OpenRouter — verified
+  // via the live models API). Replaced with the current stable gemini-3.5-flash.
+  const models = ['meta-llama/llama-3.3-70b-instruct', 'google/gemini-3.5-flash', 'anthropic/claude-3.5-sonnet', 'openai/gpt-4o-mini', 'mistralai/mixtral-8x7b-instruct']
   const results: any[] = []
   
   // Query catalog
@@ -386,10 +492,9 @@ async function testGitHubModels(apiKey: string) {
   // Query catalog
   let catalog: any[] = []
   try {
-    const response = await fetch('https://models.inference.ai.azure.com/models', {
+    const response = await fetch('https://models.github.ai/inference/models', {
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'api-version': '2024-05-01-preview'
+        'Authorization': `Bearer ${apiKey}`
       }
     })
     if (response.ok) {
@@ -404,12 +509,11 @@ async function testGitHubModels(apiKey: string) {
   for (const model of models) {
     const start = Date.now()
     try {
-      const response = await fetch('https://models.inference.ai.azure.com/chat/completions', {
+      const response = await fetch('https://models.github.ai/inference/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'api-version': '2024-05-01-preview'
+          'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
           model,

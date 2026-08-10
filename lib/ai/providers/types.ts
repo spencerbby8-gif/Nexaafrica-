@@ -1,4 +1,4 @@
-export type ProviderId = "cerebras" | "gemini" | "gemini_backup" | "groq" | "openrouter" | "huggingface" | "github_models" | "cloudflare" | "mistral" | "nvidia"
+export type ProviderId = "cerebras" | "gemini" | "gemini_backup" | "groq" | "openrouter" | "huggingface" | "github_models" | "cloudflare" | "mistral" | "nvidia" | "cohere"
 
 export interface ProviderConfig {
   id: ProviderId
@@ -24,15 +24,26 @@ export interface ProviderConfig {
 }
 
 export const PROVIDERS: ProviderConfig[] = [
-  // Gemini: free-tier 429 at >20 RPM. Works for single requests (CV parsing).
-  { id: "gemini", name: "Gemini 2.5 Flash", envKey: "GEMINI_API_KEY", model: "gemini-2.5-flash", enabled: true, priority: 1, rateLimitPerSec: 2, timeoutMs: 15000, costPer1kTokens: 1, taskTypes: ["cv_parsing", "profile_transform", "complex_analysis"] },
-  { id: "gemini_backup", name: "Gemini Backup", envKey: "GEMINI_API_KEY_BACKUP", model: "gemini-2.5-flash", enabled: true, priority: 2, rateLimitPerSec: 2, timeoutMs: 15000, costPer1kTokens: 1, taskTypes: ["cv_parsing", "profile_transform", "complex_analysis"] },
+  // Gemini: gemini-2.5-flash is DEAD for new users since ~Jul 2026 (404
+  // "no longer available to new users"; official deprecation 2026-10-16, pulled
+  // early — verified live in ai_orch_health 2026-07-29). Free-tier replacements
+  // per ai.google.dev: gemini-3.5-flash (GA 2026-05-19, free tier) primary,
+  // gemini-3.1-flash-lite (GA 2026-05-07) backup — different model = separate
+  // quota bucket. rateLimitPerSec now ENFORCED by gateway pacing: 0.25 rps ≈
+  // 15 RPM, the free-tier ceiling for Flash-class models (1,500 RPD / 1M TPM).
+  { id: "gemini", name: "Gemini 3.5 Flash", envKey: "GEMINI_API_KEY", model: "gemini-3.5-flash", enabled: true, priority: 1, rateLimitPerSec: 0.25, timeoutMs: 15000, costPer1kTokens: 1, taskTypes: ["cv_parsing", "profile_transform", "complex_analysis"] },
+  { id: "gemini_backup", name: "Gemini 3.1 Flash Lite", envKey: "GEMINI_API_KEY_BACKUP", model: "gemini-3.1-flash-lite", enabled: true, priority: 2, rateLimitPerSec: 0.25, timeoutMs: 15000, costPer1kTokens: 1, taskTypes: ["cv_parsing", "profile_transform", "complex_analysis"] },
   // Groq: proven working. On-demand: 100K TPD, ~30 RPM.
   { id: "groq", name: "Groq Llama 3.3", envKey: "GROQ_API_KEY", model: "llama-3.3-70b-versatile", enabled: true, priority: 3, rateLimitPerSec: 5, timeoutMs: 10000, costPer1kTokens: 2, taskTypes: ["job_intelligence", "fast_extraction", "simple_analysis"] },
   // Cerebras: verified working. GET /v1/models confirmed gpt-oss-120b.
   { id: "cerebras", name: "Cerebras GPT-OSS 120B", envKey: "CEREBRAS_API_KEY", model: "gpt-oss-120b", enabled: true, priority: 4, rateLimitPerSec: 5, timeoutMs: 10000, costPer1kTokens: 2, taskTypes: ["job_intelligence", "fast_extraction", "bulk_processing"] },
-  // OpenRouter: free-tier key, routes through deepinfra.
-  { id: "openrouter", name: "OpenRouter Llama 4", envKey: "OPENROUTER_API_KEY", model: "meta-llama/llama-4-maverick", enabled: true, priority: 5, rateLimitPerSec: 3, timeoutMs: 30000, costPer1kTokens: 0, taskTypes: ["job_intelligence", "fallback"] },
+  // OpenRouter: account has no credits (live 402 "never purchased credits").
+  // Runtime probe 2026-08-09: EVERY :free model tested (gpt-oss-20b, gemma-4,
+  // nemotron-3, north-mini-code) returns 404 "no endpoints" with this key —
+  // an ACCOUNT-LEVEL restriction, not code. Keeping a :free model so the
+  // account works the moment access is granted; until then the router's
+  // invalid-model class (12h cooldown) stops attempts from being wasted.
+  { id: "openrouter", name: "OpenRouter (free tier restricted)", envKey: "OPENROUTER_API_KEY", model: "openai/gpt-oss-20b:free", enabled: true, priority: 5, rateLimitPerSec: 0.3, timeoutMs: 30000, costPer1kTokens: 0, taskTypes: ["job_intelligence", "fallback"] },
   // HuggingFace: re-enabled — was disabled due to Vercel fetch issues, now retried with timeout
   { id: "huggingface", name: "HuggingFace", envKey: "HUGGINGFACE_API_KEY", model: "meta-llama/Llama-3.1-8B-Instruct", enabled: true, priority: 6, rateLimitPerSec: 2, timeoutMs: 30000, costPer1kTokens: 1, taskTypes: ["simple_analysis"] },
   // GitHub Models: GitHub's AI model marketplace
@@ -43,6 +54,12 @@ export const PROVIDERS: ProviderConfig[] = [
   { id: "mistral", name: "Mistral Large", envKey: "MISTRAL_API_KEY", model: "mistral-large-latest", enabled: true, priority: 9, rateLimitPerSec: 3, timeoutMs: 15000, costPer1kTokens: 3, taskTypes: ["complex_analysis", "european_jobs"] },
   // NVIDIA NIM: NVIDIA's inference microservice
   { id: "nvidia", name: "NVIDIA NIM", envKey: "NVIDIA_API_KEY", model: "meta/llama-3.1-70b-instruct", enabled: true, priority: 10, rateLimitPerSec: 5, timeoutMs: 30000, costPer1kTokens: 2, taskTypes: ["job_intelligence", "gpu_accelerated"] },
+  // Cohere: wired 2026-08-09 (COHERE_API_KEY added to Vercel). OpenAI-compatible
+  // endpoint https://api.cohere.ai/compatibility/v1/chat/completions. Trial keys:
+  // 1,000 calls/month, 20 req/min → pacing 0.3 rps ≈ 18/min (under limit).
+  // command-r-plus-08-2024 = current stable Command R+ (verified via Cohere docs);
+  // model-sync discovery will re-verify live candidates each cycle.
+  { id: "cohere", name: "Cohere Command R+", envKey: "COHERE_API_KEY", model: "command-r-plus-08-2024", enabled: true, priority: 11, rateLimitPerSec: 0.3, timeoutMs: 30000, costPer1kTokens: 2, taskTypes: ["job_intelligence", "fast_extraction", "complex_analysis"] },
 ]
 
 export interface ProviderHealth {

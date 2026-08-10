@@ -246,8 +246,8 @@ async function probeProvider(cfg: ProviderConfig): Promise<{ ok: boolean; latenc
       })
       return { ok: true, latencyMs: Date.now() - start }
     }
-    if (["groq","cerebras","openrouter"].includes(cfg.id)) {
-      const urls: Record<string,string> = { groq: "https://api.groq.com/openai/v1/chat/completions", cerebras: "https://api.cerebras.ai/v1/chat/completions", openrouter: "https://openrouter.ai/api/v1/chat/completions" }
+    if (["groq","cerebras","openrouter","cohere"].includes(cfg.id)) {
+      const urls: Record<string,string> = { groq: "https://api.groq.com/openai/v1/chat/completions", cerebras: "https://api.cerebras.ai/v1/chat/completions", openrouter: "https://openrouter.ai/api/v1/chat/completions", cohere: "https://api.cohere.ai/compatibility/v1/chat/completions" }
       const body: any = { model: cfg.model, messages: [{ role: "user", content: "ok" }], temperature: 0, max_tokens: 5 }
       if (cfg.id === "openrouter") body.provider = { order: ["deepinfra"], allow_fallbacks: false }
       const res = await fetch(urls[cfg.id], { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` }, body: JSON.stringify(body) })

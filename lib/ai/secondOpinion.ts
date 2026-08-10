@@ -69,15 +69,25 @@ evidence is truly missing.`
     // Persist the dual-provider audit
     try {
       const supabase = createServiceClient()
-      await supabase.from("ai_provider_log").insert([{
+      const rows: Record<string, unknown>[] = [{
         agent_id: "second-opinion", provider: second.response.provider,
         model: second.response.model, event: "success",
         retry_count: 0, duration_ms: second.response.latencyMs, fallback_used: second.fallbackUsed,
-      }, {
-        agent_id: "second-opinion", provider: firstResult.modelVersion.split(":")[0],
-        model: firstResult.modelVersion, event: "success",
-        retry_count: 0, duration_ms: 0, fallback_used: false,
-      }]).then(()=>{},()=>{})
+      }]
+      // [RELIABILITY] False-success prevention: the FIRST analysis must only be
+      // recorded as a provider success when it actually used a real AI provider
+      // (modelVersion is "provider:model"). Regex/rule fallbacks ("regex-extracted-…",
+      // "no-ai-providers", "failed-no-evidence") are logged honestly as
+      // event="fallback" — production had hundreds of fake success rows here.
+      const firstProvider = firstResult.modelVersion.split(":")[0]
+      const firstWasAI = firstResult.modelVersion.includes(":") && !firstResult.modelVersion.startsWith("regex-") && !firstResult.modelVersion.startsWith("failed-") && !firstResult.modelVersion.startsWith("no-ai")
+      rows.push({
+        agent_id: "second-opinion", provider: firstProvider || "none",
+        model: firstResult.modelVersion,
+        event: firstWasAI ? "success" : "fallback",
+        retry_count: 0, duration_ms: 0, fallback_used: !firstWasAI,
+      })
+      await supabase.from("ai_provider_log").insert(rows).then(()=>{},()=>{})
     } catch {}
 
     return { used: true, provider: second.response.provider, reconciled, auditNote: `verified by ${second.response.provider}` }

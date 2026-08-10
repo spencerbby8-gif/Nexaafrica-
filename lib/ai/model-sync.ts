@@ -67,6 +67,7 @@ function keyFor(provider: string): string | undefined {
     mistral: 'MISTRAL_API_KEY',
     nvidia: 'NVIDIA_API_KEY',
     huggingface: 'HUGGINGFACE_API_KEY',
+    cohere: 'COHERE_API_KEY',
   }
   const name = env[provider]
   return name ? process.env[name] : undefined
@@ -82,7 +83,7 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
       res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 8 } }),
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 64 } }),
         signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
       })
     } else if (provider === 'cloudflare') {
@@ -90,7 +91,7 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
       res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${modelId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], max_tokens: 8 }),
+        body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], max_tokens: 64 }),
         signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
       })
     } else {
@@ -98,17 +99,17 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
         groq: 'https://api.groq.com/openai/v1/chat/completions',
         cerebras: 'https://api.cerebras.ai/v1/chat/completions',
         openrouter: 'https://openrouter.ai/api/v1/chat/completions',
-        github_models: 'https://models.inference.ai.azure.com/chat/completions',
+        github_models: 'https://models.github.ai/inference/chat/completions',
         mistral: 'https://api.mistral.ai/v1/chat/completions',
         nvidia: 'https://integrate.api.nvidia.com/v1/chat/completions',
         huggingface: 'https://router.huggingface.co/v1/chat/completions',
+        cohere: 'https://api.cohere.ai/compatibility/v1/chat/completions',
       }
       const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }
-      if (provider === 'github_models') headers['api-version'] = '2024-05-01-preview'
       if (provider === 'openrouter') { headers['HTTP-Referer'] = 'https://v0-nexaafrica.vercel.app'; headers['X-Title'] = 'Nexa Africa' }
       res = await fetch(endpoints[provider], {
         method: 'POST', headers,
-        body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: prompt }], max_tokens: 8 }),
+        body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: prompt }], max_tokens: 64 }),
         signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
       })
     }

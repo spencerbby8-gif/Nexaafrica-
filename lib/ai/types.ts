@@ -1,4 +1,9 @@
-export const AI_MODEL_VERSION = "gemini-2.5-flash-v1"
+// [RELIABILITY] Fallback version label when the verifier bundle is empty.
+// Was "gemini-2.5-flash-v1" — a DEAD model ID (pulled early 2026-07) stamped
+// on new rows, which also failed the engine's allProvidersFailed retry check
+// (jobs got sealed completed with a fake model label). "no-ai-providers" is
+// honest AND makes empty bundles retryable via the existing backoff path.
+export const AI_MODEL_VERSION = "no-ai-providers"
 export const AI_INTELLIGENCE_VERSION = 1
 
 export type Confidence = number // 0-100

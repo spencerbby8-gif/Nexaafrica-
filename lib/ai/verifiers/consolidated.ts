@@ -609,7 +609,15 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
     }
   }
 
-  if (!aiUsed) modelVersion = Object.keys({ ...rxAfrica, ...rxRemote, ...rxSalary, ...rxTz, ...rxExp }).length > 0 ? "regex-extracted-" + pageText.length + "bytes" : "no-ai-providers"
+  if (!aiUsed) {
+    const hasRegex = Object.keys({ ...rxAfrica, ...rxRemote, ...rxSalary, ...rxTz, ...rxExp }).length > 0
+    // [RELIABILITY] False-success prevention: page fetch failed (0 bytes) + no
+    // AI = no evidence at all. Previously this sealed the run as
+    // "regex-extracted-0bytes" and the queue marked it completed (352 rows in
+    // production). It must be retryable, so report no-ai-providers — the
+    // engine's allProvidersFailed path schedules a backoff retry instead.
+    modelVersion = hasRegex && pageText.length > 0 ? "regex-extracted-" + pageText.length + "bytes" : "no-ai-providers"
+  }
   // P5: harden all claims against the actual source text before persisting.
   // P6: evidence provenance label
   const evidenceProvenance = aiUsed ? (companyText.length >= 100 ? "company_page" : "page") : (Object.keys({...rxAfrica,...rxRemote,...rxSalary,...rxTz,...rxExp}).length > 0 ? "regex" : "ats_metadata")

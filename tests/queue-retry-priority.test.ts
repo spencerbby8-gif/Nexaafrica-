@@ -1,40 +1,45 @@
 /**
- * Tests: overdue-retry priority in the AI queue drain.
+ * Tests: queue drain order — true retries first, fresh second, repair last.
  *
- * Root cause (verified in production): processAIQueue drains with
- * .order('priority', desc) and a 240s budget. A low-priority (10) retry whose
- * next_retry_at is already DUE can be starved forever while fresh
- * high-priority rows keep arriving each daily run — the job never gets its
- * JAI row. Observed: one pending row sat due (next_retry 05:56) past 20:01.
- *
- * The fix introduces a pure, exported helper
- *   overdueFirstOrderBy(nowIso) -> { field, options }
- * that the drain uses as its PRIMARY order by: overdue retries
- * (next_retry_at IS NOT NULL AND <= now) first, then priority desc, then
- * created_at asc. Fresh rows (next_retry_at IS NULL) keep their priority
- * semantics.
+ * Re-audit (2026-08-10): the previous implementation ordered the drain by a
+ * raw SQL expression via supabase-js .order(), which double-quotes its column
+ * argument — the query would ERROR at runtime (cron runs only in production,
+ * so preview could not catch it). The corrected design issues THREE bounded
+ * queries (all using plain, valid column ordering):
+ *   1. TRUE overdue retries (not repair-requeued) — stranded jobs first
+ *   2. FRESH rows (next_retry_at IS NULL) — normal ingestion keeps priority
+ *   3. REPAIR-requeued rows, capped — after fresh so they never starve it
+ * The drainBatchLimits contract below is what makes that provable.
  */
 
 import { describe, it, expect } from 'vitest'
-import { overdueFirstOrderBy } from '@/lib/ai/engine'
+import { drainBatchLimits, isRepairRequeueError, JAI_REPAIR_ERROR } from '@/lib/ai/jaiRepair'
 
-describe('overdueFirstOrderBy', () => {
-  it('puts overdue retries first, then priority desc, then created_at asc', () => {
-    const now = new Date('2026-08-10T20:00:00Z').toISOString()
-    const { orderBy } = overdueFirstOrderBy(now)
-    expect(orderBy).toHaveLength(3)
-    // primary: overdue-first expression
-    expect(orderBy[0].field).toContain('next_retry_at')
-    expect(orderBy[0].options).toMatchObject({ ascending: false })
-    // then priority desc
-    expect(orderBy[1]).toMatchObject({ field: 'priority', options: { ascending: false } })
-    // then created_at asc
-    expect(orderBy[2]).toMatchObject({ field: 'created_at', options: { ascending: true } })
+describe('drainBatchLimits', () => {
+  it('true retries and fresh rows get the full batch; repair rows are capped', () => {
+    const l = drainBatchLimits(150)
+    expect(l.retryLimit).toBe(150)
+    expect(l.freshLimit).toBe(150)
+    expect(l.repairLimit).toBeLessThanOrEqual(l.freshLimit)
+    expect(l.repairLimit).toBeGreaterThanOrEqual(5)
   })
 
-  it('the overdue-first expression separates overdue rows from fresh rows', () => {
-    const now = new Date('2026-08-10T20:00:00Z').toISOString()
-    const { overdueExpr } = overdueFirstOrderBy(now)
-    expect(overdueExpr).toBe('next_retry_at IS NOT NULL AND next_retry_at <= ' + now)
+  it('repair cap never exceeds 25% of the batch (starvation guard)', () => {
+    for (const b of [10, 20, 50, 100, 150, 300, 1000]) {
+      const l = drainBatchLimits(b)
+      expect(l.repairLimit).toBeLessThanOrEqual(Math.max(5, Math.floor(b * 0.25)))
+    }
+  })
+})
+
+describe('repair-row identification (drain query 3)', () => {
+  it('repair-requeued rows are identified by their error prefix', () => {
+    expect(isRepairRequeueError(JAI_REPAIR_ERROR)).toBe(true)
+    expect(isRepairRequeueError('Requeued: JAI artifact repair (regex/0-byte/no-ai sealed row)')).toBe(true)
+  })
+
+  it('true retries (stranded) are NOT repair rows', () => {
+    expect(isRepairRequeueError('AI providers failed (verifyJobReal-threw). Retry #2 scheduled.')).toBe(false)
+    expect(isRepairRequeueError(null)).toBe(false)
   })
 })

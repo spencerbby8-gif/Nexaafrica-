@@ -3,7 +3,7 @@ import type { Job } from "@/lib/types"
 import { AI_MODEL_VERSION, AI_INTELLIGENCE_VERSION, type JobAIIntelligence } from "./types"
 import type { ProviderCallDiag } from "./gateway"
 import { PROVIDERS } from "./providers/types"
-import { isRepairableArtifactJai, isRepairableJob } from "./jaiRepair"
+import { isRepairableArtifactJai, isRepairableJob, isFailedVerification, shouldRetryFailedRun, drainBatchLimits, JAI_REPAIR_ERROR } from "./jaiRepair"
 
 
 
@@ -391,32 +391,6 @@ function backoffMs(attempt: number): number {
   return Math.min(15 * 60 * 1000 * Math.pow(2, attempt - 1), 12 * 60 * 60 * 1000)
 }
 
-/**
- * Overdue-retry priority (PR #34): builds the ORDER BY expression for the
- * queue drain so that retries whose next_retry_at has already passed are
- * drained FIRST, before fresh high-priority rows. A due retry is the only
- * thing standing between a job and its JAI; without this, a priority=10 retry
- * can be starved indefinitely by the 240s drain budget (verified in
- * production: a due retry sat pending from 05:56 past 20:01).
- *
- * Pure + exported for focused tests. Fresh rows (next_retry_at IS NULL) are
- * not affected — they still sort by their stored priority.
- */
-export function overdueFirstOrderBy(nowIso: string): {
-  overdueExpr: string
-  orderBy: Array<{ field: string; options: { ascending: boolean } }>
-} {
-  const overdueExpr = `next_retry_at IS NOT NULL AND next_retry_at <= ${nowIso}`
-  return {
-    overdueExpr,
-    orderBy: [
-      { field: overdueExpr, options: { ascending: false } },
-      { field: 'priority', options: { ascending: false } },
-      { field: 'created_at', options: { ascending: true } },
-    ],
-  }
-}
-
 // [V3] Durable pipeline trace — fire-and-forget (never blocks the drain).
 async function traceEvent(
   sb: any,
@@ -478,7 +452,7 @@ export async function processAIQueue(batchSize = 100) {
           .from("ai_processing_queue")
           .update({
             status: "pending",
-            error: "Requeued: JAI artifact repair (regex/0-byte/no-ai sealed row)",
+            error: JAI_REPAIR_ERROR,
             attempts: 0,
             completed_at: null,
             started_at: null,
@@ -549,23 +523,41 @@ export async function processAIQueue(batchSize = 100) {
   }
 
   const nowIso = new Date().toISOString()
-  const { orderBy: queueOrderBy, overdueExpr } = overdueFirstOrderBy(nowIso)
-  // [PRECEDENCE] Overdue retries jump the queue: a retry whose next_retry_at
-  // has already passed is the ONLY thing standing between a job and its JAI —
-  // it must never be starved by a fresh batch of high-priority rows within the
-  // 240s drain budget. The overdue-first expression is the PRIMARY order key;
-  // fresh rows (next_retry_at IS NULL) keep their priority semantics.
-  // Verified in production: a priority=10 retry sat pending for hours, due but
-  // never picked up, while higher-priority rows consumed the daily drain.
-  const { data: queueItems } = await supabase
+  // [PRECEDENCE] Drain order (re-audited 2026-08-10): supabase-js .order()
+  // double-quotes its column, so a raw SQL expression order would ERROR at
+  // runtime (unverifiable in preview — cron runs in production only). The
+  // correct approach is three bounded queries, processed in order:
+  //   1. TRUE overdue retries (excludes repair-requeued rows) — stranded jobs
+  //      must be drained first (verified: one priority=10 retry sat due from
+  //      05:56 past 20:01 while fresh rows consumed the daily drain).
+  //   2. FRESH rows (next_retry_at IS NULL) — normal ingestion keeps priority.
+  //   3. REPAIR-requeued rows, capped (drainBatchLimits.repairLimit) — after
+  //      fresh rows so the 162-row artifact repair can never starve ingestion.
+  const { retryLimit, freshLimit, repairLimit } = drainBatchLimits(batchSize)
+  const qBase = supabase
     .from("ai_processing_queue")
     .select("id, job_id, attempts, max_attempts, next_retry_at")
     .eq("status", "pending")
-    .or(`next_retry_at.is.null,next_retry_at.lte.${nowIso}`)
-    .order(overdueExpr, { ascending: false })
+  const { data: retryRows } = await qBase
+    .not("next_retry_at", "is", null)
+    .lte("next_retry_at", nowIso)
+    .not("error", "like", "Requeued: JAI artifact%")
     .order("priority", { ascending: false })
     .order("created_at", { ascending: true })
-    .limit(batchSize)
+    .limit(retryLimit)
+  const { data: freshRows } = await qBase
+    .is("next_retry_at", null)
+    .order("priority", { ascending: false })
+    .order("created_at", { ascending: true })
+    .limit(freshLimit)
+  const { data: repairRows } = await qBase
+    .not("next_retry_at", "is", null)
+    .lte("next_retry_at", nowIso)
+    .like("error", "Requeued: JAI artifact%")
+    .order("priority", { ascending: false })
+    .order("created_at", { ascending: true })
+    .limit(repairLimit)
+  const queueItems = [...(retryRows || []), ...(freshRows || []), ...(repairRows || [])]
 
   if (!queueItems || queueItems.length === 0) return { processed: 0, failed: 0 }
 
@@ -656,13 +648,17 @@ export async function processAIQueue(batchSize = 100) {
 
       // ── Protection check: should we skip the upsert? ──────────────────
       let skipUpsert = false
+      // Hoisted for the retry decision below: what JAI exists for this job and
+      // whether it is REAL intelligence (provider/rule-based) or an artifact.
+      let existingJaiInfo: { modelVersion: string | null; isReal: boolean } | null = null
       try {
         const { data: existing } = await supabase.from("job_ai_intelligence").select("model_version, overall_confidence").eq("job_id", job.id).maybeSingle()
         if (existing) {
           const jobId8 = (job as any).id?.slice(0,8) || ''
           const existingIsMisleading = existing.model_version === "gemini-2.5-flash-v1" || existing.model_version === "rule-based-v1-fast" || existing.model_version === "template-removed-2026";
           const existingIsReal = !existingIsMisleading && existing.model_version && !existing.model_version.includes("failed-no-evidence") && (existing.model_version.includes("gemini") || existing.model_version.includes("groq") || existing.model_version.includes("cerebras") || existing.model_version.includes("openrouter") || existing.model_version.includes("cloudflare") || existing.model_version.includes("mistral") || existing.model_version.includes("nvidia") || existing.model_version.includes("github") || existing.model_version.includes("huggingface") || existing.model_version.includes("rule-based") || existing.model_version.includes("cohere"))
-          const newIsFailed = intelligence.modelVersion.includes("failed-no-evidence") || intelligence.modelVersion.includes("no-ai-providers") || intelligence.modelVersion.includes("verifyJobReal-threw")
+          existingJaiInfo = { modelVersion: existing.model_version ?? null, isReal: existingIsReal }
+          const newIsFailed = isFailedVerification(intelligence.modelVersion)
 
           if (existingIsReal && newIsFailed) {
             console.log(JSON.stringify({ scope: "ai_engine", event: "protected_existing", jobId: jobId8, oldModel: existing.model_version, newModel: intelligence.modelVersion, reason: "existing_is_real_new_is_failed" }));
@@ -677,13 +673,16 @@ export async function processAIQueue(batchSize = 100) {
         console.log(JSON.stringify({ scope: "ai_engine", event: "protect_check_error", jobId: (job as any).id?.slice(0,8) || '', error: e instanceof Error ? e.message.slice(0,100) : String(e).slice(0,100) }));
       }
 
-      // ── [FIX #1] If all providers failed and no existing record, retry instead of completing ──
-      // verifyJobReal-threw is a failed verification (the consolidated verifier
-      // threw) — it must be retried, never persisted as a completed row.
-      const allProvidersFailed = intelligence.modelVersion.includes("no-ai-providers") || intelligence.modelVersion.includes("failed-no-evidence") || intelligence.modelVersion.includes("verifyJobReal-threw")
-      if (allProvidersFailed && !skipUpsert) {
-        const { data: existingCheck } = await supabase.from("job_ai_intelligence").select("id").eq("job_id", job.id).maybeSingle()
-        if (!existingCheck) {
+      // ── [FIX #1] Failed verification -> retry instead of completing ─────
+      // Retry when there is no existing JAI OR the existing JAI is an artifact
+      // (regex-extracted-0bytes / no-ai / failed): a failed run must NEVER be
+      // upserted over an artifact + completed (that was the infinite requeue
+      // loop the repair audit exposed). Real existing JAI is protected above
+      // (skipUpsert) and stays intact. Retries use exponential backoff and
+      // become 'failed' after max_attempts — the repair predicate excludes
+      // failed rows, so the loop terminates.
+      const allProvidersFailed = isFailedVerification(intelligence.modelVersion)
+      if (shouldRetryFailedRun(existingJaiInfo, allProvidersFailed, skipUpsert)) {
           const attempts = item.attempts + 1
           const exhausted = attempts >= item.max_attempts
           const retryAt = new Date(Date.now() + backoffMs(attempts)).toISOString()
@@ -703,7 +702,6 @@ export async function processAIQueue(batchSize = 100) {
           failed++ // count as failed for this batch; will retry or stay failed
           consecutiveItemFailures++
           return
-        }
       }
 
       // ── Main upsert (skipped if protection fired) ─────────────────────

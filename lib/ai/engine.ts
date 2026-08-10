@@ -390,6 +390,32 @@ function backoffMs(attempt: number): number {
   return Math.min(15 * 60 * 1000 * Math.pow(2, attempt - 1), 12 * 60 * 60 * 1000)
 }
 
+/**
+ * Overdue-retry priority (PR #34): builds the ORDER BY expression for the
+ * queue drain so that retries whose next_retry_at has already passed are
+ * drained FIRST, before fresh high-priority rows. A due retry is the only
+ * thing standing between a job and its JAI; without this, a priority=10 retry
+ * can be starved indefinitely by the 240s drain budget (verified in
+ * production: a due retry sat pending from 05:56 past 20:01).
+ *
+ * Pure + exported for focused tests. Fresh rows (next_retry_at IS NULL) are
+ * not affected — they still sort by their stored priority.
+ */
+export function overdueFirstOrderBy(nowIso: string): {
+  overdueExpr: string
+  orderBy: Array<{ field: string; options: { ascending: boolean } }>
+} {
+  const overdueExpr = `next_retry_at IS NOT NULL AND next_retry_at <= ${nowIso}`
+  return {
+    overdueExpr,
+    orderBy: [
+      { field: overdueExpr, options: { ascending: false } },
+      { field: 'priority', options: { ascending: false } },
+      { field: 'created_at', options: { ascending: true } },
+    ],
+  }
+}
+
 // [V3] Durable pipeline trace — fire-and-forget (never blocks the drain).
 async function traceEvent(
   sb: any,
@@ -473,11 +499,20 @@ export async function processAIQueue(batchSize = 100) {
   }
 
   const nowIso = new Date().toISOString()
+  const { orderBy: queueOrderBy, overdueExpr } = overdueFirstOrderBy(nowIso)
+  // [PRECEDENCE] Overdue retries jump the queue: a retry whose next_retry_at
+  // has already passed is the ONLY thing standing between a job and its JAI —
+  // it must never be starved by a fresh batch of high-priority rows within the
+  // 240s drain budget. The overdue-first expression is the PRIMARY order key;
+  // fresh rows (next_retry_at IS NULL) keep their priority semantics.
+  // Verified in production: a priority=10 retry sat pending for hours, due but
+  // never picked up, while higher-priority rows consumed the daily drain.
   const { data: queueItems } = await supabase
     .from("ai_processing_queue")
     .select("id, job_id, attempts, max_attempts, next_retry_at")
     .eq("status", "pending")
     .or(`next_retry_at.is.null,next_retry_at.lte.${nowIso}`)
+    .order(overdueExpr, { ascending: false })
     .order("priority", { ascending: false })
     .order("created_at", { ascending: true })
     .limit(batchSize)

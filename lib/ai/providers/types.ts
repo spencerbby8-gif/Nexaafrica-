@@ -38,11 +38,12 @@ export const PROVIDERS: ProviderConfig[] = [
   // Cerebras: verified working. GET /v1/models confirmed gpt-oss-120b.
   { id: "cerebras", name: "Cerebras GPT-OSS 120B", envKey: "CEREBRAS_API_KEY", model: "gpt-oss-120b", enabled: true, priority: 4, rateLimitPerSec: 5, timeoutMs: 10000, costPer1kTokens: 2, taskTypes: ["job_intelligence", "fast_extraction", "bulk_processing"] },
   // OpenRouter: account has no credits (live 402 "never purchased credits").
-  // Paid models cannot work on this account — switch to a verified :free
-  // variant (openai/gpt-oss-20b:free present in live models API 2026-08-09).
-  // Free-tier caps: 50 req/day (<10 credits) / 20 RPM. Paid models still
-  // 402 until credits are purchased.
-  { id: "openrouter", name: "OpenRouter GPT-OSS-20B (free)", envKey: "OPENROUTER_API_KEY", model: "openai/gpt-oss-20b:free", enabled: true, priority: 5, rateLimitPerSec: 0.3, timeoutMs: 30000, costPer1kTokens: 0, taskTypes: ["job_intelligence", "fallback"] },
+  // Runtime probe 2026-08-09: EVERY :free model tested (gpt-oss-20b, gemma-4,
+  // nemotron-3, north-mini-code) returns 404 "no endpoints" with this key —
+  // an ACCOUNT-LEVEL restriction, not code. Keeping a :free model so the
+  // account works the moment access is granted; until then the router's
+  // invalid-model class (12h cooldown) stops attempts from being wasted.
+  { id: "openrouter", name: "OpenRouter (free tier restricted)", envKey: "OPENROUTER_API_KEY", model: "openai/gpt-oss-20b:free", enabled: true, priority: 5, rateLimitPerSec: 0.3, timeoutMs: 30000, costPer1kTokens: 0, taskTypes: ["job_intelligence", "fallback"] },
   // HuggingFace: re-enabled — was disabled due to Vercel fetch issues, now retried with timeout
   { id: "huggingface", name: "HuggingFace", envKey: "HUGGINGFACE_API_KEY", model: "meta-llama/Llama-3.1-8B-Instruct", enabled: true, priority: 6, rateLimitPerSec: 2, timeoutMs: 30000, costPer1kTokens: 1, taskTypes: ["simple_analysis"] },
   // GitHub Models: GitHub's AI model marketplace

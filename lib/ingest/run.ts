@@ -18,6 +18,7 @@ import {
   type JobIntelligence,
 } from '@/lib/intelligence'
 import { calculateTrustScore } from '@/lib/trust/engine'
+import { resolveEligibilityLock, parseAdmissionGate } from '@/lib/ingest/eligibilityLock'
 
 /**
  * Phase 16: run the deterministic Intelligence Engine over a normalized job
@@ -133,7 +134,7 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
 
     // Batch fetch existing jobs for this source to avoid N+1 + cross-source duplicate detection by apply_url
     const sourceIds = jobs.map(j => j.source_id).filter(Boolean) as string[]
-    let existingMap = new Map<string, { id: string; first_seen_at: string | null; refresh_count: number | null }>()
+    let existingMap = new Map<string, { id: string; first_seen_at: string | null; refresh_count: number | null; eligibility: string | null; is_open_to_africa: boolean | null; is_active: boolean | null }>()
     let duplicateUrlMap = new Map<string, string>() // apply_url -> existing id from different source
 
     if (sourceIds.length > 0) {
@@ -143,15 +144,40 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
           const chunk = sourceIds.slice(i, i + chunkSize)
           const { data } = await supabase
             .from('jobs')
-            .select('source_id, id, first_seen_at, refresh_count')
+            .select('source_id, id, first_seen_at, refresh_count, eligibility, is_open_to_africa, is_active')
             .eq('source', s.ats)
             .in('source_id', chunk)
           for (const row of (data || []) as any[]) {
-            existingMap.set(row.source_id, { id: row.id, first_seen_at: row.first_seen_at, refresh_count: row.refresh_count })
+            existingMap.set(row.source_id, { id: row.id, first_seen_at: row.first_seen_at, refresh_count: row.refresh_count, eligibility: row.eligibility, is_open_to_africa: row.is_open_to_africa, is_active: row.is_active })
           }
         }
       } catch {}
     }
+
+    // [PRECEDENCE] Admission lock: batch-fetch which existing jobs were
+    // rejected by the admission gate (ai_processing_queue.error LIKE
+    // 'Rejected%'). A rejected job's eligibility/open-to-Africa/is_active must
+    // not be silently overwritten by an ordinary re-ingest — the admission
+    // decision is the canonical owner. Self-heals previously clobbered rows.
+    let admissionRejected = new Map<string, string>() // job_id -> gate
+    try {
+      const existingIds = Array.from(existingMap.values()).map((e) => e.id).filter(Boolean)
+      if (existingIds.length > 0) {
+        const chunkSize = 100
+        for (let i = 0; i < existingIds.length; i += chunkSize) {
+          const chunk = existingIds.slice(i, i + chunkSize)
+          const { data: rej } = await supabase
+            .from('ai_processing_queue')
+            .select('job_id, error')
+            .in('job_id', chunk)
+            .like('error', 'Rejected%')
+          for (const r of (rej || []) as any[]) {
+            const gate = parseAdmissionGate(r.error)
+            if (gate) admissionRejected.set(r.job_id, gate)
+          }
+        }
+      }
+    } catch {}
 
     // Cross-source duplicate detection by apply_url (prevent same job from different ATS)
     try {
@@ -240,6 +266,19 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
       const slug = buildJobSlug(job.title, job.company, job.country)
 
       const existing = existingMap.get(job.source_id) || null
+      // [PRECEDENCE] Admission decision is the canonical owner of
+      // eligibility/is_open_to_africa/is_active. A rejected job's verdict is
+      // re-applied on every ingest (also self-heals rows clobbered before the
+      // lock existed). Legitimate new classifications flow through unchanged.
+      const admissionGate = existing ? (admissionRejected.get(existing.id) || null) : null
+      const eligibilityLock = resolveEligibilityLock({
+        incomingEligibility: job.eligibility,
+        incomingOpenToAfrica: job.is_open_to_africa,
+        admissionGate,
+      })
+      if (eligibilityLock.locked) {
+        console.log(`[ingest] admission lock: ${job.company} "${job.title}" (${eligibilityLock.reason}) -> ${eligibilityLock.eligibility}/${eligibilityLock.is_open_to_africa}/${eligibilityLock.is_active}`)
+      }
       const nowIso = new Date().toISOString()
       const companyJobCount = companyCountMap.get(job.company.toLowerCase()) || 0
 
@@ -299,12 +338,12 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
         intelligence: intel.intelligence,
         tags: job.tags,
         is_remote: job.is_remote,
-        is_open_to_africa: job.is_open_to_africa,
-        eligibility: job.eligibility,
+        is_open_to_africa: eligibilityLock.is_open_to_africa,
+        eligibility: eligibilityLock.eligibility,
         source: job.source,
         source_id: job.source_id,
         expires_at: job.expires_at,
-        is_active: true,
+        is_active: eligibilityLock.is_active,
         last_seen_at: nowIso,
         last_refreshed_at: nowIso,
         refresh_count: existing ? (existing.refresh_count || 0) + 1 : 1,
@@ -483,7 +522,7 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
 
     // Batch existing lookup for dedup across all connectors (by source_id AND by apply_url hash for cross-source dedup)
     const sourceIds = jobs.map(j => j.source_id).filter(Boolean) as string[]
-    let existingMap = new Map<string, { id: string; first_seen_at: string | null; refresh_count: number | null }>()
+    let existingMap = new Map<string, { id: string; first_seen_at: string | null; refresh_count: number | null; eligibility: string | null; is_open_to_africa: boolean | null; is_active: boolean | null }>()
     if (sourceIds.length > 0) {
       try {
         const chunkSize = 100
@@ -491,11 +530,11 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
           const chunk = sourceIds.slice(i, i + chunkSize)
           const { data } = await supabase
             .from('jobs')
-            .select('source_id, id, first_seen_at, refresh_count')
+            .select('source_id, id, first_seen_at, refresh_count, eligibility, is_open_to_africa, is_active')
             .eq('source', source.id.split(':')[0])
             .in('source_id', chunk)
           for (const row of (data || []) as any[]) {
-            existingMap.set(row.source_id, { id: row.id, first_seen_at: row.first_seen_at, refresh_count: row.refresh_count })
+            existingMap.set(row.source_id, { id: row.id, first_seen_at: row.first_seen_at, refresh_count: row.refresh_count, eligibility: row.eligibility, is_open_to_africa: row.is_open_to_africa, is_active: row.is_active })
           }
         }
       } catch {}
@@ -517,6 +556,31 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
         }
       } catch {}
     }
+
+    // [PRECEDENCE] Admission lock: batch-fetch which existing jobs were
+    // rejected by the admission gate (ai_processing_queue.error LIKE
+    // 'Rejected%'). A rejected job's eligibility/open-to-Africa/is_active must
+    // not be silently overwritten by an ordinary re-ingest — the admission
+    // decision is the canonical owner. Self-heals previously clobbered rows.
+    let admissionRejected = new Map<string, string>() // job_id -> gate
+    try {
+      const existingIds = Array.from(existingMap.values()).map((e) => e.id).filter(Boolean)
+      if (existingIds.length > 0) {
+        const chunkSize = 100
+        for (let i = 0; i < existingIds.length; i += chunkSize) {
+          const chunk = existingIds.slice(i, i + chunkSize)
+          const { data: rej } = await supabase
+            .from('ai_processing_queue')
+            .select('job_id, error')
+            .in('job_id', chunk)
+            .like('error', 'Rejected%')
+          for (const r of (rej || []) as any[]) {
+            const gate = parseAdmissionGate(r.error)
+            if (gate) admissionRejected.set(r.job_id, gate)
+          }
+        }
+      }
+    } catch {}
 
     // [STABILIZATION] Company learning gate: companies with measured high
     // rejection or low Africa-eligibility lose crawl priority — their jobs are
@@ -571,6 +635,19 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
       const intel = enrichIntelligence(job)
       const slug = buildJobSlug(job.title, job.company, job.country)
       const existing = existingMap.get(job.source_id) || null
+      // [PRECEDENCE] Admission decision is the canonical owner of
+      // eligibility/is_open_to_africa/is_active. A rejected job's verdict is
+      // re-applied on every ingest (also self-heals rows clobbered before the
+      // lock existed). Legitimate new classifications flow through unchanged.
+      const admissionGate = existing ? (admissionRejected.get(existing.id) || null) : null
+      const eligibilityLock = resolveEligibilityLock({
+        incomingEligibility: job.eligibility,
+        incomingOpenToAfrica: job.is_open_to_africa,
+        admissionGate,
+      })
+      if (eligibilityLock.locked) {
+        console.log(`[ingest] admission lock: ${job.company} "${job.title}" (${eligibilityLock.reason}) -> ${eligibilityLock.eligibility}/${eligibilityLock.is_open_to_africa}/${eligibilityLock.is_active}`)
+      }
       const nowIso = new Date().toISOString()
 
       let trustResult: ReturnType<typeof calculateTrustScore> | null = null
@@ -629,12 +706,12 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
         intelligence: intel.intelligence,
         tags: job.tags,
         is_remote: job.is_remote,
-        is_open_to_africa: job.is_open_to_africa,
-        eligibility: job.eligibility,
+        is_open_to_africa: eligibilityLock.is_open_to_africa,
+        eligibility: eligibilityLock.eligibility,
         source: job.source,
         source_id: job.source_id,
         expires_at: job.expires_at,
-        is_active: true,
+        is_active: eligibilityLock.is_active,
         last_seen_at: nowIso,
         last_refreshed_at: nowIso,
         refresh_count: existing ? (existing.refresh_count || 0) + 1 : 1,

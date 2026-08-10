@@ -492,10 +492,9 @@ async function testGitHubModels(apiKey: string) {
   // Query catalog
   let catalog: any[] = []
   try {
-    const response = await fetch('https://models.inference.ai.azure.com/models', {
+    const response = await fetch('https://models.github.ai/inference/models', {
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'api-version': '2024-05-01-preview'
+        'Authorization': `Bearer ${apiKey}`
       }
     })
     if (response.ok) {
@@ -510,12 +509,11 @@ async function testGitHubModels(apiKey: string) {
   for (const model of models) {
     const start = Date.now()
     try {
-      const response = await fetch('https://models.inference.ai.azure.com/chat/completions', {
+      const response = await fetch('https://models.github.ai/inference/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'api-version': '2024-05-01-preview'
+          'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
           model,

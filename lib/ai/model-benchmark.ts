@@ -327,7 +327,7 @@ async function makeInferenceRequest(
         groq: 'https://api.groq.com/openai/v1/chat/completions',
         cerebras: 'https://api.cerebras.ai/v1/chat/completions',
         openrouter: 'https://openrouter.ai/api/v1/chat/completions',
-        github_models: 'https://models.inference.ai.azure.com/chat/completions',
+        github_models: 'https://models.github.ai/inference/chat/completions',
         mistral: 'https://api.mistral.ai/v1/chat/completions',
         nvidia: 'https://integrate.api.nvidia.com/v1/chat/completions'
       }
@@ -335,10 +335,6 @@ async function makeInferenceRequest(
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
-      }
-      
-      if (model.provider === 'github_models') {
-        headers['api-version'] = '2024-05-01-preview'
       }
       
       if (model.provider === 'openrouter') {

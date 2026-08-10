@@ -99,14 +99,13 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
         groq: 'https://api.groq.com/openai/v1/chat/completions',
         cerebras: 'https://api.cerebras.ai/v1/chat/completions',
         openrouter: 'https://openrouter.ai/api/v1/chat/completions',
-        github_models: 'https://models.inference.ai.azure.com/chat/completions',
+        github_models: 'https://models.github.ai/inference/chat/completions',
         mistral: 'https://api.mistral.ai/v1/chat/completions',
         nvidia: 'https://integrate.api.nvidia.com/v1/chat/completions',
         huggingface: 'https://router.huggingface.co/v1/chat/completions',
         cohere: 'https://api.cohere.ai/compatibility/v1/chat/completions',
       }
       const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }
-      if (provider === 'github_models') headers['api-version'] = '2024-05-01-preview'
       if (provider === 'openrouter') { headers['HTTP-Referer'] = 'https://v0-nexaafrica.vercel.app'; headers['X-Title'] = 'Nexa Africa' }
       res = await fetch(endpoints[provider], {
         method: 'POST', headers,

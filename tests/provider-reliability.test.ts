@@ -96,6 +96,9 @@ async function gateSdkProviders() {
   const { recordRouterFailure } = await import('@/lib/ai/smart-router')
   recordRouterFailure('gemini', 'gemini 404 (NOT_FOUND): This model models/gemini-2.5-flash is no longer available to new users')
   recordRouterFailure('gemini_backup', 'gemini_backup 404 (NOT_FOUND): This model models/gemini-2.5-flash is no longer available to new users')
+  // cohere: unverified in test env (needs real key) — gate for determinism so
+  // failover tests can't be won by cohere's exploration bonus + default mock.
+  recordRouterFailure('cohere', 'cohere 500 (server_error): simulated outage (test env)')
 }
 
 // ── tests ────────────────────────────────────────────────────────
@@ -198,7 +201,7 @@ describe('fallback', () => {
     // Deterministic failover chain: openrouter → github_models → cloudflare
     // → huggingface → groq (success). All via mocked fetch.
     route('openrouter.ai', () => jsonResponse({ error: { code: '402', message: 'Insufficient credits.' } }, 402))
-    route('models.inference.ai.azure.com', () => jsonResponse({ error: { message: 'unauthorized' } }, 401))
+    route('models.github.ai', () => jsonResponse({ error: { message: 'unauthorized' } }, 401))
     route('api.cloudflare.com', () => jsonResponse({ errors: [{ code: 5000, message: 'boom' }] }, 500))
     route('router.huggingface.co', () => jsonResponse({ error: 'boom' }, 500))
     route('api.groq.com', () => jsonResponse({ choices: [{ message: { content: '{"ok":true}' } }] }))
@@ -257,7 +260,7 @@ describe('false-success prevention', () => {
     // openrouter returns an empty 200 → must be treated as failure and failed
     // over; github/cloudflare/hf are down; groq wins.
     route('openrouter.ai', () => jsonResponse({ choices: [{ message: { content: '' } }] }))
-    route('models.inference.ai.azure.com', () => jsonResponse({ error: { message: 'unauthorized' } }, 401))
+    route('models.github.ai', () => jsonResponse({ error: { message: 'unauthorized' } }, 401))
     route('api.cloudflare.com', () => jsonResponse({ errors: [{ code: 5000, message: 'boom' }] }, 500))
     route('router.huggingface.co', () => jsonResponse({ error: 'boom' }, 500))
     route('api.groq.com', () => jsonResponse({ choices: [{ message: { content: '{"ok":true}' } }] }))

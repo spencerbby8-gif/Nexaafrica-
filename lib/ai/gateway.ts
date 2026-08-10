@@ -121,7 +121,7 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
         groq: "https://api.groq.com/openai/v1/chat/completions",
         cerebras: "https://api.cerebras.ai/v1/chat/completions",
         openrouter: "https://openrouter.ai/api/v1/chat/completions",
-        github_models: "https://models.inference.ai.azure.com/chat/completions",
+        github_models: "https://models.github.ai/inference/chat/completions",
         mistral: "https://api.mistral.ai/v1/chat/completions",
         nvidia: "https://integrate.api.nvidia.com/v1/chat/completions",
         cohere: "https://api.cohere.ai/compatibility/v1/chat/completions",
@@ -135,11 +135,9 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
       if (providerId === "openrouter") {
         body.provider = { order: ["deepinfra"], allow_fallbacks: false }
       }
-      // GitHub Models requires api-version header
+      // GitHub Models (models.github.ai) uses Bearer PAT auth — no api-version
+      // header (that was Azure-endpoint-specific and the Azure endpoint is dead).
       const headers: any = { "Content-Type":"application/json", "Authorization":`Bearer ${apiKey}` }
-      if (providerId === "github_models") {
-        headers["api-version"] = "2024-05-01-preview"
-      }
       const res = await fetch(urls[providerId], {
         method: "POST",
         headers,

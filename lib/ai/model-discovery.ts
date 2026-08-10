@@ -449,10 +449,10 @@ async function discoverOpenRouterModels(apiKey: string): Promise<DiscoveredModel
 
 /**
  * Discover models from GitHub Models API
- * Endpoint: https://models.inference.ai.azure.com/models
+ * Endpoint: https://models.github.ai/inference/models
  */
 async function discoverGitHubModels(apiKey: string): Promise<DiscoveredModel[]> {
-  const endpoint = 'https://models.inference.ai.azure.com/models'
+  const endpoint = 'https://models.github.ai/inference/models'
   const models: DiscoveredModel[] = []
   
   console.log(`[GitHub Models Discovery] Querying ${endpoint}`)
@@ -460,8 +460,7 @@ async function discoverGitHubModels(apiKey: string): Promise<DiscoveredModel[]> 
   try {
     const response = await fetch(endpoint, {
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'api-version': '2024-05-01-preview'
+        'Authorization': `Bearer ${apiKey}`
       }
     })
     
@@ -871,7 +870,7 @@ export async function discoverAllModels(): Promise<ProviderCatalog[]> {
       const models = await discoverGitHubModels(process.env.GITHUB_MODELS_TOKEN)
       catalogs.push({
         provider: 'github_models',
-        discoveryEndpoint: 'https://models.inference.ai.azure.com/models',
+        discoveryEndpoint: 'https://models.github.ai/inference/models',
         discoveredAt: new Date().toISOString(),
         models,
         totalModels: models.length,
@@ -882,7 +881,7 @@ export async function discoverAllModels(): Promise<ProviderCatalog[]> {
       console.error(`[Discovery] GitHub Models discovery failed: ${error.message}`)
       catalogs.push({
         provider: 'github_models',
-        discoveryEndpoint: 'https://models.inference.ai.azure.com/models',
+        discoveryEndpoint: 'https://models.github.ai/inference/models',
         discoveredAt: new Date().toISOString(),
         models: [],
         totalModels: 0,

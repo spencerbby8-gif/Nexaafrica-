@@ -31,6 +31,7 @@
  */
 
 import type { ProviderId, ProviderConfig } from "./providers/types"
+import { modelIsJsonCapable } from "./providers/types"
 import { getProviders } from "./providers/dynamic-registry"
 
 // ─── Types ──────────────────────────────────────────────────────
@@ -48,6 +49,26 @@ export type TaskType =
   | 'gpu_accelerated'
   | 'fallback'
   | 'profile_transform'
+
+/**
+ * Tasks whose output must be structured JSON for the pipeline to work
+ * (consolidated verifier schema, CV parsing, profile transforms). For these
+ * tasks a provider whose selected model cannot produce parseable JSON is
+ * ranked BELOW every JSON-capable provider — a fast provider that returns
+ * unusable output is worse than a slower provider that returns usable output.
+ * Non-JSON-capable providers stay ELIGIBLE (last resort) so availability is
+ * never lost, but they can no longer outrank capable ones on latency alone.
+ */
+const STRUCTURED_JSON_TASKS: ReadonlySet<TaskType> = new Set([
+  'fast_extraction',
+  'job_intelligence',
+  'cv_parsing',
+  'profile_transform',
+])
+
+export function isStructuredJsonTask(taskType: TaskType | undefined): boolean {
+  return taskType ? STRUCTURED_JSON_TASKS.has(taskType) : false
+}
 
 export interface RoutingDecision {
   provider: ProviderConfig
@@ -142,15 +163,25 @@ function logRoutingDecision(log: RoutingLog): void {
 
 const GATE_SCORE = -10000
 const NEUTRAL_HEALTH = 18      // untested providers: neutral, not punished
-const NEUTRAL_LATENCY = 10
+const NEUTRAL_LATENCY = 6
 const NEUTRAL_TASKFIT = 12
 
+/**
+ * Latency bands (0-12, flattened from 0-20 in v2.1).
+ *
+ * Why flattened: the v2 band spread let a fast-but-low-quality provider beat
+ * a slower JSON-capable provider by up to 15 points on latency alone
+ * (measured 2026-08-11: cloudflare gemma-2b 4.6s avg vs mistral 10.7s avg →
+ * +10 vs +5 latency, +6 cost, so gemma-2b won the chain and returned
+ * unparseable JSON for 37/40 jobs). Latency now differentiates within a
+ * JSON-capable tier but cannot dominate the ranking.
+ */
 function latencyBand(avgMs: number): number {
   if (avgMs <= 0) return NEUTRAL_LATENCY
-  if (avgMs < 800) return 20
-  if (avgMs < 2000) return 16
-  if (avgMs < 5000) return 10
-  if (avgMs < 12000) return 5
+  if (avgMs < 800) return 12
+  if (avgMs < 2000) return 10
+  if (avgMs < 5000) return 7
+  if (avgMs < 12000) return 4
   return 2
 }
 
@@ -248,6 +279,12 @@ function scoreProvider(
   // ── Factor 7: Config tie-break (0-3) — static input, tie-breaker only ──
   const configTieBreak = Math.max(0, Math.round(((11 - cfg.priority) / 10) * 3))
 
+  // ── JSON capability (structured tasks) — ranking-level, not a point factor ──
+  const jsonCapable = modelIsJsonCapable(cfg.model, cfg.capabilities)
+  if (isStructuredJsonTask(taskType) && !jsonCapable) {
+    reasoning.push(`Model ${cfg.model} is not JSON-capable for structured task "${taskType}" — ranked below all JSON-capable providers`)
+  }
+
   const totalScore = measuredHealth + latencyScore + taskFit + costScore + explorationBonus + recencyScore + configTieBreak
 
   return {
@@ -258,6 +295,20 @@ function scoreProvider(
   }
 }
 
+/**
+ * Deterministic ranking for a task.
+ * Structured tasks: JSON-capable providers always rank above non-JSON-capable
+ * ones (each tier sorted by measured score). Other tasks: pure score order.
+ */
+function compareRanked(a: RoutingDecision, b: RoutingDecision, taskType: TaskType | undefined): number {
+  if (isStructuredJsonTask(taskType)) {
+    const aJson = modelIsJsonCapable(a.provider.model, a.provider.capabilities)
+    const bJson = modelIsJsonCapable(b.provider.model, b.provider.capabilities)
+    if (aJson !== bJson) return aJson ? -1 : 1
+  }
+  return b.score - a.score
+}
+
 // ─── Public API ─────────────────────────────────────────────────
 
 /** Route to the best provider for a task. Returns the top-ranked decision. */
@@ -265,7 +316,7 @@ export function routeTask(taskType?: TaskType): RoutingDecision | null {
   const now = Date.now()
   // P2: read the LIVE registry (discovered + verified models), not static assumptions
   const decisions = getProviders().map(cfg => scoreProvider(cfg, taskType, now))
-  decisions.sort((a, b) => b.score - a.score)
+  decisions.sort((a, b) => compareRanked(a, b, taskType))
   const best = decisions[0]
   if (!best || best.score <= 0) return null
   return best
@@ -276,8 +327,23 @@ export function routeTaskAll(taskType?: TaskType): RoutingDecision[] {
   const now = Date.now()
   // P2: read the LIVE registry (discovered + verified models), not static assumptions
   const decisions = getProviders().map(cfg => scoreProvider(cfg, taskType, now))
-  decisions.sort((a, b) => b.score - a.score)
+  decisions.sort((a, b) => compareRanked(a, b, taskType))
   return decisions.filter(d => d.score > 0)
+}
+
+// ─── Test hooks (deterministic routing tests; no production callers) ──────
+
+/** TEST-ONLY: clear in-memory routing health + logs. */
+export function resetRouterHealthForTesting(): void {
+  healthState.clear()
+  routingLogs.length = 0
+}
+
+/** TEST-ONLY: inject a provider's health state (deterministic scenarios). */
+export function setRouterHealthForTesting(id: ProviderId, partial: Partial<ProviderHealthState>): void {
+  const h = getHealth(id)
+  Object.assign(h, partial)
+  healthState.set(id, h)
 }
 
 // ─── Persistence (best-effort write-through to ai_orch_health) ──

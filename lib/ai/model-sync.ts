@@ -38,6 +38,21 @@ export interface ModelVerifyOutcome {
    *  not evidence the model is broken */
   softFail?: boolean
   error?: string
+  /** [V2.1] measured: did the model return parseable JSON for a JSON probe?
+   *  Persisted as capabilities.structuredJSON — the router's structured-task
+   *  ranking and the dynamic registry's model selection read it. */
+  structuredJson?: boolean
+}
+
+/** Parse a minimal JSON probe response, tolerating code fences. */
+function parseJsonProbe(text: string): boolean {
+  const t = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim()
+  try {
+    const v = JSON.parse(t)
+    return Boolean(v && typeof v === 'object' && v.ok === true)
+  } catch {
+    return false
+  }
 }
 
 export interface ModelSyncSummary {
@@ -72,17 +87,21 @@ function keyFor(provider: string): string | undefined {
   return name ? process.env[name] : undefined
 }
 
-/** One real inference call against the provider's production endpoint. */
+/** One real inference call against the provider's production endpoint.
+ *  [V2.1] The probe now also measures structured-JSON capability: the model
+ *  must return a parseable JSON object for a minimal JSON prompt. A model
+ *  that answers with prose (e.g. gemma-2b-it-lora in production) is marked
+ *  structuredJson=false so the router never prefers it for structured tasks. */
 async function verifyCandidate(provider: string, modelId: string, apiKey: string): Promise<ModelVerifyOutcome> {
   const start = Date.now()
-  const prompt = 'Reply with exactly: ok'
+  const prompt = 'Reply with ONLY this JSON object and nothing else: {"ok":true}'
   try {
     let res: Response
     if (provider === 'gemini' || provider === 'gemini_backup') {
       res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 8 } }),
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 16 } }),
         signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
       })
     } else if (provider === 'cloudflare') {
@@ -90,7 +109,7 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
       res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${modelId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], max_tokens: 8 }),
+        body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], max_tokens: 16 }),
         signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
       })
     } else {
@@ -108,7 +127,7 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
       if (provider === 'openrouter') { headers['HTTP-Referer'] = 'https://v0-nexaafrica.vercel.app'; headers['X-Title'] = 'Nexa Africa' }
       res = await fetch(endpoints[provider], {
         method: 'POST', headers,
-        body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: prompt }], max_tokens: 8 }),
+        body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: prompt }], max_tokens: 16 }),
         signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
       })
     }
@@ -117,7 +136,7 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
       const text = await res.text()
       const quotaExhausted = res.status === 429 || /quota|insufficient/i.test(text)
       const rateLimited = res.status === 429 || /rate.?limit|too many/i.test(text)
-      return { modelId, ok: false, latencyMs, quotaExhausted, softFail: quotaExhausted || rateLimited, error: `${res.status}: ${text.slice(0, 160)}` }
+      return { modelId, ok: false, latencyMs, quotaExhausted, softFail: quotaExhausted || rateLimited, structuredJson: false, error: `${res.status}: ${text.slice(0, 160)}` }
     }
     const data: any = await res.json().catch(() => ({}))
     const text: string =
@@ -125,10 +144,14 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
       data?.choices?.[0]?.message?.content ??
       data?.result?.response ?? ''
     const ok = typeof text === 'string' && text.trim().length > 0
-    return { modelId, ok, latencyMs, quotaExhausted: false, error: ok ? undefined : 'empty response' }
+    return {
+      modelId, ok, latencyMs, quotaExhausted: false,
+      structuredJson: ok ? parseJsonProbe(text) : false,
+      error: ok ? undefined : 'empty response',
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    return { modelId, ok: false, latencyMs: Date.now() - start, quotaExhausted: false, error: msg.slice(0, 160) }
+    return { modelId, ok: false, latencyMs: Date.now() - start, quotaExhausted: false, structuredJson: false, error: msg.slice(0, 160) }
   }
 }
 
@@ -239,6 +262,16 @@ export async function syncLiveModelRegistry(opts: { force?: boolean; budgetMs?: 
             routingPriority: 0,
           }
           model.health = mergeHealth(model.health, outcome)
+          // [V2.1] Persist the measured JSON capability — the smart router's
+          // structured-task tiering and the dynamic registry's model
+          // selection both read capabilities.structuredJSON.
+          if (outcome.structuredJson !== undefined) {
+            model.capabilities = {
+              ...(model.capabilities ?? {}),
+              chat: true,
+              structuredJSON: outcome.structuredJson,
+            }
+          }
           existingById.set(modelId, model as DiscoveredModel)
         }
       }

@@ -19,6 +19,23 @@ interface AIResp {
 const AF: AIResp = { africa_eligibility:"unknown",africa_confidence:0,africa_evidence:null,country_restrictions:[],visa_sponsorship:"unknown",visa_confidence:0,remote_eligibility:"unknown",remote_confidence:0,remote_evidence:null,timezone_requirements:null,salary_min:null,salary_max:null,salary_currency:null,salary_period:null,salary_is_estimated:false,salary_transparency:"unknown",salary_confidence:0,salary_evidence:null,company_legitimacy:"unknown",company_confidence:0,company_evidence:null,job_quality:"unknown",job_quality_confidence:0,job_quality_evidence:null,experience_level:"unknown",experience_confidence:0,required_skills:[],transferable_skills:[],missing_skills:[],hiring_urgency:"unknown",hiring_urgency_confidence:0 }
 
 /**
+ * Parse the model's response as the structured intelligence schema.
+ * Returns the merged AIResp on success, null when the text contains no
+ * parseable JSON object (the model returned prose / partial / broken JSON).
+ */
+function parseAiJson(text: string): AIResp | null {
+  const m = text.match(/\{[\s\S]*\}/)
+  if (!m) return null
+  try {
+    const v = JSON.parse(m[0])
+    if (typeof v !== "object" || v === null) return null
+    return { ...AF, ...v }
+  } catch {
+    return null
+  }
+}
+
+/**
  * P6: lightweight liveness probe — a real HTTP request to the apply_url
  * to detect dead/blocked listings. Used for ATS-hosted jobs whose stored
  * description_md gives a synthetic 200 (so dead ATS listings would
@@ -504,11 +521,59 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
     `"hiring_urgency":"high|medium|low|unknown","hiring_urgency_confidence":0}`
 
   let aiResp: AIResp = AF; let modelVersion = "no-ai-providers"; let aiUsed = false
+  const VERIFIER_SYSTEM = "You extract job intelligence ONLY from the provided text. Never use outside knowledge. Evidence fields must be EXACT quotes from the text, or null. Prefer 'unknown' whenever proof is missing. Output only JSON."
   try {
-    const gw = await aiGateway({ prompt, systemInstruction: "You extract job intelligence ONLY from the provided text. Never use outside knowledge. Evidence fields must be EXACT quotes from the text, or null. Prefer 'unknown' whenever proof is missing. Output only JSON.", agentId: "verifier:consolidated", jobId: job.id, temperature: 0.2, maxTokens: 1400 })
+    let gw = await aiGateway({ prompt, systemInstruction: VERIFIER_SYSTEM, agentId: "verifier:consolidated", jobId: job.id, temperature: 0.2, maxTokens: 1400 })
     if (gw.diag) for (const d of gw.diag) diags.push(d)
-    const m = gw.response.text.match(/\{[\s\S]*\}/)
-    if (m) { try { aiResp = { ...AF, ...JSON.parse(m[0]) }; modelVersion = gw.response.provider + ":" + gw.response.model; aiUsed = true } catch {} }
+    let parsed = parseAiJson(gw.response.text)
+
+    // [V2.1] Unusable output from the top-ranked provider is a ROUTER failure,
+    // not a pipeline fallback. A fast model that returns HTTP 200 with
+    // unparseable JSON (measured: gemma-2b-it-lora, 37/40 calls) must not
+    // silently degrade the job to regex extraction while healthy JSON-capable
+    // providers sit unused. We record the failure (cooldown + re-scoring) and
+    // ask the orchestrator for ONE more routing pass.
+    // Bounded: exactly one retry, and only when the first result came from a
+    // single provider (fallbackChain.length === 1) — if the chain already
+    // walked alternatives, another pass cannot help.
+    if (!parsed && gw.fallbackChain.length === 1) {
+      const provider = gw.response.provider
+      const model = gw.response.model
+      diags.push({
+        provider, model, event: "failure", errorCode: "JSON_PARSE_FAILED",
+        errorMessage: "Response did not contain parseable JSON for the structured intelligence schema",
+        retryCount: 0, durationMs: gw.response.latencyMs, promptLen: prompt.length, responseLen: gw.response.text.length,
+      })
+      console.log(JSON.stringify({ scope: "verifier", event: "json_retry", provider, model, jobId: String(job.id).slice(0, 8) }))
+      try {
+        const { recordRouterFailure } = await import("../smart-router")
+        recordRouterFailure(provider, "json_parse_failed: model returned unusable output for structured extraction")
+      } catch {}
+      try {
+        // Bypass the gateway's 24h response cache by calling the orchestrator
+        // directly — a retry must re-route, never replay the cached garbage.
+        const { orchestrate } = await import("../orchestrator")
+        const gw2 = await orchestrate({ prompt, systemInstruction: VERIFIER_SYSTEM, agentId: "verifier:consolidated", jobId: job.id, temperature: 0.2, maxTokens: 1400 })
+        if (gw2.diag) for (const d of gw2.diag) diags.push(d)
+        const parsed2 = parseAiJson(gw2.response.text)
+        if (parsed2) {
+          gw = gw2
+          parsed = parsed2
+        } else {
+          diags.push({
+            provider: gw2.response.provider, model: gw2.response.model, event: "failure", errorCode: "JSON_PARSE_FAILED",
+            errorMessage: "Retry provider also returned unusable JSON — falling back to deterministic extraction",
+            retryCount: 1, durationMs: gw2.response.latencyMs,
+          })
+        }
+      } catch (e: any) { if (e?.diag && Array.isArray(e.diag)) for (const d of e.diag) diags.push(d) }
+    }
+
+    if (parsed) {
+      aiResp = parsed
+      modelVersion = gw.response.provider + ":" + gw.response.model
+      aiUsed = true
+    }
   } catch (e: any) { if (e?.diag && Array.isArray(e.diag)) for (const d of e.diag) diags.push(d) }
 
   // Normalize confidence values: AI models return either 0-1 (fractional)
@@ -609,7 +674,16 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
     }
   }
 
-  if (!aiUsed) modelVersion = Object.keys({ ...rxAfrica, ...rxRemote, ...rxSalary, ...rxTz, ...rxExp }).length > 0 ? "regex-extracted-" + pageText.length + "bytes" : "no-ai-providers"
+  // [V2.1] Honest fallback label: when the live page could not be fetched
+  // (0 bytes) the regex evidence comes from the STORED description, not the
+  // page — never emit the misleading "regex-extracted-0bytes" artifact that
+  // polluted 364 production rows (and 10 on 2026-08-11).
+  if (!aiUsed) {
+    const hasRx = Object.keys({ ...rxAfrica, ...rxRemote, ...rxSalary, ...rxTz, ...rxExp }).length > 0
+    modelVersion = hasRx
+      ? (pageText.length === 0 ? "regex-extracted-from-stored-description" : "regex-extracted-" + pageText.length + "bytes")
+      : "no-ai-providers"
+  }
   // P5: harden all claims against the actual source text before persisting.
   // P6: evidence provenance label
   const evidenceProvenance = aiUsed ? (companyText.length >= 100 ? "company_page" : "page") : (Object.keys({...rxAfrica,...rxRemote,...rxSalary,...rxTz,...rxExp}).length > 0 ? "regex" : "ats_metadata")

@@ -20,7 +20,41 @@ export interface ProviderConfig {
     maxTokens?: number
     supportsJSON?: boolean
     supportsSystemPrompt?: boolean
+    chat?: boolean
+    // Live-measured (model-sync JSON probe): can this model emit parseable
+    // JSON that follows the requested schema? Verified by one real inference
+    // call per candidate; persisted in ai_model_registry.capabilities.
+    structuredJSON?: boolean
   }
+}
+
+/**
+ * KNOWN model-level JSON capability — measured truth, not assumption.
+ *
+ * Sources:
+ *  - Production measurement (2026-08-11, ai_provider_log + job_ai_intelligence):
+ *    @cf/google/gemma-2b-it-lora returned 40 HTTP-200 responses of which 37
+ *    were unparseable for the structured intelligence schema (92.5%).
+ *  - Official docs (developers.cloudflare.com/workers-ai/models/gemma-2b-it-lora):
+ *    it is a Beta 2B model dedicated to LoRA adapters — not a strict
+ *    instruction/schema-following model. Compare llama-3.3-70b-instruct-fp8-fast,
+ *    which the official docs list with function-calling support.
+ *
+ * Models absent from this map default to "assume JSON-capable" and are
+ * corroborated (or contradicted) by the live model-sync JSON probe
+ * (capabilities.structuredJSON). This map exists so the router and the
+ * dynamic registry behave correctly even before the next discovery cycle.
+ */
+export const MODEL_JSON_CAPABILITY: Record<string, boolean> = {
+  '@cf/google/gemma-2b-it-lora': false,
+}
+
+/** Effective JSON capability for a provider's selected model. */
+export function modelIsJsonCapable(model: string | undefined, capabilities?: ProviderConfig['capabilities']): boolean {
+  if (!model) return true
+  if (MODEL_JSON_CAPABILITY[model] === false) return false
+  if (capabilities?.structuredJSON === false) return false
+  return true
 }
 
 export const PROVIDERS: ProviderConfig[] = [

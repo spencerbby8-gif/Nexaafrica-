@@ -5,7 +5,7 @@
  * Refreshes periodically to ensure Nexa always knows which models are available.
  */
 
-import { PROVIDERS, type ProviderConfig, type ProviderId } from './types'
+import { PROVIDERS, MODEL_JSON_CAPABILITY, type ProviderConfig, type ProviderId } from './types'
 import { getModelCatalog, type ProviderCatalog } from '../model-discovery'
 
 const REFRESH_INTERVAL_MS = 60 * 60 * 1000 // 1 hour
@@ -44,11 +44,27 @@ export async function refreshProviderRegistry(): Promise<ProviderConfig[]> {
       // written by the live quality audit) over raw probe latency.
       // Models with no benchmark data fall back to latency ordering, so
       // accuracy can only improve selection, never starve it.
+      // [V2.1] JSON-capability guard: models KNOWN to return unusable
+      // structured output (MODEL_JSON_CAPABILITY === false, measured in
+      // production + official docs) are selected only when every usable
+      // alternative is also JSON-incapable. This keeps e.g. cloudflare on
+      // llama-3.3-70b (function-calling per official docs) instead of
+      // gemma-2b-it-lora, whose 2B LoRA outputs failed JSON parsing in
+      // 37/40 production calls (2026-08-11).
       const usablePool = catalogEntry.models.filter(m => m.health.usable)
       const benchmarked = usablePool.filter((m: any) => typeof m.benchmarks?.overallScore === 'number')
-      const bestModel = (benchmarked.length > 0
-        ? [...benchmarked].sort((a: any, b: any) => (b.benchmarks.overallScore - a.benchmarks.overallScore) || ((a.health.avgLatencyMs || 9999) - (b.health.avgLatencyMs || 9999)))[0]
-        : usablePool.sort((a, b) => (a.health.avgLatencyMs || 9999) - (b.health.avgLatencyMs || 9999))[0])
+      const pool = benchmarked.length > 0 ? benchmarked : usablePool
+      const bestModel = [...pool].sort((a: any, b: any) => {
+        const aBanned = MODEL_JSON_CAPABILITY[a.modelId] === false ? 1 : 0
+        const bBanned = MODEL_JSON_CAPABILITY[b.modelId] === false ? 1 : 0
+        if (aBanned !== bBanned) return aBanned - bBanned
+        if (benchmarked.length > 0) {
+          const aB = a.benchmarks?.overallScore ?? 0
+          const bB = b.benchmarks?.overallScore ?? 0
+          if (aB !== bB) return bB - aB
+        }
+        return (a.health.avgLatencyMs || 9999) - (b.health.avgLatencyMs || 9999)
+      })[0]
       
       if (!bestModel) {
         return { ...provider, enabled: false }
@@ -98,6 +114,11 @@ export function getEnabledProviders(): ProviderConfig[] {
  */
 export function getProvider(id: ProviderId): ProviderConfig | undefined {
   return dynamicProviders.find(p => p.id === id)
+}
+
+/** TEST-ONLY: inject provider configs (deterministic routing tests). */
+export function setProvidersForTesting(cfgs: ProviderConfig[]): void {
+  dynamicProviders = cfgs
 }
 
 /**

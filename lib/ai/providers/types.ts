@@ -58,9 +58,16 @@ export function modelIsJsonCapable(model: string | undefined, capabilities?: Pro
 }
 
 export const PROVIDERS: ProviderConfig[] = [
-  // Gemini: free-tier 429 at >20 RPM. Works for single requests (CV parsing).
-  { id: "gemini", name: "Gemini 2.5 Flash", envKey: "GEMINI_API_KEY", model: "gemini-2.5-flash", enabled: true, priority: 1, rateLimitPerSec: 2, timeoutMs: 15000, costPer1kTokens: 1, taskTypes: ["cv_parsing", "profile_transform", "complex_analysis"] },
-  { id: "gemini_backup", name: "Gemini Backup", envKey: "GEMINI_API_KEY_BACKUP", model: "gemini-2.5-flash", enabled: true, priority: 2, rateLimitPerSec: 2, timeoutMs: 15000, costPer1kTokens: 1, taskTypes: ["cv_parsing", "profile_transform", "complex_analysis"] },
+  // Gemini: free tier = Flash/Flash-Lite only (Pro removed Apr 2026). The old
+  // gemini-2.5-flash ID is retired (404 "no longer available" in provider log;
+  // official shutdown Oct 16, 2026). gemini-3.5-flash is GA with official
+  // structured output (responseSchema + application/json) — verified available
+  // on both keys via discovery (2026-08-11). Each model has its own free-tier
+  // quota bucket (~1.5k RPD), so primary + backup don't share one cap.
+  // CV transformation routes here via agentId "cv:parsing" (cv_parsing task) —
+  // this config is what keeps Gemini in the CV-uplift rotation alongside Cerebras.
+  { id: "gemini", name: "Gemini 3.5 Flash", envKey: "GEMINI_API_KEY", model: "gemini-3.5-flash", enabled: true, priority: 1, rateLimitPerSec: 2, timeoutMs: 15000, costPer1kTokens: 1, taskTypes: ["cv_parsing", "profile_transform", "complex_analysis"] },
+  { id: "gemini_backup", name: "Gemini 3.5 Flash Lite", envKey: "GEMINI_API_KEY_BACKUP", model: "gemini-3.5-flash-lite", enabled: true, priority: 2, rateLimitPerSec: 2, timeoutMs: 15000, costPer1kTokens: 1, taskTypes: ["cv_parsing", "profile_transform", "complex_analysis"] },
   // Groq: proven working. On-demand: 100K TPD, ~30 RPM.
   { id: "groq", name: "Groq Llama 3.3", envKey: "GROQ_API_KEY", model: "llama-3.3-70b-versatile", enabled: true, priority: 3, rateLimitPerSec: 5, timeoutMs: 10000, costPer1kTokens: 2, taskTypes: ["job_intelligence", "fast_extraction", "simple_analysis"] },
   // Cerebras: verified working. GET /v1/models confirmed gpt-oss-120b.

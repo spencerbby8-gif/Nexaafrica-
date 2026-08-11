@@ -1,6 +1,15 @@
 import type { Job } from "@/lib/types"
 import { cleanDescription } from "@/lib/cleanDescription"
 import { extractIntelligence as deterministicExtract } from "@/lib/intelligence"
+import {
+  AFRICA_RE,
+  RESTRICT_RE,
+  GLOBAL_OUTREACH_RE,
+  eligibilityScanText,
+  classifyGeoEligibility,
+  extractQuote,
+  extractRestrictions,
+} from "@/lib/geo/eligibility"
 import { aiGateway, type ProviderCallDiag } from "../gateway"
 
 interface AIResp {
@@ -171,56 +180,51 @@ async function fetchCompanyPage(job: Job): Promise<string> {
   return ""
 }
 
+// [TRUTH LAYER v1] All geo/eligibility matching now lives in the ONE shared
+// corpus (lib/geo/eligibility.ts): word-boundary Africa terms (kills the
+// "anomalies→mali" fabricated explicit), full EU-27/US-state restriction
+// coverage, and eligibility dead zones (marketing/EEO/coverage text can no
+// longer generate evidence). extractCtx is word-aligned — no more mid-word
+// quotes persisted to the database.
 function extractCtx(text: string, re: RegExp): string|null {
-  const m=text.match(re); if(!m)return null
-  const i=m.index||0; return text.slice(Math.max(0,i-120),Math.min(text.length,i+(m[0]?.length||0)+120)).replace(/\s+/g,' ').trim().slice(0,200)||null
+  return extractQuote(text, re, 220)
 }
 
-// [V2] Full African country/demonym list — explicit Africa mention detection.
-const AFRICA_RE = /(\bafrica\b|\bafrican\b|nigeria|kenya|ghana|south africa|egypt|morocco|rwanda|uganda|ethiopia|tanzania|tunisia|senegal|algeria|zimbabwe|namibia|cameroon|ivory coast|c[ôo]te d'ivoire|mali|niger|burkina faso|benin|togo|sierra leone|liberia|guinea|gambia|mauritania|chad|sudan|south sudan|somalia|djibouti|eritrea|libya|botswana|lesotho|eswatini|swaziland|malawi|mozambique|angola|zambia|congo|gabon|equatorial guinea|central african republic|comoros|madagascar|mauritius|seychelles|cabo verde|lagos|nairobi|accra|addis ababa|cairo|casablanca|kigali|kampala|dar es salaam|johannesburg|abuja)/i
-
-// [V2] Location/work-authorization restriction language — expanded beyond the
-// old "us only" set to reduce false "unknown" for genuinely locked roles.
-const RESTRICT_RE = /\b(us only|uk only|eu only|must (?:reside|be based|be located|be residing|be resident)|residents? only|citizens? only|must be authorized|work authori[sz]ation (?:in|for|required)|authorized to work in (?:the )?(?:us|usa|united states|uk|canada|eu)|(?:us|uk|eu|canada|australia) (?:work )?(?:authorization|eligibility|citizenship|resident)(?: required| is required)?|no (?:visa )?(?:sponsorship|sponsoring)|cannot (?:provide )?sponsorship|(?:green card|citizenship) required|(?:based|located|residing) in (?:the )?(?:us|usa|united states|uk|united kingdom|canada|eu|europe|germany|france|spain|italy|netherlands|poland|sweden|norway|denmark|finland|belgium|austria|switzerland|ireland|portugal|australia|new zealand|india|singapore|japan|israel|uae|dubai|qatar|saudi arabia|turkey|brazil|mexico|argentina|colombia|chile|philippines|indonesia|vietnam|thailand|malaysia|south korea|taiwan|hong kong|latam|apac)|candidates? (?:must|need|should|will) (?:be|to be) (?:based|located|residing|in)|(?:location|locations?)[:\-—]\s*(?:us|usa|united states|uk|u\.?k\.?|canada|eu)|within (?:the )?(?:us|united states|uk|canada|eu))/i
-
-const EMEA_RE = /\b(emea|europe, the middle east and africa|europe\s*\/\s*middle east\s*\/\s*africa|middle east and africa)\b/i
-
-// [V2] Restricted-region location lock: country/location fields pointing at a
-// locked region with no global-outreach language anywhere → restricted.
-const LOCATION_RESTRICTED_RE = /^(us|usa|u\.?s\.?|united\s+states|uk|u\.?k\.?|united\s+kingdom|canada|eu|europe|germany|france|spain|italy|netherlands|poland|sweden|norway|denmark|finland|belgium|austria|switzerland|ireland|portugal|australia|new\s+zealand|india|singapore|japan|israel|uae|dubai|qatar|saudi\s+arabia|turkey|brazil|mexico|argentina|colombia|chile|philippines|indonesia|vietnam|thailand|malaysia|south\s+korea|taiwan|hong\s+kong|latam|apac)$/i
-const GLOBAL_OUTREACH_RE = /\b(worldwide|anywhere|emea|\bafrica\b|any\s+(time\s*zone|location|country)|remote\s*[-—,]?\s*(global|worldwide|anywhere|international)|distributed\s+(team|workforce)|work\s+from\s+anywhere|global(?:ly)?\s+remote)\b/i
-
+// [V2] Africa eligibility ground truth — delegates to the shared corpus so
+// the verifier, truth-guard, and ingest tier can never disagree again.
 function regexAfrica(text: string, job: Job): Partial<AIResp> {
-  const t = text.toLowerCase()
-  // Explicit Africa mention — highest tier.
-  const af = AFRICA_RE.exec(text)
-  if (af) return { africa_eligibility: "explicit", africa_confidence: 75, africa_evidence: extractCtx(text, AFRICA_RE) }
-  // Hard restriction language — restricted before any "likely" inference.
-  if (RESTRICT_RE.test(t)) return {
-    africa_eligibility: "restricted", africa_confidence: 70, africa_evidence: extractCtx(text, RESTRICT_RE),
-    country_restrictions: extractRestrictions(text),
+  const v = classifyGeoEligibility({
+    text,
+    locationField: `${job.country || ""} ${job.location || ""}`.trim(),
+  })
+  switch (v.tier) {
+    case "explicit":
+      return { africa_eligibility: "explicit", africa_confidence: 75, africa_evidence: v.quote }
+    case "restricted":
+      return {
+        africa_eligibility: "restricted",
+        africa_confidence: v.reason === "restriction-language" ? 70 : 60,
+        africa_evidence: v.quote,
+        country_restrictions: v.restrictions,
+      }
+    case "likely":
+      return { africa_eligibility: "likely", africa_confidence: 55, africa_evidence: v.quote }
+    default:
+      return {}
   }
-  // Location lock: the posting is located in a restricted region with no
-  // global-outreach language anywhere (reduces false "unknown").
-  const locText = `${job.country || ""} ${job.location || ""}`.trim()
-  const locParts = locText.split(/[,;]/).map((p: string) => p.trim()).filter(Boolean)
-  const anyRestrictedPart = locParts.some((p: string) => LOCATION_RESTRICTED_RE.test(p))
-  const anyGlobalPart = locParts.some((p: string) => GLOBAL_OUTREACH_RE.test(p))
-  if (locText && anyRestrictedPart && !anyGlobalPart && !GLOBAL_OUTREACH_RE.test(t)) {
-    return { africa_eligibility: "restricted", africa_confidence: 60, africa_evidence: extractCtx(text, /(remote|location)/i) }
-  }
-  // EMEA / global outreach → likely.
-  if (EMEA_RE.test(text) || GLOBAL_OUTREACH_RE.test(t)) {
-    return { africa_eligibility: "likely", africa_confidence: 55, africa_evidence: extractCtx(text, /emea|worldwide|global|anywhere/i) }
-  }
-  return {}
 }
 
 function regexRemote(text: string, isRemote: boolean): Partial<AIResp> {
   const t=text.toLowerCase()
-  if(/fully remote|work from anywhere|remote.*worldwide|100% remote|remote-first|remote first|remote \(anywhere|distributed team|remote.?(global|anywhere|international)/i.test(t)||isRemote) return {remote_eligibility:"fully_remote",remote_confidence:40,remote_evidence:extractCtx(text,/fully remote|work from anywhere|remote/i)}
+  // [TRUTH LAYER v1] Text semantics outrank the feed boolean. Proven defect:
+  // a feed isRemote=true flag fabricated "Fully remote" for an on-site
+  // datacenter-commissioning role and short-circuited hybrid detection for
+  // hybrid SF roles. On-site/hybrid language in the text now wins; the feed
+  // flag is only a low-confidence fallback when the text is silent.
   if(/hybrid|2 days in office|3 days in office|in[- ]office (?:days|2|3)|partially remote/i.test(t)) return {remote_eligibility:"hybrid",remote_confidence:65,remote_evidence:extractCtx(text,/hybrid|days in office|partially remote/i)}
   if(/onsite|on-site|in[- ]office\b|must work from (?:our )?(?:office|headquarters)|not remote/i.test(t)) return {remote_eligibility:"onsite",remote_confidence:65,remote_evidence:extractCtx(text,/onsite|on-site|in[- ]office|not remote/i)}
+  if(/fully remote|work from anywhere|remote.*worldwide|100% remote|remote-first|remote first|remote \(anywhere|distributed team|remote.?(global|anywhere|international)/i.test(t)) return {remote_eligibility:"fully_remote",remote_confidence:55,remote_evidence:extractCtx(text,/fully remote|work from anywhere|remote/i)}
+  if(isRemote) return {remote_eligibility:"fully_remote",remote_confidence:40,remote_evidence:"Marked as remote in source feed"}
   return {}
 }
 
@@ -283,24 +287,8 @@ function regexTimezone(text: string): Partial<AIResp> {
   }
 }
 
-// [V4] Extract hiring-location restrictions (countries/regions) from
-// restriction language — feeds country_restrictions so the UI can show WHERE
-// a role is open. Only regions explicitly named in restriction context.
-const RESTRICT_COUNTRY_RE = /\b(?:US|USA|United States|UK|U\.K\.|United Kingdom|Canada|EU|Europe|Germany|France|Spain|Italy|Netherlands|Poland|Sweden|Norway|Denmark|Finland|Belgium|Austria|Switzerland|Ireland|Portugal|Australia|New Zealand|India|Singapore|Japan|Israel|UAE|Dubai|Qatar|Saudi Arabia|Brazil|Mexico|Argentina|Colombia|Chile|Philippines|Indonesia|Vietnam|Thailand|Malaysia|South Korea|Taiwan|Hong Kong)\b/gi
-
-function extractRestrictions(text: string): string[] {
-  if (!text) return []
-  const found = new Set<string>()
-  const lower = text
-  const m = lower.match(RESTRICT_COUNTRY_RE)
-  if (!m) return []
-  for (const raw of m) {
-    const norm = raw.trim()
-    if (norm.length <= 3) found.add(norm.toUpperCase())
-    else found.add(norm.replace(/\s+/g, ' '))
-  }
-  return Array.from(found).slice(0, 8)
-}
+// [TRUTH LAYER v1] extractRestrictions now imported from the shared corpus
+// (lib/geo/eligibility.ts) — full EU-27 + US-state + observed-country set.
 
 // [V2] Experience level from explicit evidence: years of experience or
 // seniority title. Conservative — abstains without direct evidence.
@@ -336,9 +324,10 @@ function regexExperience(text: string): Partial<AIResp> {
 
 const TR = {
   africa: AFRICA_RE,
-  // [V2] Restriction patterns extended to cover location locks and
-  // authorization requirements (reduces false unknowns).
-  restrict: /(?:us|u\.s\.|usa|united states|uk|u\.k\.|united kingdom|eu|canada|australia)\s+(?:only|residents? only|citizens? only)\b|\b(?:only|based) in the (?:us|usa|uk|eu|united states|united kingdom)\b|must (?:be )?(?:reside|residing|be located|be based|be resident)|work authori[sz]ation (?:in|for|required)|authorized to work in the (?:us|uk)|must be authorized|no (?:visa )?(?:sponsorship|sponsoring)|(?:green card|citizenship) required|(?:based|located|residing) in (?:the )?(?:us|usa|united states|uk|united kingdom|canada|eu|europe|germany|france|spain|italy|netherlands|poland|sweden|norway|denmark|finland|belgium|austria|switzerland|ireland|portugal|australia|new zealand|india|singapore|japan|israel|uae|dubai|qatar|saudi arabia|turkey|brazil|mexico|argentina|colombia|chile|philippines|indonesia|vietnam|thailand|malaysia|south korea|taiwan|hong kong|latam|apac)|candidates? (?:must|need|should|will) (?:be|to be) (?:based|located|residing|in)|within (?:the )?(?:us|united states|uk|canada|eu)/i,
+  // [TRUTH LAYER v1] Truth-guard restriction checks use the SAME shared
+  // corpus patterns as detection — a guard can no longer certify a claim
+  // derived from a regex it does not share.
+  restrict: RESTRICT_RE,
   worldwide: GLOBAL_OUTREACH_RE,
   visaYes: /visa sponsor|sponsor(ship)? (?:is )?(?:available|offered|provided)|we (?:can )?sponsor|immigration (?:support|sponsorship)|sponsorship (?:is )?available|relocation (?:support|assistance|package)/i,
   visaNo: /no visa sponsorship|sponsorship (?:is )?not (?:available|offered)|cannot sponsor|unable to sponsor/i,
@@ -368,21 +357,14 @@ function numInText(n: number | null, t: string): boolean {
 }
 
 /**
- * [V3] Strip platform boilerplate that causes false positives: remote boards
- * (e.g. remoteOK) embed a generic "Regions: Worldwide, North America, Latin
- * America, Europe, Africa, Middle East, Asia, Oceania" block on EVERY posting.
- * That is platform filter UI text, not the employer's requirement — reading
- * "Africa" there produced mass false "explicit" verdicts.
+ * [TRUTH LAYER v1] The posting scan view = shared corpus dead-zone strip:
+ * platform "Regions:" boilerplate (the old mass false-explicit cause), plus
+ * marketing coverage ("customers worldwide"), EEO/legal machinery, and
+ * project-coverage lines — none of these may generate or certify
+ * eligibility/remote evidence. Re-exported under the old name.
  */
-const REGIONS_BOILER_RE = /Regions?[^\n]{0,200}?(Worldwide|North America|Latin America|Europe|Africa|Middle East|Asia|Oceania)[\s\S]{0,400}?Countries?[:\s]/i
-
 export function stripRegionBoilerplate(text: string): string {
-  if (!text) return text
-  const cleaned = text.replace(REGIONS_BOILER_RE, (m) => {
-    // Keep the surrounding prose, drop only the region/country list block.
-    return m.replace(/Regions?[\s\S]*?Countries?[:\s][\s\S]{0,120}/i, "")
-  })
-  return cleaned
+  return eligibilityScanText(text)
 }
 
 export function enforceTruthfulness(merged: AIResp, opts: { job: Job; truth: string; jobTruth: string; hasCompanyPage: boolean }): AIResp {
@@ -437,16 +419,26 @@ export function enforceTruthfulness(merged: AIResp, opts: { job: Job; truth: str
     }
   }
 
-  // 5) Company legitimacy: no fetched company page -> no prior-based claims
-  if (!hasCompanyPage) {
-    if (out.company_legitimacy !== "unknown") { out.company_legitimacy = "unknown"; out.company_confidence = 0 }
-    out.company_evidence = null
+  // 5) Company legitimacy: [§17] the per-job AI call NEVER decides company
+  // identity — "verified"/"likely_legit" from a job call is an invented
+  // identity verdict (it flips with per-run fetch luck; proven live §16).
+  // Identity is owned by the canonical company plane (lib/company/legitimacy).
+  // The only verdict a job call may emit is posting-level "suspicious", and
+  // only with a verbatim quote of the scam pattern from the posting text.
+  if (out.company_legitimacy === "verified" || out.company_legitimacy === "likely_legit") {
+    out.company_legitimacy = "unknown"; out.company_confidence = 0; out.company_evidence = null
+  }
+  if (out.company_legitimacy === "suspicious" && !out.company_evidence) {
+    out.company_legitimacy = "unknown"; out.company_confidence = 0
   }
 
-  // 6) Salary: claimed numbers must literally exist in the source
+  // 6) Salary: claimed numbers must literally exist in the posting text.
+  //    [TRUTH LAYER v1] Test against jt (posting body), NOT `t` — `t` used
+  //    to include the jobs-table salary_range string, which made the
+  //    fallback path ("trust the ingest value") trivially self-certifying.
   if (out.salary_min != null || out.salary_max != null) {
-    const minOk = out.salary_min == null || numInText(out.salary_min, t)
-    const maxOk = out.salary_max == null || numInText(out.salary_max, t)
+    const minOk = out.salary_min == null || numInText(out.salary_min, jt)
+    const maxOk = out.salary_max == null || numInText(out.salary_max, jt)
     if (!minOk || !maxOk) {
       out.salary_min = null; out.salary_max = null
       out.salary_currency = null; out.salary_period = null
@@ -504,7 +496,7 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
     : ""
 
   // P5: abstention-first prompt — models must not guess from priors.
-  const prompt = `Extract intelligence from this job posting as JSON. STRICT RULES: (1) Use ONLY the provided text — never outside knowledge about the company or market. (2) For every *_evidence field, copy an EXACT quote from the text do not paraphrase, do not join fragments, do not invent sentences. (3) If the text does not directly prove a field, return "unknown" and null evidence — abstaining is correct, guessing is a violation. (4) visa_sponsorship = "available" ONLY when the text explicitly offers visa sponsorship/relocation support; otherwise "unknown". (5) company_legitimacy = "unknown" unless the provided company website text proves it. (6) africa_eligibility: "explicit" only if the text mentions Africa or an African country; "restricted" only if the text imposes location/work-authorization limits; "likely" only if the text says worldwide/global/EMEA hiring; else "unknown".\n\n` +
+  const prompt = `Extract intelligence from this job posting as JSON. STRICT RULES: (1) Use ONLY the provided text — never outside knowledge about the company or market. (2) For every *_evidence field, copy an EXACT quote from the text do not paraphrase, do not join fragments, do not invent sentences. (3) If the text does not directly prove a field, return "unknown" and null evidence — abstaining is correct, guessing is a violation. (4) visa_sponsorship = "available" ONLY when the text explicitly offers visa sponsorship/relocation support; otherwise "unknown". (5) company_legitimacy: report ONLY posting-level scam evidence — return "suspicious" when the posting text itself shows scam patterns (pay to apply, required purchase, apply via messaging app, unrealistically easy high pay) and quote the pattern in company_evidence; otherwise return "unknown". NEVER return "verified" or "likely_legit" — company identity verification is not your job; it is owned by the company plane. (6) africa_eligibility: "explicit" only if the text mentions Africa or an African country; "restricted" only if the text imposes location/work-authorization limits; "likely" only if the text says worldwide/global/EMEA hiring open to the candidate; else "unknown". (7) africa_evidence must quote the eligibility phrase itself (where the candidate may be located) — NEVER company marketing about customers, markets, operations, or regions served; that is business coverage, not hiring eligibility, and quoting it is fabrication. (8) EMEA counts toward "likely" ONLY when tied to where the candidate may be located, never when describing operations/customers/market coverage. (9) required_skills/transferable_skills/missing_skills must be arrays of plain strings — never objects.\n\n` +
     `${job.title} @ ${job.company} | ${job.location||""} | ${job.country} | src=${job.source||""} | emp=${job.employment_type}\n` +
     `Salary: ${job.salary_range||""} ${job.salary_min||""}-${job.salary_max||""} ${job.salary_currency||""} | Tags: ${(job.tags||[]).join(",")}\n\n` +
     `Description:\n${combined.slice(0,5000)}${companyContext}\n\n` +
@@ -693,8 +685,10 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
     // Full truth (incl. company page) is used for company legitimacy and
     // verbatim evidence checks…
     truth: combined + "\n" + companyText + "\n" + (job.salary_range || ""),
-    // …but eligibility claims are judged against the JOB posting text only.
-    jobTruth: combined + "\n" + (job.salary_range || ""),
+    // …but eligibility claims and salary values are judged against the JOB
+    // posting body (dead-zone stripped) only — never the jobs-table
+    // salary_range string, which made the circular fallback self-certifying.
+    jobTruth: combined,
     hasCompanyPage: companyText.length >= 100,
   })
   return { ai: hardened, diags, modelVersion, pageFetched: pageText.length > 0, pageLen: pageText.length, pageStatus, aiUsed, companyPageFetched: companyText.length > 0, companyPageLen: companyText.length }

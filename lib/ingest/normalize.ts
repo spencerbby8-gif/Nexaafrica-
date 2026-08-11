@@ -224,122 +224,26 @@ export function detectRemote(...fields: Array<string | null | undefined>): boole
 }
 
 import type { Eligibility } from '@/lib/types'
+import { classifyGeoEligibility } from '@/lib/geo/eligibility'
 
 /**
- * EXPLICIT Africa signals — eligibility is clearly compatible with African
- * applicants. These are strong enough to override soft restriction noise.
+ * [TRUTH LAYER v1] Eligibility classification is delegated to the ONE shared
+ * corpus (lib/geo/eligibility.ts) used by the AI verifier and truth-guard.
+ * The previous triplicated regex sets disagreed (live-proven: an Ashby SF
+ * hybrid role "explicitly open" via `mali`⊂"anomalies"; Romania-restricted
+ * roles classified worldwide; marketing "businesses worldwide" → 'likely').
+ *
+ * Contract preserved: adapters call classifyEligibility(location, title,
+ * description) → 'explicit' | 'likely' | 'restricted' | 'unknown'.
+ * Silence is 'unknown' — never guessed 'open'.
  */
-const AFRICA_EXPLICIT = [
-  /\bafrica\b/i,
-  /\bemea\b/i,
-  /\b(nigeria|kenya|south\s+africa|ghana|egypt|morocco|ethiopia|tanzania|uganda|rwanda|senegal|tunisia|ivory\s+coast|côte\s+d['’]ivoire|cameroon|zambia|zimbabwe|botswana|namibia|mozambique|angola)\b/i,
-]
-
-/**
- * GLOBAL-REMOTE signals. On their own these mean "likely open" at best — NOT
- * explicit Africa eligibility. The audit showed treating these as sufficient
- * produced the bulk of false positives, so they only ever yield 'likely'.
- */
-const GLOBAL_REMOTE = [
-  /\bworldwide\b/i,
-  /\banywhere\b/i,
-  /\bglobal(ly)?\b/i,
-  /\bany\s+(time\s*zone|location|country)\b/i,
-  /\bfully\s+remote\b/i,
-  /\bremote\s*[-—,]?\s*(global|worldwide|anywhere|international)\b/i,
-]
-
-/**
- * RESTRICTION signals — region, residency, or work-authorization limits that
- * exclude (or very likely exclude) African applicants. Expanded well beyond
- * the old "X only" list to catch how restrictions are really phrased.
- */
-const RESTRICTION = [
-  // explicit "X only"
-  /\b(us|u\.s\.|usa|united\s+states|na|north\s+america|eu|europe|uk|u\.k\.|united\s+kingdom|canada|emea\s+excluding\s+africa|latam|apac|australia|india)\s+(?:based\s+)?only\b/i,
-  // residency / location requirements
-  /\bmust\s+(?:be\s+)?(?:reside|live|be\s+located|be\s+based)\b/i,
-  /\b(?:based|located|residing|resident)\s+in\s+the\s+(us|usa|united\s+states|uk|united\s+kingdom|eu|european\s+union|canada|us\b)/i,
-  /\bcandidates?\s+(?:must\s+be\s+)?(?:located|based|residing)\s+in\b/i,
-  /\bapplicants?\s+(?:must\s+be\s+)?from\b/i,
-  /\bresidents?\s+only\b/i,
-  // work authorization
-  /\b(?:work\s+)?authoriz(?:ed|ation)\s+(?:to\s+work\s+)?in\s+the\s+(us|usa|united\s+states|uk|united\s+kingdom|eu|european\s+union|canada)\b/i,
-  /\beligible\s+to\s+work\s+in\s+the\s+(us|usa|united\s+states|uk|united\s+kingdom|eu|european\s+union|canada)\b/i,
-  /\b(us|u\.s\.|uk|u\.k\.|eu)\s+work\s+authoriz(?:ation|ed)\b/i,
-  /\b(?:legally\s+)?authorized\s+to\s+work\b/i,
-  /\bvisa\s+sponsorship\s+(?:is\s+)?(?:not\s+available|unavailable|not\s+provided)\b/i,
-  /\bno\s+visa\s+sponsorship\b/i,
-  /\bsecurity\s+clearance\b/i,
-  /\b(?:gc|green\s+card)\s+(?:holder|required)\b/i,
-  // US-state / licensed / registration restrictions (stabilization audit:
-  // "based in Connecticut", "licensed in", state licensure all evaded the
-  // old list and let US-only roles into the Africa feed)
-  /\b(?:based|located|residing|licensed|registered|board[- ]certified)\s+in\s+(?:the\s+)?(?:state\s+of\s+)?(?:connecticut|california|texas|new\s+york|florida|illinois|pennsylvania|ohio|georgia|north\s+carolina|south\s+carolina|michigan|new\s+jersey|virginia|washington|arizona|massachusetts|tennessee|indiana|missouri|maryland|wisconsin|colorado|minnesota|alabama|louisiana|kentucky|oregon|oklahoma|utah|iowa|nevada|arkansas|mississippi|kansas|new\s+mexico|nebraska|west\s+virginia|idaho|hawaii|maine|new\s+hampshire|montana|rhode\s+island|delaware|south\s+dakota|north\s+dakota|alaska|vermont|wyoming)\b/i,
-  /\b(?:u\.?s\.?|united\s+states)\s+(?:work\s+)?(?:authorization|eligibility|citizenship|resident|remote|only)\b/i,
-  /\b(?:must\s+)?(?:be|hold|have)\s+(?:a\s+)?(?:valid\s+)?(?:us|u\.?s\.?|state|medical|nursing|law|attorney|teaching)\s+licen[cs]e\b/i,
-  /\blicensed\s+(?:to\s+(?:work|practice)\s+)?in\s+(?:the\s+)?(?:us|usa|united\s+states|uk|canada|state\b)/i,
-  /\b(?:within|inside)\s+the\s+(?:us|united\s+states|uk|united\s+kingdom|eu|canada)\b/i,
-  /\b(?:candidates?|applicants?)\s+(?:must\s+be|need\s+to\s+be|should\s+be|will\s+be)\s+(?:based|located|residing|in)\b/i,
-  /\b(?:us|u\.?s\.?|uk|u\.?k\.?|canada|eu|europe)\s+(?:only|residents?\s+only|citizens?\s+only|based\s+only)\b/i,
-  /\b(?:no|without)\s+(?:visa\s+)?(?:sponsorship|sponsoring)\b|\b(?:cannot|cannot|can'?t|do\s+not|don'?t)\s+(?:provide\s+)?(?:visa\s+)?sponsorship\b/i,
-  /\b(?:work|employment)\s+authorization\s+(?:is\s+)?required\b/i,
-  /\b(?:location|locations?)\s*[:—-]\s*(?:us|usa|united\s+states|uk|u\.?k\.?|canada|eu)\b/i,
-]
-
-/**
- * Classify Africa eligibility into a confidence tier. Accuracy over optimism:
- * - A restriction signal forces 'restricted' UNLESS Africa is explicitly named
- *   (some global postings list region carve-outs but still welcome Africa).
- * - Explicit Africa wording => 'explicit'.
- * - Global-remote signals with no restriction => 'likely' (a hedge, not a claim).
- * - Otherwise => 'unknown'. We never guess 'open' from silence.
- */
-/**
- * Location fields that lock a role to a region which excludes (or very
- * likely excludes) African applicants. A role whose LOCATION FIELD is one
- * of these — with no worldwide/global/EMEA/Africa outreach anywhere in the
- * posting — is restricted, even if the description never repeats the
- * restriction ("based in Connecticut" style postings evade text regexes).
- */
-const LOCATION_RESTRICTED = /^(?:us|usa|u\.?s\.?|united\s+states|uk|u\.?k\.?|united\s+kingdom|canada|eu|europe|germany|france|spain|italy|netherlands|poland|sweden|norway|denmark|finland|belgium|austria|switzerland|ireland|portugal|australia|new\s+zealand|india|singapore|japan|israel|uae|dubai|qatar|saudi\s+arabia|turkey|brazil|mexico|argentina|colombia|chile|philippines|indonesia|vietnam|thailand|malaysia|south\s+korea|taiwan|hong\s+kong|latam|apac)$/i
-
 export function classifyEligibility(...fields: Array<string | null | undefined>): Eligibility {
-  const text = fields.filter(Boolean).join(' ').toLowerCase()
-  if (!text) return 'unknown'
-
-  const explicit = AFRICA_EXPLICIT.some((re) => re.test(text))
-  const restricted = RESTRICTION.some((re) => re.test(text))
-  const global = GLOBAL_REMOTE.some((re) => re.test(text))
-
-  // Explicit Africa mention wins — even over a region carve-out, since the
-  // employer has named Africa/an African country as welcome.
-  if (explicit) return 'explicit'
-  // Any restriction without explicit Africa support => restricted.
-  if (restricted) return 'restricted'
-  // Location-field lock: "United States" / "UK" / "Germany" as the posting
-  // location is restricted UNLESS the posting carries STRONG global outreach
-  // (worldwide / anywhere / EMEA / Africa / any timezone). Weak boilerplate
-  // like a bare "global" or "remote" does NOT unlock a restricted location —
-  // this catches the false-'likely' class from the stabilization audit.
-  const STRONG_GLOBAL = /\b(worldwide|anywhere|emea|africa\b|any\s+(time\s*zone|location|country)|remote\s*[-—,]?\s*(global|worldwide|anywhere|international))\b/i
-  // A "strong" token that is immediately qualified back to a restricted
-  // region is NOT global outreach: "Work anywhere in the US", "remote
-  // within the UK", "worldwide across Europe" all stay restricted.
-  const LOCAL_QUALIFIER = /\b(?:anywhere|worldwide|remote|global(?:ly)?)\b[^.!?\n]{0,50}\b(?:in|within|across|throughout|based)\s+(?:the\s+)?(?:us|usa|united\s+states|uk|u\.?k\.?|united\s+kingdom|canada|europe|eu|germany|france|spain|italy|netherlands|poland|sweden|norway|denmark|finland|belgium|austria|switzerland|ireland|portugal|australia|new\s+zealand|india|singapore|japan|israel|uae|dubai|qatar|saudi\s+arabia|turkey|brazil|mexico|argentina|colombia|chile|philippines|indonesia|vietnam|thailand|malaysia|south\s+korea|taiwan|hong\s+kong|latam|apac)\b/i
-  // "Anywhere Company" is a US real-estate firm — a company name, not outreach.
-  const FALSE_TOKEN = /\banywhere\s+compan(y|ies)\b/i
-  const locationField = (fields[0] || '').trim()
-  const strongGlobal = STRONG_GLOBAL.test(text) && !LOCAL_QUALIFIER.test(text) && !FALSE_TOKEN.test(text)
-  // Location lock also fires for comma lists like "Dublin, Ireland" when every
-  // part is a restricted region (no global part like Remote/Worldwide/Africa).
-  const locParts = locationField.split(/[,;]/).map((p: string) => p.trim()).filter(Boolean)
-  const anyRestrictedPart = locParts.some((p: string) => LOCATION_RESTRICTED.test(p))
-  const anyGlobalPart = locParts.some((p: string) => /\b(worldwide|anywhere|remote|africa|emea|global)\b/i.test(p))
-  if (locationField && ((anyRestrictedPart && !anyGlobalPart) || (LOCATION_RESTRICTED.test(locationField) && !anyGlobalPart)) && !strongGlobal) return 'restricted'
-  // Global remote with no restriction => moderate confidence.
-  if (global) return 'likely'
-  return 'unknown'
+  const [locationField, ...rest] = fields
+  const v = classifyGeoEligibility({
+    text: rest.filter(Boolean).join('\n'),
+    locationField: (locationField || '').trim() || undefined,
+  })
+  return v.tier
 }
 
 /**

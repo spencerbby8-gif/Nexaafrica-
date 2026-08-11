@@ -100,6 +100,36 @@ export function applicationMethodSignal(job: Job): TrustSignal {
     }
   }
 
+  // [TRUTH LAYER v1] Job boards are NOT the company's own domain. Proven
+  // live: users were told "Apply link is on company domain himalayas.app —
+  // direct application". A board apply is still fine — but it is described
+  // truthfully, and it does not impersonate employer-domain provenance.
+  const KNOWN_BOARD_HOSTS = new Set([
+    "himalayas.app",
+    "remoteok.com",
+    "remoteok.io",
+    "remotive.com",
+    "weworkremotely.com",
+    "remote.co",
+    "workingnomads.com",
+    "jobspresso.co",
+    "flexjobs.com",
+    "indeed.com",
+    "linkedin.com",
+  ])
+  if (KNOWN_BOARD_HOSTS.has(host) || KNOWN_BOARD_HOSTS.has(host.replace(/^www\./, ""))) {
+    return {
+      id: "application_method",
+      label: `Job board apply • ${host}`,
+      scoreImpact: 4,
+      confidence: "medium",
+      tone: "positive",
+      explanation: `Apply link goes to the job board ${host} with a job-specific path. You apply on the board that carries this listing, not on the company's own site.`,
+      evidence: job.apply_url,
+      source: "application",
+    }
+  }
+
   // Default: direct company domain with job-id
   if (hasJobIdSegment(url.pathname)) {
     return {

@@ -21,7 +21,7 @@
 import "dotenv/config"
 import { chromium } from "playwright"
 import pg from "pg"
-import { sha256, extractStructuredData, classifyBlockStatus, type EvidenceStatus } from "../lib/ai/evidence"
+import { sha256, extractStructuredData, workerStateFor, type EvidenceStatus } from "../lib/ai/evidence"
 
 // Uses the DIRECT Postgres connection string (pg is already a dependency).
 // Prefer SUPABASE_DIRECT env; fall back to assembled pooler URL.
@@ -43,11 +43,11 @@ async function main() {
   const jobs = sourceFilter
     ? await q(
         `select id, slug, apply_url, description_md, evidence_state from jobs
-         where is_active and source=$1 and (evidence_state is null or evidence_state in ('queued','stale','blocked','failed'))
+         where is_active and source=$1 and (evidence_state is null or evidence_state in ('queued','stale','blocked','failed','fetching'))
          order by posted_at desc limit $2`, [sourceFilter, limit])
     : await q(
         `select id, slug, apply_url, description_md, evidence_state from jobs
-         where is_active and (evidence_state is null or evidence_state in ('queued','stale','blocked','failed'))
+         where is_active and (evidence_state is null or evidence_state in ('queued','stale','blocked','failed','fetching'))
          order by posted_at desc limit $1`, [limit])
 
   if (jobs.length === 0) {
@@ -94,7 +94,11 @@ async function main() {
       await page.screenshot({ path: shotPath, fullPage: false }).catch(() => {})
 
       const combined = `${visible}\n${html.slice(0, 4000)}`
-      const block = blockedBy || classifyBlockStatus(status, combined)
+      // [V1.1] Legal states only: a nav timeout/abort is a `failed` fetch —
+      // "timeout" is not a crawler state (it leaked raw jargon into the UI
+      // and silently skipped the same treatment blocked pages get). The
+      // cause stays recorded in detail.blockedBy.
+      const block = workerStateFor(blockedBy, status, combined)
 
       if (block) {
         await q(

@@ -11,6 +11,7 @@ import { EvidencePanel } from '@/components/evidence-panel'
 import { TrustCard } from '@/components/trust/trust-card'
 import { ReportButton } from '@/components/trust/report-button'
 import { calculateTrustScore, unifiedTrustScore, unifiedCapNote } from '@/lib/trust/engine'
+import { crawlerStateLabel } from '@/lib/ai/evidence'
 import { employmentLabel, isFresh, postedLabel } from '@/lib/format'
 import { cleanDescription, getCleanMarkdownForRender } from '@/lib/cleanDescription'
 import type { Job } from '@/lib/types'
@@ -263,7 +264,16 @@ export function JobDetailLayout({ companyJobCount,
         </ul>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          {job.is_remote && <TrustBadge variant="remote" />}
+          {(() => {
+              // [TRUTH LAYER v1] Remote badge follows the verified verdict —
+              // hybrid/onsite JAI verdicts override the feed flag on the
+              // page itself (the card/page contradiction proven in audit).
+              const aiRemote = ((aiIntelligence as any)?.remote_eligibility) as string | undefined
+              if (aiRemote === 'hybrid') return <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Hybrid</span>
+              if (aiRemote === 'onsite') return <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-muted-foreground">On-site</span>
+              if (job.is_remote) return <TrustBadge variant="remote" />
+              return null
+            })()}
           {job.salary_range && <TrustBadge variant="usd" label={job.salary_range} />}
           {(() => {
             const aiElig = (aiIntelligence as any)?.africa_eligibility
@@ -272,7 +282,12 @@ export function JobDetailLayout({ companyJobCount,
             // display an open-to-Africa badge, even if AI found Africa language.
             if (job.is_open_to_africa === false) return null
             if (effective === 'explicit') return <TrustBadge variant="verified" label="Open to Africa" />
-            if (effective === 'likely') return <TrustBadge variant="verified" label="Likely open to Africa" />
+            // [TRUTH LAYER v1] green badge only for the AI-produced tier.
+            if (effective === 'likely') {
+              return aiElig
+                ? <TrustBadge variant="verified" label="Likely open to Africa" />
+                : <span className="rounded-md border border-border/70 bg-secondary px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Likely open · unverified</span>
+            }
             return null
           })()}
           {employment && (
@@ -313,55 +328,75 @@ export function JobDetailLayout({ companyJobCount,
           // Calculate trust score on the fly if not persisted, else use persisted if available
           // For SSR, this is pure and fast (<5ms)
           try {
-            // @ts-ignore - allow optional fields
-            const detTrust = (job as any).trust_score != null && (job as any).trust_signals?.length
-              ? {
-                  score: (job as any).trust_score,
-                  confidence: (job as any).trust_confidence || "medium",
-                  version: (job as any).trust_version || 1,
-                  signals: (job as any).trust_signals,
-                  isFlagged: !!(job as any).is_flagged,
-                  flaggedReason: (job as any).flagged_reason,
-                  isWarning: ((job as any).trust_score || 0) < 40,
-                }
-              : calculateTrustScore(job)
+            // [ARCHITECTURE — single-owner doctrine] The trust plane displays
+            // the PERSISTED Trust Engine output (canonical): stored score,
+            // stored signals, stored confidence. Nothing is recomputed at
+            // render; rows scored under older weights heal via the write-path
+            // rescore backfill (POST /api/jobs/backfill-trust), never via a
+            // read-time correction. The ceiling marker is pure arithmetic
+            // over the signals listed beneath it — display honesty only (C4).
+            let detTrust: any
+            let legitimacyRaw: number | null = null
+            const persistedSignals: any[] = Array.isArray((job as any).trust_signals) ? (job as any).trust_signals : []
+            const persistedScore = typeof (job as any).trust_score === 'number' ? (job as any).trust_score : null
+            if (persistedScore != null && persistedSignals.length > 0) {
+              legitimacyRaw = Math.round(50 + persistedSignals.reduce((acc, s) => acc + (Number((s as any)?.scoreImpact) || 0), 0))
+              detTrust = {
+                score: persistedScore,
+                confidence: (job as any).trust_confidence || "medium",
+                version: (job as any).trust_version || 2,
+                signals: persistedSignals,
+                isFlagged: !!(job as any).is_flagged,
+                flaggedReason: (job as any).flagged_reason,
+                isWarning: persistedScore < 40,
+              }
+            } else {
+              // Never scored by the write path: the Trust Engine itself (the
+              // canonical owner) scores it on miss — no render-invented
+              // logic. New ingests persist scores; legacy fallback only.
+              detTrust = calculateTrustScore(job)
+            }
             // Unified: listing legitimacy blended with AI opportunity-evidence.
             const aiConf = (aiIntelligence as any)?.overall_confidence ?? null
             const trust = { ...(detTrust as any), score: unifiedTrustScore(job, aiIntelligence as any) }
+            // [ARCHITECTURE] The cap note explains the CANONICAL stored
+            // verdict — the same input the trust engine caps on.
             const capNote = unifiedCapNote((aiIntelligence as any)?.africa_eligibility ?? null, (job as any).evidence_state ?? null)
             return (
               <>
-                <TrustCard trust={trust as any} legitimacyScore={(job as any).trust_score ?? detTrust.score} aiConfidence={aiConf} capNote={capNote} />
+                <TrustCard trust={trust as any} legitimacyScore={detTrust.score} legitimacyRaw={typeof legitimacyRaw === 'number' ? legitimacyRaw : null} aiConfidence={aiConf} capNote={capNote} />
                 <div className="mt-4 flex justify-end">
                   <ReportButton jobId={job.id} jobSlug={job.slug} />
                 </div>
               </>
             )
           } catch {
-            return <EvidencePanel job={job} />
+            return <EvidencePanel job={job} intelligence={aiIntelligence || (job as any).aiIntelligence || null} />
           }
         })()}
       </div>
 
       {/* Evidence check — secondary, kept for backward compat, now below Trust Card */}
       <div className="pt-6">
-        <EvidencePanel job={job} />
+        <EvidencePanel job={job} intelligence={aiIntelligence || (job as any).aiIntelligence || null} />
       </div>
 
       {/* Live Proof Layer — verification state, provider/model, provenance, liveness */}
       <div className="pt-6">
         <ProofBadge intelligence={aiIntelligence || (job as any).aiIntelligence || null} queueStatus={(job as any)?._queueStatus} queueError={(job as any)?._queueError ?? null} variant="full" />
         {(() => {
-          // [V1] Crawler state — surfaced truthfully (queued|fetching|fetched|
-          // blocked|partial|verified|failed|stale). Only shown when set.
+          // [V1.1] Crawler state — surfaced truthfully (queued|fetching|fetched|
+          // blocked|partial|verified|failed|stale) with human copy from the
+          // shared label map. The raw enum is internal vocabulary — it is
+          // never rendered. Only shown when set.
           const evState = (job as any).evidence_state ?? null
           if (!evState) return null
-          const tone = evState === 'blocked' ? 'text-red-400' : evState === 'verified' || evState === 'fetched' ? 'text-green-400' : evState === 'failed' ? 'text-red-400' : 'text-amber-400'
-          const label = evState === 'blocked' ? 'Page blocked — evidence unavailable, retrying later' : `Evidence: ${evState}`
+          const { label, tone } = crawlerStateLabel(evState)
+          const toneCls = tone === 'red' ? 'text-red-400' : tone === 'green' ? 'text-green-400' : 'text-amber-400'
           return (
             <div className="mt-1 text-[11px]">
               <span className="font-medium text-foreground/70">Crawler:</span>{' '}
-              <span className={tone}>{label}</span>
+              <span className={toneCls}>{label}</span>
             </div>
           )
         })()}
@@ -491,7 +526,12 @@ export function JobDetailLayout({ companyJobCount,
                   // [REGION-LOCK] Share text must never claim open-to-Africa
                   // for listings the system marks as not open to Africa.
                   if (job.is_open_to_africa === false) return job.country
-                  return effective === 'explicit' || effective === 'likely' ? 'Open to Africa' : job.country
+                  // [TRUTH LAYER v1] share text claims "Open to Africa" only
+                  // for verified explicit, and "Likely open" only when the AI
+                  // layer produced the tier — ingest-likely stays the country.
+                  if (effective === 'explicit') return 'Open to Africa'
+                  if (aiElig && effective === 'likely') return 'Likely open to Africa'
+                  return job.country
                 })(),
                 job.salary_range,
               ]

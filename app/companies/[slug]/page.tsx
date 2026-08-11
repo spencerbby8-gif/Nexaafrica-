@@ -117,12 +117,16 @@ export default async function CompanyDetailPage({
               {company.name}
             </h1>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-              {company.jobCount} open remote{' '}
-              {company.jobCount === 1 ? 'role' : 'roles'} on Nexa
+              {/* [TRUTH LAYER v1] one truthful count — this hub lists the
+                  Africa-open slice only, so total==africaFriendly. The old
+                  copy also claimed "Direct apply on company’s own site",
+                  false for board-sourced listings. */}
+              {company.africaFriendlyCount} open remote{' '}
+              {company.africaFriendlyCount === 1 ? 'role' : 'roles'} on Nexa
               {company.africaFriendlyCount > 0
-                ? `, ${company.africaFriendlyCount} open to applicants in Africa.`
+                ? `, open to applicants in Africa.`
                 : '.'}{' '}
-              Direct apply on {company.name}&apos;s own site. Nexa never
+              Direct apply to the employer. Nexa never
               handles applications and never charges candidates.
             </p>
           </div>

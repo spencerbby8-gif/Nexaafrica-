@@ -3,6 +3,21 @@ import type { Job } from "@/lib/types"
 import { AI_MODEL_VERSION, AI_INTELLIGENCE_VERSION, type JobAIIntelligence } from "./types"
 import type { ProviderCallDiag } from "./gateway"
 import { PROVIDERS } from "./providers/types"
+import { asInt, clamp100, asEnum, asStringOrNull, asStringArray, asSkillList, cleanEvidenceText } from "./normalize"
+import { formatSalary } from "@/lib/intelligence"
+import { companyLegitimacyOwner, type CompanyLearningInput } from "@/lib/company/legitimacy"
+import { isFailedModelVersion, queueRepairDecision, contradictionRepairDecision, isTerminalAdmissionError, preserveQuote, REQUEUE_ERROR_LABEL, type RequeueReason } from "./queue-repair"
+import { contradictionFlags } from "@/lib/validation/truth-v2"
+
+/** PostgREST reads `.in()` filters from the request URL; beyond a few
+ *  hundred UUIDs the URL overflows HTTP limits and the query silently
+ *  fails behind a try/catch — the repair pass would no-op without an
+ *  error anyone sees. Chunk every batched lookup. */
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+  return out
+}
 
 
 
@@ -34,7 +49,7 @@ export function setCachedIntelligence(jobId: string, result: { intelligence: Job
   cache.set(jobId, { result, timestamp: Date.now() })
 }
 
-export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIntelligence; diags: ProviderCallDiag[] }> {
+export async function enrichJobWithAI(job: Job, opts?: { learning?: CompanyLearningInput | null }): Promise<{ intelligence: JobAIIntelligence; diags: ProviderCallDiag[] }> {
   const cached = await getCachedIntelligence(job.id)
   if (cached) return cached
   await rateLimit()
@@ -109,14 +124,23 @@ export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIn
       lastVerified: bundle?.salary?.lastVerified || now,
       modelVersion: bundle?.salary?.modelVersion || (job.salary_range ? "job-table-fallback" : "failed-no-evidence"),
     },
-    company: {
-      value: bundle?.company?.legitimacy || "unknown",
-      confidence: bundle?.company?.confidence ?? 0,  // [FIX] Was perJobLowConf()
-      evidence: bundle?.company?.evidence ? [{ text: bundle.company.evidence, url: job.apply_url, type: "company_page" as const }] : [],
-      sourceUrls: bundle?.company?.sourceUrls || [job.apply_url],
-      lastVerified: bundle?.company?.lastVerified || now,
-      modelVersion: bundle?.company?.modelVersion || "failed-no-evidence",
-    },
+    company: (() => {
+      // [§17 CANONICAL COMPANY PLANE] The per-job AI call never decides
+      // company identity. Its only company-plane contribution is posting-level
+      // scam evidence, which may demote (never promote) the canonical verdict.
+      const aiSuspicious = bundle?.company?.legitimacy === "suspicious" && bundle?.company?.evidence
+        ? String(bundle.company.evidence)
+        : null
+      const verdict = companyLegitimacyOwner({ company: job.company, source: (job as any).source ?? null, sourceId: (job as any).source_id ?? null, suspiciousEvidence: aiSuspicious, learning: opts?.learning ?? null })
+      return {
+        value: verdict.value,
+        confidence: verdict.confidence,
+        evidence: verdict.evidence ? [{ text: verdict.evidence, url: job.apply_url, type: "company_page" as const }] : [],
+        sourceUrls: bundle?.company?.sourceUrls || [job.apply_url],
+        lastVerified: now,
+        modelVersion: `company-plane:${verdict.basis}`,
+      }
+    })(),
     quality: {
       value: bundle?.quality?.quality || "unknown",
       confidence: bundle?.quality?.confidence ?? 0,  // [FIX] Was perJobLowConf()
@@ -184,6 +208,30 @@ export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIn
   // africa — double-counts) and quality (subjective / deterministic).
   // Includes experience (output of the real experience+skills verifier).
   // Formula matches the truth cleanup migration (20260727000000).
+  // [§18 DETERMINISTIC AFRICA] The corpus adjudicator owns the verdict —
+  // per-run AI output can never re-decide Africa eligibility. The same judge
+  // classifies at ingest (jobs.eligibility via classifyEligibility) and here;
+  // identical postings can't drift apart across runs or companies, while
+  // postings with genuinely different evidence keep genuinely different
+  // verdicts.
+  try {
+    const { adjudicateAfricaEligibility } = await import("@/lib/geo/eligibility")
+    const geo = adjudicateAfricaEligibility({
+      title: job.title,
+      description_md: job.description_md || "",
+      location: (job as any).location ?? null,
+    })
+    result.africa = {
+      value: geo.value,
+      confidence: geo.confidence,
+      evidence: geo.evidence ? [{ text: geo.evidence, url: job.apply_url, type: "job_description" as const }] : [],
+      sourceUrls: result.africa.sourceUrls,
+      lastVerified: now,
+      modelVersion: `adjudicator:corpus-v1`,
+      countryRestrictions: geo.countryRestrictions,
+    }
+  } catch {}
+
   result.overallConfidence = Math.round(
     (result.africa.confidence + result.remote.confidence + result.salary.confidence + result.company.confidence + result.experience.confidence) / 5
   )
@@ -314,24 +362,24 @@ async function triggerSecondOpinionIfNeeded(
       const updateRow: Record<string, unknown> = {}
       if (r.africa_eligibility && r.africa_eligibility !== "unknown") updateRow.africa_eligibility = r.africa_eligibility
       if (r.africa_confidence && r.africa_confidence > 0) updateRow.africa_confidence = clamp100(r.africa_confidence)
-      if (r.africa_evidence) updateRow.africa_evidence = r.africa_evidence
+      const _ae = cleanEvidenceText(r.africa_evidence); if (_ae) updateRow.africa_evidence = _ae
       if (r.remote_eligibility && r.remote_eligibility !== "unknown") updateRow.remote_eligibility = r.remote_eligibility
       if (r.remote_confidence && r.remote_confidence > 0) updateRow.remote_confidence = clamp100(r.remote_confidence)
-      if (r.remote_evidence) updateRow.remote_evidence = r.remote_evidence
+      const _re = cleanEvidenceText(r.remote_evidence); if (_re) updateRow.remote_evidence = _re
       if (r.salary_transparency && r.salary_transparency !== "unknown") updateRow.salary_transparency = r.salary_transparency
       if (r.salary_confidence && r.salary_confidence > 0) updateRow.salary_confidence = clamp100(r.salary_confidence)
-      if (r.salary_evidence) updateRow.salary_evidence = r.salary_evidence
+      const _se = cleanEvidenceText(r.salary_evidence); if (_se) updateRow.salary_evidence = _se
       if (r.company_legitimacy && r.company_legitimacy !== "unknown") updateRow.company_legitimacy = r.company_legitimacy
       if (r.company_confidence && r.company_confidence > 0) updateRow.company_confidence = clamp100(r.company_confidence)
-      if (r.company_evidence) updateRow.company_evidence = r.company_evidence
+      const _ce = cleanEvidenceText(r.company_evidence); if (_ce) updateRow.company_evidence = _ce
       if (r.experience_level && r.experience_level !== "unknown") updateRow.experience_level = r.experience_level
       if (r.experience_confidence && r.experience_confidence > 0) updateRow.experience_confidence = clamp100(r.experience_confidence)
       if (r.job_quality && r.job_quality !== "unknown") updateRow.job_quality = r.job_quality
       if (r.job_quality_confidence && r.job_quality_confidence > 0) updateRow.job_quality_confidence = clamp100(r.job_quality_confidence)
-      if (r.job_quality_evidence) updateRow.job_quality_evidence = r.job_quality_evidence
-      if (Array.isArray(r.required_skills) && r.required_skills.length > 0) updateRow.required_skills = r.required_skills
-      if (Array.isArray(r.transferable_skills) && r.transferable_skills.length > 0) updateRow.transferable_skills = r.transferable_skills
-      if (Array.isArray(r.missing_skills)) updateRow.missing_skills = r.missing_skills
+      const _qe = cleanEvidenceText(r.job_quality_evidence); if (_qe) updateRow.job_quality_evidence = _qe
+      const _req = asSkillList(r.required_skills); if (_req.length > 0) updateRow.required_skills = _req
+      const _tra = asSkillList(r.transferable_skills); if (_tra.length > 0) updateRow.transferable_skills = _tra
+      updateRow.missing_skills = asSkillList(r.missing_skills)
 
       if (Object.keys(updateRow).length > 0) {
         updateRow.last_verified_at = new Date().toISOString()
@@ -356,23 +404,10 @@ async function triggerSecondOpinionIfNeeded(
 //      confidence / invalid enum emitted by a model)
 // AI output is untrusted input: round, clamp, whitelist, or drop — never
 // pass through, never invent replacements.
-const asInt = (v: unknown): number | null => {
-  if (v === null || v === undefined) return null
-  const n = typeof v === "number" ? v : Number(v)
-  return Number.isFinite(n) ? Math.round(n) : null
-}
-const clamp100 = (v: unknown): number | null => {
-  const n = asInt(v)
-  if (n === null) return null
-  return Math.max(0, Math.min(100, n))
-}
-const asEnum = <T extends string>(v: unknown, allowed: readonly T[]): T =>
-  (allowed as readonly unknown[]).includes(v) ? (v as T) : ("unknown" as T)
-const asStringOrNull = (v: unknown): string | null =>
-  typeof v === "string" && v.length > 0 ? v : null
-const asStringArray = (v: unknown): string[] =>
-  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0) : []
-
+// [TRUTH LAYER v1] Normalization helpers moved to shared module ./normalize
+// (pure, no env) so the backfill route and the fixture harness share the
+// exact persistence boundary. asStringArray is now skills-aware (object
+// extraction + markdown unescape + case-insensitive dedupe).
 const AFRICA_ENUM = ["explicit", "likely", "restricted", "unknown"] as const
 const REMOTE_ENUM = ["fully_remote", "hybrid", "onsite", "unknown"] as const
 const VISA_ENUM = ["available", "not_available", "unknown", "conditional"] as const
@@ -453,11 +488,12 @@ export async function processAIQueue(batchSize = 100) {
       .eq("jobs.is_active", true)
       .limit(200)
     if (doneClean && doneClean.length > 0) {
-      const { data: jaiRows } = await supabase
-        .from("job_ai_intelligence")
-        .select("job_id")
-        .in("job_id", doneClean.map((d: any) => d.job_id))
-      const haveJai = new Set((jaiRows || []).map((r: any) => r.job_id))
+      const jaiRows: any[] = []
+      for (const ids of chunkArray(doneClean.map((d: any) => d.job_id), 100)) {
+        const { data } = await supabase.from("job_ai_intelligence").select("job_id").in("job_id", ids)
+        if (data) jaiRows.push(...data)
+      }
+      const haveJai = new Set(jaiRows.map((r: any) => r.job_id))
       const orphans = (doneClean as any[]).filter((d: any) => !haveJai.has(d.job_id))
       if (orphans.length > 0) {
         const healNow = new Date().toISOString()
@@ -470,6 +506,132 @@ export async function processAIQueue(batchSize = 100) {
     }
   } catch (e) {
     console.log(JSON.stringify({ scope: "ai_engine", event: "orphan_heal_error", error: (e instanceof Error ? e.message : String(e)).slice(0,150) }))
+  }
+
+  // ── [§17 EVIDENCE REPAIR] Requeue thin-then-sealed rows instead of leaving
+  // them as terminal "completed": (a) rule-based/AI-less JAI tiers must retry
+  // like failures, and (b) pre-V1 rows (evidence_refs null) predate the
+  // evidence plane and gain stored evidence on their next pass. Bounded to a
+  // 1,000-row scan / 250 requeues per drain invocation; strictly monotonic —
+  // a requeued row leaves the completed pool and never returns to it, so the
+  // pool drains to zero. Admission rejections stay terminal by design.
+  try {
+    const { data: doneRows } = await supabase
+      .from("ai_processing_queue")
+      .select("id, job_id, error")
+      .eq("status", "completed")
+      .order("created_at", { ascending: true })
+      .limit(1000)
+    if (doneRows && doneRows.length > 0) {
+      const jobIds = [...new Set(doneRows.map((d: any) => d.job_id))]
+      const jaiRows: any[] = []
+      for (const ids of chunkArray(jobIds, 100)) {
+        const { data } = await supabase
+          .from("job_ai_intelligence")
+          .select("job_id, model_version, evidence_refs, africa_eligibility, africa_confidence, africa_evidence, company_legitimacy, company_confidence, company_evidence, remote_evidence, salary_evidence, visa_evidence, job_quality_evidence")
+          .in("job_id", ids)
+        if (data) jaiRows.push(...data)
+      }
+      const jaiMap = new Map(jaiRows.map((r: any) => [r.job_id, r]))
+
+      // [V2 CONTRADICTION REPAIR] Rows the §17 classes pass (real-model,
+      // V1.1 evidence) are then judged against the deterministic owners:
+      // Africa adjudicator, canonical company owner, quote traceability —
+      // the SAME pure flags the validation endpoint reports, so the
+      // simulated drain and the real drain can never diverge.
+      const basePassRows = (doneRows as any[]).filter((d) => {
+        const jai = jaiMap.get(d.job_id)
+        return jai && queueRepairDecision(d, jai) === null
+      })
+      const jobsMap = new Map<string, any>()
+      for (const ids of chunkArray([...new Set(basePassRows.map((d) => d.job_id))], 100)) {
+        if (ids.length === 0) continue
+        const { data } = await supabase.from("jobs").select("id, title, company, location, description_md, salary_range, source, source_id").in("id", ids)
+        for (const j of data || []) jobsMap.set((j as any).id, j)
+      }
+      const companyNames = [...new Set([...jobsMap.values()].map((j) => ((j as any).company || "").trim()).filter(Boolean))]
+      const learningMap = new Map<string, CompanyLearningInput>()
+      for (const names of chunkArray(companyNames, 100)) {
+        if (names.length === 0) continue
+        const { data } = await supabase.from("company_intelligence").select("company, total_jobs, verification_rate, hiring_velocity_30d").in("company", names)
+        for (const ci of data || []) {
+          learningMap.set((ci as any).company, {
+            totalRoles: Number((ci as any).total_jobs) || 0,
+            verificationRate: typeof (ci as any).verification_rate === "number" ? (ci as any).verification_rate : null,
+            roles30d: Number((ci as any).hiring_velocity_30d) || 0,
+          })
+        }
+      }
+
+      const decide = (d: any): RequeueReason => {
+        if (isTerminalAdmissionError(d.error)) return null // loop-guard: terminal means terminal
+        const jai = jaiMap.get(d.job_id)
+        const base = queueRepairDecision(d, jai)
+        if (base) return base
+        if (!jai) return null
+        const job = jobsMap.get(d.job_id)
+        if (!job) return null
+        return contradictionRepairDecision(contradictionFlags(job, jai, learningMap.get((job.company || "").trim()) ?? null))
+      }
+
+      const requeueable = (doneRows as any[])
+        .map((d) => ({ row: d, reason: decide(d) }))
+        .filter((x) => x.reason !== null)
+        .slice(0, 250)
+      if (requeueable.length > 0) {
+        const healNow = new Date().toISOString()
+        const byReason = new Map<string, string[]>()
+        for (const r of requeueable) {
+          const reason = r.reason as Exclude<RequeueReason, null>
+          const list = byReason.get(reason) || []
+          list.push(r.row.id)
+          byReason.set(reason, list)
+        }
+        let requeued = 0
+        for (const [reason, ids] of byReason) {
+          const { error: rqErr } = await supabase
+            .from("ai_processing_queue")
+            .update({ status: "pending", error: REQUEUE_ERROR_LABEL[reason as Exclude<RequeueReason, null>], attempts: 0, completed_at: null, started_at: null, next_retry_at: healNow })
+            .in("id", ids)
+          if (rqErr) console.log(JSON.stringify({ scope: "ai_engine", event: "repair_requeue_error", reason, error: rqErr.message?.slice(0, 150) }))
+          else requeued += ids.length
+        }
+        console.log(JSON.stringify({ scope: "ai_engine", event: "repair_requeued", count: requeued, reasons: [...byReason.keys()] }))
+      }
+    }
+  } catch (e) {
+    console.log(JSON.stringify({ scope: "ai_engine", event: "repair_requeue_error", error: (e instanceof Error ? e.message : String(e)).slice(0,150) }))
+  }
+
+  // ── [§17 NO-QUEUE-ROW DETECTION] Active jobs with no queue row at all are
+  // invisible to the pipeline (a lost insert can never heal). Detect them and
+  // insert pending rows. Bounded to the oldest 1,000 active jobs per drain;
+  // the missing set shrinks monotonically as rows join the queue.
+  try {
+    const { data: oldestJobs } = await supabase
+      .from("jobs")
+      .select("id")
+      .eq("is_active", true)
+      .order("created_at", { ascending: true })
+      .limit(1000)
+    if (oldestJobs && oldestJobs.length > 0) {
+      const queuedRows: any[] = []
+      for (const ids of chunkArray(oldestJobs.map((j: any) => j.id), 100)) {
+        const { data } = await supabase.from("ai_processing_queue").select("job_id").in("job_id", ids)
+        if (data) queuedRows.push(...data)
+      }
+      const haveRow = new Set(queuedRows.map((r: any) => r.job_id))
+      const missing = (oldestJobs as any[]).filter((j) => !haveRow.has(j.id)).map((j) => j.id)
+      if (missing.length > 0) {
+        const { error: insErr } = await supabase.from("ai_processing_queue").upsert(
+          missing.map((jobId: string) => ({ job_id: jobId, status: "pending", priority: 5, error: "Requeued: repair (no queue row detected)" })),
+          { onConflict: "job_id", ignoreDuplicates: true },
+        )
+        console.log(JSON.stringify({ scope: "ai_engine", event: insErr ? "no_queue_row_error" : "no_queue_row_repaired", count: missing.length, error: insErr ? insErr.message?.slice(0, 150) : null }))
+      }
+    }
+  } catch (e) {
+    console.log(JSON.stringify({ scope: "ai_engine", event: "no_queue_row_error", error: (e instanceof Error ? e.message : String(e)).slice(0,150) }))
   }
 
   const nowIso = new Date().toISOString()
@@ -565,19 +727,42 @@ export async function processAIQueue(batchSize = 100) {
         console.log(JSON.stringify({ scope: "ai_engine", event: "evidence_collect_error", jobId: (job as any).id?.slice(0,8) || "", error: (e instanceof Error ? e.message : String(e)).slice(0,120) }))
       }
 
-      const aiResult = await enrichJobWithAI(job as any)
+      // [§17 CANONICAL COMPANY PLANE] Load the measured learning row for this
+      // company once per job; the canonical legitimacy owner uses it (and only
+      // it — never per-run fetch liveness) for measured verdicts.
+      let learning: CompanyLearningInput | null = null
+      try {
+        const { data: ci } = await supabase
+          .from("company_intelligence")
+          .select("total_jobs, verification_rate, hiring_velocity_30d")
+          .eq("company", job.company)
+          .maybeSingle()
+        if (ci) {
+          learning = {
+            totalRoles: Number((ci as any).total_jobs) || 0,
+            verificationRate: typeof (ci as any).verification_rate === "number" ? (ci as any).verification_rate : null,
+            roles30d: Number((ci as any).hiring_velocity_30d) || 0,
+          }
+        }
+      } catch {}
+
+      const aiResult = await enrichJobWithAI(job as any, { learning })
       const intelligence = aiResult.intelligence
       const diags = (aiResult as any).diags || []
 
       // ── Protection check: should we skip the upsert? ──────────────────
+      // [§17] Also loads the existing evidence fields + verdicts: the upsert
+      // must never overwrite a stored quote with blanks (preservation merge).
       let skipUpsert = false
+      let existingRow: any = null
       try {
-        const { data: existing } = await supabase.from("job_ai_intelligence").select("model_version, overall_confidence").eq("job_id", job.id).maybeSingle()
+        const { data: existing } = await supabase.from("job_ai_intelligence").select("model_version, overall_confidence, africa_eligibility, africa_evidence, remote_eligibility, remote_evidence, visa_sponsorship, visa_evidence, salary_transparency, salary_evidence, company_legitimacy, company_evidence, job_quality, job_quality_evidence").eq("job_id", job.id).maybeSingle()
+        existingRow = existing ?? null
         if (existing) {
           const jobId8 = (job as any).id?.slice(0,8) || ''
-          const existingIsMisleading = existing.model_version === "gemini-2.5-flash-v1" || existing.model_version === "rule-based-v1-fast" || existing.model_version === "template-removed-2026";
+          const existingIsMisleading = existing.model_version === "gemini-2.5-flash-v1" || existing.model_version === "rule-based-v1-fast" || existing.model_version === "template-removed-2026" || (existing.model_version?.startsWith("regex-extracted-") ?? false);
           const existingIsReal = !existingIsMisleading && existing.model_version && !existing.model_version.includes("failed-no-evidence") && (existing.model_version.includes("gemini") || existing.model_version.includes("groq") || existing.model_version.includes("cerebras") || existing.model_version.includes("openrouter") || existing.model_version.includes("cloudflare") || existing.model_version.includes("mistral") || existing.model_version.includes("nvidia") || existing.model_version.includes("github") || existing.model_version.includes("huggingface"))
-          const newIsFailed = intelligence.modelVersion.includes("failed-no-evidence") || intelligence.modelVersion.includes("no-ai-providers") || intelligence.modelVersion.includes("verifyJobReal-threw")
+          const newIsFailed = isFailedModelVersion(intelligence.modelVersion)
 
           if (existingIsReal && newIsFailed) {
             console.log(JSON.stringify({ scope: "ai_engine", event: "protected_existing", jobId: jobId8, oldModel: existing.model_version, newModel: intelligence.modelVersion, reason: "existing_is_real_new_is_failed" }));
@@ -592,60 +777,78 @@ export async function processAIQueue(batchSize = 100) {
         console.log(JSON.stringify({ scope: "ai_engine", event: "protect_check_error", jobId: (job as any).id?.slice(0,8) || '', error: e instanceof Error ? e.message.slice(0,100) : String(e).slice(0,100) }));
       }
 
-      // ── [FIX #1] If all providers failed and no existing record, retry instead of completing ──
-      // verifyJobReal-threw is a failed verification (the consolidated verifier
-      // threw) — it must be retried, never persisted as a completed row.
-      const allProvidersFailed = intelligence.modelVersion.includes("no-ai-providers") || intelligence.modelVersion.includes("failed-no-evidence") || intelligence.modelVersion.includes("verifyJobReal-threw")
-      if (allProvidersFailed && !skipUpsert) {
-        const { data: existingCheck } = await supabase.from("job_ai_intelligence").select("id").eq("job_id", job.id).maybeSingle()
-        if (!existingCheck) {
-          const attempts = item.attempts + 1
-          const exhausted = attempts >= item.max_attempts
-          const retryAt = new Date(Date.now() + backoffMs(attempts)).toISOString()
-          await supabase.from("ai_processing_queue").update({
-            status: exhausted ? "failed" : "pending",
-            error: exhausted
-              ? `Rejected: all AI providers failed after ${attempts} attempts (${intelligence.modelVersion})`
-              : `AI providers failed (${intelligence.modelVersion}). Retry #${attempts} scheduled.`,
-            completed_at: exhausted ? new Date().toISOString() : null,
-            next_retry_at: exhausted ? null : retryAt,
-          }).eq("id", item.id)
-          await traceEvent(supabase, item.job_id, exhausted ? "failed" : "retried", {
-            reason: exhausted ? "All AI providers failed after max attempts" : "All AI providers failed — retry scheduled",
-            detail: { modelVersion: intelligence.modelVersion, backoffMs: exhausted ? null : backoffMs(attempts) },
-            attempt: attempts,
-          })
-          failed++ // count as failed for this batch; will retry or stay failed
-          consecutiveItemFailures++
-          return
-        }
+      // ── [§17] Failed runs retry like failures — including regex-tier rows.
+      // A run whose model_version is regex-extracted / no-ai / threw produced
+      // NO real intelligence. It must NEVER be upserted and NEVER seal the
+      // queue row as completed — whether or not an older row already exists.
+      // The stored row (if any) is preserved untouched; the queue schedules a
+      // retry with backoff and only marks failed after attempts are exhausted.
+      if (isFailedModelVersion(intelligence.modelVersion) && !skipUpsert) {
+        const attempts = item.attempts + 1
+        const exhausted = attempts >= item.max_attempts
+        const retryAt = new Date(Date.now() + backoffMs(attempts)).toISOString()
+        await supabase.from("ai_processing_queue").update({
+          status: exhausted ? "failed" : "pending",
+          error: exhausted
+            ? `Rejected: all AI providers failed after ${attempts} attempts (${intelligence.modelVersion})`
+            : `AI providers failed (${intelligence.modelVersion}). Retry #${attempts} scheduled.`,
+          completed_at: exhausted ? new Date().toISOString() : null,
+          next_retry_at: exhausted ? null : retryAt,
+        }).eq("id", item.id)
+        await traceEvent(supabase, item.job_id, exhausted ? "failed" : "retried", {
+          reason: exhausted ? "All AI providers failed after max attempts" : "All AI providers failed — retry scheduled",
+          detail: { modelVersion: intelligence.modelVersion, backoffMs: exhausted ? null : backoffMs(attempts) },
+          attempt: attempts,
+        })
+        failed++ // count as failed for this batch; will retry or stay failed
+        consecutiveItemFailures++
+        return
       }
+
+      // [§17 PRESERVATION + V2 PLANE SYNC] Verdicts and preserved evidence
+      // are computed ONCE, before the protection branch: they are needed by
+      // the main upsert AND by the canonical-plane sync. The merge rule is
+      // unchanged — never overwrite stored evidence with blanks; a stored
+      // quote survives only while its dimension's verdict is unchanged (a
+      // new verdict must not inherit the old verdict's evidence).
+      const salaryMinRaw = asInt(intelligence.salary.value.min)
+      let salaryMin = salaryMinRaw
+      let salaryMax = asInt(intelligence.salary.value.max)
+      if (salaryMin !== null && salaryMax !== null && salaryMax < salaryMin) {
+        const tmp = salaryMin; salaryMin = salaryMax; salaryMax = tmp
+      }
+      const vAfrica = asEnum(intelligence.africa.value, AFRICA_ENUM)
+      const vRemote = asEnum(intelligence.remote.value, REMOTE_ENUM)
+      const vVisa = asEnum(intelligence.visa.value, VISA_ENUM)
+      const vSalaryTrans = asEnum(intelligence.salary.value.transparency, TRANSPARENCY_ENUM)
+      const vCompany = asEnum(intelligence.company.value, LEGITIMACY_ENUM)
+      const vQuality = asEnum(intelligence.quality.value, QUALITY_ENUM)
+      const africaEvidence = preserveQuote(cleanEvidenceText(intelligence.africa.evidence[0]?.text), existingRow?.africa_evidence, !!existingRow && existingRow.africa_eligibility === vAfrica)
+      const remoteEvidence = preserveQuote(cleanEvidenceText(intelligence.remote.evidence?.[0]?.text), existingRow?.remote_evidence, !!existingRow && existingRow.remote_eligibility === vRemote)
+      const visaEvidence = preserveQuote(cleanEvidenceText(intelligence.visa.evidence?.[0]?.text), existingRow?.visa_evidence, !!existingRow && existingRow.visa_sponsorship === vVisa)
+      const salaryEvidence = preserveQuote(cleanEvidenceText(intelligence.salary.evidence?.[0]?.text), existingRow?.salary_evidence, !!existingRow && existingRow.salary_transparency === vSalaryTrans)
+      const companyEvidence = preserveQuote(cleanEvidenceText(intelligence.company.evidence?.[0]?.text), existingRow?.company_evidence, !!existingRow && existingRow.company_legitimacy === vCompany)
+      const qualityEvidence = preserveQuote(cleanEvidenceText(intelligence.quality.evidence?.[0]?.text), existingRow?.job_quality_evidence, !!existingRow && existingRow.job_quality === vQuality)
 
       // ── Main upsert (skipped if protection fired) ─────────────────────
       if (!skipUpsert) {
-        const salaryMinRaw = asInt(intelligence.salary.value.min)
-        let salaryMin = salaryMinRaw
-        let salaryMax = asInt(intelligence.salary.value.max)
-        if (salaryMin !== null && salaryMax !== null && salaryMax < salaryMin) {
-          const tmp = salaryMin; salaryMin = salaryMax; salaryMax = tmp
-        }
         const { error: upsertErr } = await supabase.from("job_ai_intelligence").upsert({
           job_id: job.id,
           version: intelligence.version,
           model_version: intelligence.modelVersion,
-          africa_eligibility: asEnum(intelligence.africa.value, AFRICA_ENUM),
+          africa_eligibility: vAfrica,
           africa_confidence: clamp100(intelligence.africa.confidence),
-          africa_evidence: intelligence.africa.evidence[0]?.text || null,
+          africa_evidence: africaEvidence,
           africa_source_urls: asStringArray(intelligence.africa.sourceUrls),
           country_restrictions: asStringArray(intelligence.africa.countryRestrictions),
-          visa_sponsorship: asEnum(intelligence.visa.value, VISA_ENUM),
+          visa_sponsorship: vVisa,
           visa_confidence: clamp100(intelligence.visa.confidence),
-          visa_evidence: intelligence.visa.evidence?.[0]?.text ?? null,
+          visa_evidence: visaEvidence,
           timezone_requirements: intelligence.remote.timezoneRequirements || null,
           timezone_confidence: clamp100(intelligence.remote.confidence),
-          remote_eligibility: asEnum(intelligence.remote.value, REMOTE_ENUM),
+          remote_eligibility: vRemote,
           remote_confidence: clamp100(intelligence.remote.confidence),
-          remote_evidence: intelligence.remote.evidence?.[0]?.text ?? null,
+          remote_evidence: remoteEvidence,
           required_skills: asStringArray(intelligence.skills.required.value),
           transferable_skills: asStringArray(intelligence.skills.transferable.value),
           missing_skills: asStringArray(intelligence.skills.missing.value),
@@ -656,15 +859,15 @@ export async function processAIQueue(batchSize = 100) {
           salary_currency: asStringOrNull(intelligence.salary.value.currency),
           salary_period: asStringOrNull(intelligence.salary.value.period),
           salary_is_estimated: intelligence.salary.value.isEstimated === true,
-          salary_transparency: asEnum(intelligence.salary.value.transparency, TRANSPARENCY_ENUM),
-          salary_evidence: intelligence.salary.evidence?.[0]?.text ?? null,
+          salary_transparency: vSalaryTrans,
+          salary_evidence: salaryEvidence,
           salary_confidence: clamp100(intelligence.salary.confidence),
-          company_legitimacy: asEnum(intelligence.company.value, LEGITIMACY_ENUM),
+          company_legitimacy: vCompany,
           company_confidence: clamp100(intelligence.company.confidence),
-          company_evidence: intelligence.company.evidence?.[0]?.text ?? null,
-          job_quality: asEnum(intelligence.quality.value, QUALITY_ENUM),
+          company_evidence: companyEvidence,
+          job_quality: vQuality,
           job_quality_confidence: clamp100(intelligence.quality.confidence),
-          job_quality_evidence: intelligence.quality.evidence?.[0]?.text ?? null,
+          job_quality_evidence: qualityEvidence,
           application_difficulty: asEnum(intelligence.applicationDifficulty.value, DIFFICULTY_ENUM),
           hiring_urgency: asEnum(intelligence.hiringUrgency.value, URGENCY_ENUM),
           overall_confidence: clamp100(intelligence.overallConfidence),
@@ -711,9 +914,75 @@ export async function processAIQueue(batchSize = 100) {
           failed++
           return
         }
+      } else if (existingRow) {
+        // ── [V2 CANONICAL-PLANE SYNC] Confidence-protection guards MODEL
+        // output planes from regression. Africa (corpus adjudicator) and
+        // company (canonical owner) are NOT model output — they cannot
+        // degrade with a weak run, and freezing them behind confidence
+        // arithmetic would leave deterministic-plane contradictions
+        // unhealable forever (a protected row would requeue → skip →
+        // requeue endlessly). Their values arrive via the preservation
+        // merge above and land even when the wholesale upsert is skipped.
+        try {
+          await supabase.from("job_ai_intelligence").update({
+            africa_eligibility: vAfrica,
+            africa_confidence: clamp100(intelligence.africa.confidence),
+            africa_evidence: africaEvidence,
+            country_restrictions: asStringArray(intelligence.africa.countryRestrictions),
+            company_legitimacy: vCompany,
+            company_confidence: clamp100(intelligence.company.confidence),
+            company_evidence: companyEvidence,
+            last_verified_at: new Date().toISOString(),
+          }).eq("job_id", job.id)
+        } catch (e) {
+          console.log(JSON.stringify({ scope: "ai_engine", event: "plane_sync_error", jobId: (job as any).id?.slice(0,8) || "", error: (e instanceof Error ? e.message : String(e)).slice(0,150) }))
+        }
       }
 
       // ── Post-upsert: always run these for every processed item ────────
+
+      // [TRUTH LAYER v1] Salary fact-authority: a verified-disclosed AI
+      // salary owns the jobs-table salary fields. The old DB-side sync only
+      // wrote when jobs.salary_min IS NULL — wrong ingest values were
+      // protected forever (live-proven: micro1 badge USD70k–110k beside the
+      // AI-verified USD50k–70k on the same page). Verified AI now overwrites;
+      // undisclosed AI never nulls existing values. 0–0 is not a salary.
+      if (!skipUpsert) {
+        try {
+          const jobIdShort = (job as any).id?.slice(0, 8) || ""
+          const transp = asEnum(intelligence.salary.value.transparency, TRANSPARENCY_ENUM)
+          let sMin = asInt(intelligence.salary.value.min)
+          let sMax = asInt(intelligence.salary.value.max)
+          if (sMin !== null && sMax !== null && sMax < sMin) { const t0 = sMin; sMin = sMax; sMax = t0 }
+          if (transp === "disclosed" && sMax !== null && sMax > 0) {
+            const currency = asStringOrNull(intelligence.salary.value.currency) ?? "USD"
+            const period = (asStringOrNull(intelligence.salary.value.period) ?? "year") as any
+            const range = formatSalary({ min: sMin, max: sMax, currency, period, raw: "" })
+            const { error: salErr } = await supabase.from("jobs").update({
+              salary_min: sMin,
+              salary_max: sMax,
+              salary_currency: currency,
+              salary_period: period,
+              ...(range ? { salary_range: range } : {}),
+            }).eq("id", (job as any).id)
+            if (salErr) {
+              console.log(JSON.stringify({ scope: "ai_engine", event: "salary_authority_failed", jobId: jobIdShort, error: salErr.message?.slice(0, 160) }))
+            } else {
+              console.log(JSON.stringify({ scope: "ai_engine", event: "salary_authority_applied", jobId: jobIdShort, min: sMin, max: sMax, currency, period }))
+            }
+          } else if (sMax !== null && sMax <= 0) {
+            // 0–0 must never count as disclosed anywhere in the system.
+            const { error: salErr } = await supabase.from("jobs").update({ salary_min: null, salary_max: null, salary_range: null }).eq("id", (job as any).id).eq("salary_max", 0)
+            if (salErr) {
+              console.log(JSON.stringify({ scope: "ai_engine", event: "salary_zero_clear_failed", jobId: jobIdShort, error: salErr.message?.slice(0, 160) }))
+            } else {
+              console.log(JSON.stringify({ scope: "ai_engine", event: "salary_zero_cleared", jobId: jobIdShort }))
+            }
+          }
+        } catch (e) {
+          console.log(JSON.stringify({ scope: "ai_engine", event: "salary_authority_error", jobId: (job as any).id?.slice(0, 8) || "", error: (e instanceof Error ? e.message : String(e)).slice(0, 120) }))
+        }
+      }
 
       // [FIX #7] Persist provider diagnostics (awaited, not fire-and-forget)
       await persistProviderDiags(supabase, job.id, diags)
@@ -731,7 +1000,7 @@ export async function processAIQueue(batchSize = 100) {
         durationMs: (diags as any[]).find((d: any) => d.event === "success")?.durationMs ?? null,
         attempt: item.attempts + 1,
       })
-      await supabase.from("ai_processing_queue").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", item.id)
+      await supabase.from("ai_processing_queue").update({ status: "completed", completed_at: new Date().toISOString(), error: null }).eq("id", item.id)
       processed++
       consecutiveItemFailures = 0
     } catch (e) {

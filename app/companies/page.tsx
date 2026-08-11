@@ -87,10 +87,13 @@ export default async function CompaniesIndexPage() {
                       {c.name}
                     </p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                      {c.jobCount} open {c.jobCount === 1 ? 'role' : 'roles'}
-                      {c.africaFriendlyCount > 0
-                        ? ` · ${c.africaFriendlyCount} open to Africa`
-                        : ''}
+                      {/* [TRUTH LAYER v1] Companies are aggregated over the
+                          Africa-open slice (lib/companies.ts region-locks the
+                          query), so jobCount === africaFriendlyCount by
+                          construction. The old copy printed both side by side
+                          ("237 open roles · 237 open to Africa"), fabricating
+                          a 100%-open statistic for every company. */}
+                      {c.africaFriendlyCount} {c.africaFriendlyCount === 1 ? 'role' : 'roles'} open to Africa
                     </p>
                   </div>
                 </Link>

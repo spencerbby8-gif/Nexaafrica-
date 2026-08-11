@@ -1,5 +1,5 @@
 import { createServiceClient } from '@/lib/supabase/service'
-import { buildJobSlug } from '@/lib/slug'
+import { buildJobSlug, chooseJobSlug, postingSlugKey } from '@/lib/slug'
 import { INGEST_SOURCES, type IngestSource } from '@/lib/ingest/companies'
 import { REMOTE_BOARD_SOURCES, type RemoteBoardSource } from '@/lib/ingest/remoteBoards'
 import { fetchAshby } from '@/lib/ingest/sources/ashby'
@@ -237,7 +237,25 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
         console.log(`[v0][ingest-audit] ${warning}`)
       }
       const intel = enrichIntelligence(job)
-      const slug = buildJobSlug(job.title, job.company, job.country)
+      const baseSlug = buildJobSlug(job.title, job.company, job.country)
+      // [§18 SLUG IDENTITY] Distinct postings sharing a display slug must not
+      // share one URL — surfaces would render whichever duplicate wins the
+      // lookup and "the same job" would alternate verdicts across rows.
+      let slug = baseSlug
+      try {
+        const { data: contenders } = await supabase
+          .from('jobs')
+          .select('slug, source_id, created_at')
+          .eq('is_active', true)
+          .or(`slug.eq.${baseSlug},slug.like.${baseSlug}-dup-%`)
+          .limit(50)
+        slug = chooseJobSlug({
+          base: baseSlug,
+          sourceId: job.source_id,
+          contenders: (contenders || []) as Array<{ slug: string; source_id: string | null; created_at: string }>,
+          key: postingSlugKey(String(job.source ?? ''), String(job.source_id ?? '')),
+        })
+      } catch {}
 
       const existing = existingMap.get(job.source_id) || null
       const nowIso = new Date().toISOString()
@@ -340,6 +358,16 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
             .update({ status: 'pending', error: null })
             .eq('job_id', data[0].id)
             .eq('status', 'failed')
+        } catch {}
+        // [§17 INGEST-PLANE EVIDENCE] The stored ATS/feed description is
+        // preference-1 evidence — write it at ingest so no accepted job ever
+        // has an empty evidence plane.
+        try {
+          const { recordIngestEvidence } = await import('@/lib/ai/evidence')
+          await recordIngestEvidence(supabase, data[0].id, {
+            apply_url: String(row.apply_url ?? ''),
+            description_md: typeof row.description_md === 'string' ? row.description_md : null,
+          })
         } catch {}
       }
       else result.skipped += 1
@@ -569,7 +597,25 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
       }
 
       const intel = enrichIntelligence(job)
-      const slug = buildJobSlug(job.title, job.company, job.country)
+      const baseSlug = buildJobSlug(job.title, job.company, job.country)
+      // [§18 SLUG IDENTITY] Distinct postings sharing a display slug must not
+      // share one URL — surfaces would render whichever duplicate wins the
+      // lookup and "the same job" would alternate verdicts across rows.
+      let slug = baseSlug
+      try {
+        const { data: contenders } = await supabase
+          .from('jobs')
+          .select('slug, source_id, created_at')
+          .eq('is_active', true)
+          .or(`slug.eq.${baseSlug},slug.like.${baseSlug}-dup-%`)
+          .limit(50)
+        slug = chooseJobSlug({
+          base: baseSlug,
+          sourceId: job.source_id,
+          contenders: (contenders || []) as Array<{ slug: string; source_id: string | null; created_at: string }>,
+          key: postingSlugKey(String(job.source ?? ''), String(job.source_id ?? '')),
+        })
+      } catch {}
       const existing = existingMap.get(job.source_id) || null
       const nowIso = new Date().toISOString()
 
@@ -676,6 +722,16 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
             .update({ status: 'pending', error: null })
             .eq('job_id', data[0].id)
             .eq('status', 'failed')
+        } catch {}
+        // [§17 INGEST-PLANE EVIDENCE] The stored ATS/feed description is
+        // preference-1 evidence — write it at ingest so no accepted job ever
+        // has an empty evidence plane.
+        try {
+          const { recordIngestEvidence } = await import('@/lib/ai/evidence')
+          await recordIngestEvidence(supabase, data[0].id, {
+            apply_url: String(row.apply_url ?? ''),
+            description_md: typeof row.description_md === 'string' ? row.description_md : null,
+          })
         } catch {}
       }
       else result.skipped += 1

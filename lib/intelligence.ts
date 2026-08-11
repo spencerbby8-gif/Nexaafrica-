@@ -1,4 +1,5 @@
 import type { EmploymentType } from '@/lib/types'
+import { eligibilityScanText } from '@/lib/geo/eligibility'
 
 /**
  * Nexa Intelligence Extraction Engine (Phase 16)
@@ -76,7 +77,12 @@ function excerptAround(text: string, index: number, matchLen: number): string {
     .replace(/[#*`_>[\]]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
-  if (s.length > 160) s = `${s.slice(0, 157)}...`
+  if (s.length > 160) {
+    // Word-aligned truncation — evidence strings are user-facing quotes.
+    const cut = s.slice(0, 160)
+    const sp = cut.lastIndexOf(' ')
+    s = `${sp > 100 ? cut.slice(0, sp) : cut}…`
+  }
   return s
 }
 
@@ -415,9 +421,14 @@ export function extractIntelligence(
     if (wa.re.test(haystack)) push('work_authorization', wa.value, 'high', wa.re)
   }
 
-  // Scope
-  if (WORLDWIDE_RE.test(haystack)) push('scope_worldwide', null, 'medium', WORLDWIDE_RE)
-  else if (EMEA_RE.test(haystack)) push('scope_emea', null, 'medium', EMEA_RE)
+  // Scope — [TRUTH LAYER v1] judged against the dead-zone-stripped
+  // eligibility scan view: company marketing ("partners with businesses
+  // worldwide") and market-coverage lines can no longer mint a scope signal
+  // (proven live: this exact chain fabricated 'likely' verdicts at ingest).
+  // Quotes are still taken from the original haystack.
+  const scopeScan = eligibilityScanText(haystack)
+  if (WORLDWIDE_RE.test(scopeScan)) push('scope_worldwide', null, 'medium', WORLDWIDE_RE)
+  else if (EMEA_RE.test(scopeScan)) push('scope_emea', null, 'medium', EMEA_RE)
 
   // EOR providers — one named provider max, else generic infra.
   let eorFound = false

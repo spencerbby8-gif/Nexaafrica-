@@ -1,0 +1,1017 @@
+/**
+ * Truth Layer v1 — regression harness.
+ *
+ * Every fixture is a defect or a positive control taken VERBATIM from the
+ * live production audit of 2026-08-05 (PRODUCTION_TRUTH_REPORT_2026-08-05,
+ * PRODUCTION_AUDIT_LEDGER_2026-08-05). If this harness passes, the exact
+ * failure classes that were live in production cannot silently return.
+ *
+ * Run:  npx tsx scripts/truth-layer-v1-check.ts
+ */
+
+import {
+  AFRICA_RE,
+  classifyGeoEligibility,
+  eligibilityScanText,
+  extractQuote,
+  unescapeMarkdown,
+} from "../lib/geo/eligibility"
+import { classifyEligibility } from "../lib/ingest/normalize"
+import { asSkillList, cleanEvidenceText } from "../lib/ai/normalize"
+import { formatSalary } from "../lib/intelligence"
+import { salaryDisplay } from "../lib/format"
+import { isFailedModelVersion, queueRepairDecision, preserveQuote } from "../lib/ai/queue-repair"
+import { companyLegitimacyOwner, isCuratedEmployer } from "../lib/company/legitimacy"
+import { employerLegitimacySignal } from "../lib/trust/signals/employerLegitimacy"
+import { ingestEvidenceRow } from "../lib/ai/evidence"
+import { adjudicateAfricaEligibility } from "../lib/geo/eligibility"
+import { chooseJobSlug, postingSlugKey } from "../lib/slug"
+
+let passed = 0
+let failed = 0
+const failures: string[] = []
+
+// Tally prints on process exit — suite blocks may be appended anywhere in
+// this file without ever stranding the summary above them again.
+process.on("exit", () => {
+  console.log(`\n${"═".repeat(60)}`)
+  console.log(`Truth Layer v1 fixtures: ${passed} passed, ${failed} failed`)
+  if (failed > 0) {
+    console.log("FAILURES:", failures.join(" | "))
+    process.exitCode = 1
+  }
+})
+
+function check(name: string, cond: boolean, detail?: unknown) {
+  if (cond) {
+    passed++
+    console.log(`  ✓ ${name}`)
+  } else {
+    failed++
+    failures.push(name)
+    console.log(`  ✗ ${name}${detail !== undefined ? ` — got: ${JSON.stringify(detail)}` : ""}`)
+  }
+}
+
+/* -------------------------------------------------------------------- */
+/* 1 · Word-boundary Africa matching (the live mali fabrication)         */
+/* -------------------------------------------------------------------- */
+console.log("\n1 · Word-boundary Africa matching")
+
+// Live evidence: OpenAI Finance & Operations Audit Leader (SF, hybrid 3d/wk
+// office) was rendered "Explicitly open to Africa • 75%" with the quote
+// "…identifying anomalies, control weaknesses…" — `mali` ⊂ `anomalies`.
+const OPENAI_AUDIT_TEXT = `About the Role
+As the Finance & Operations Audit Leader, you will lead complex audits across financial reporting, accounting, finance, and business operations.
+You will have opportunities to apply forensic accounting techniques to complex transactions, anomalies, and potential misconduct.
+Use data analytics, automation, and AI to improve risk assessment, audit scoping, testing, continuous monitoring, and reporting, including identifying anomalies, control weaknesses, and emerging risks.
+This role is based in San Francisco, CA. We use a hybrid work model of 3 days in the office per week and offer relocation assistance to new employees.`
+
+check("AFRICA_RE does not match 'anomalies' (mali substring)", !AFRICA_RE.test(OPENAI_AUDIT_TEXT))
+check("AFRICA_RE does not match 'normalize'", !AFRICA_RE.test("We normalize operational risk signals across the audit function."))
+check("AFRICA_RE still matches a real mention", AFRICA_RE.test("This role is open to candidates in Nigeria and Kenya."))
+
+const v1 = classifyGeoEligibility({ text: OPENAI_AUDIT_TEXT, locationField: "San Francisco" })
+check("Audit-leader verdict is NOT explicit", v1.tier !== "explicit", v1.tier)
+check("Audit-leader verdict is NOT likely", v1.tier !== "likely", v1.tier)
+
+/* -------------------------------------------------------------------- */
+/* 2 · Marketing / business-coverage dead zones                          */
+/* -------------------------------------------------------------------- */
+console.log("\n2 · Marketing dead zones")
+
+// Live evidence: Decision Inc roles earned africa_eligibility "likely" (55%)
+// from company marketing; MindPlus's DB row contained the scope_worldwide
+// signal quoted from "partners with businesses worldwide".
+const DECISION_INC_TEXT = `We are seeking a detail-oriented and experienced Microsoft Dynamics Supply Chain Support Consultant to join our ERP support team.
+Decision Inc. is a global digital partner that enables businesses to reinvent themselves to realise their full potential and enables businesses worldwide.`
+const v2 = classifyGeoEligibility({ text: DECISION_INC_TEXT, locationField: "United States" })
+check("Decision Inc marketing → restricted (US location, coverage excluded)", v2.tier === "restricted", v1Reason(v2))
+
+const MINDPLUS_TEXT = `Job Overview
+Our Client is seeking an experienced Senior Project Manager to lead and deliver successful ERP implementation projects. The organization partners with businesses worldwide to deliver innovative, data-driven solutions that enhance operational efficiency and business growth.
+Mandatory Requirements
+Willingness to work on international projects across North America, Australia, Asia, and Europe.
+Flexibility to align working hours according to different time zones when required.`
+const v2b = classifyGeoEligibility({ text: MINDPLUS_TEXT, locationField: "Sri Lanka" })
+check("MindPlus marketing/project-coverage → NOT likely", v2b.tier !== "likely", v1Reason(v2b))
+
+const scan2 = eligibilityScanText(MINDPLUS_TEXT)
+check("scan text drops the marketing line", !/partners with businesses worldwide/i.test(scan2))
+check("scan text drops the project-coverage line", !/international projects across North America/i.test(scan2))
+
+/* -------------------------------------------------------------------- */
+/* 3 · Region-coverage holes (Romania/EU set + US-state remote)          */
+/* -------------------------------------------------------------------- */
+console.log("\n3 · Restriction coverage")
+
+// Live evidence: Oben Technology "Remote (Anywhere Romania)", EET, Romanian
+// language — classified worldwide and listed on the Nigeria hub.
+const OBEN_TEXT = `Job details Job Location: Remote (Anywhere Romania) Effort Schedule:8 Hours/Day Business Hours: EET Timeframe Language: English, Romanian Customers Background: (EU, WorldWide) Client Facing Role: Yes`
+const v3 = classifyGeoEligibility({ text: OBEN_TEXT, locationField: "Romania" })
+check("Oben Romania role → restricted", v3.tier === "restricted", v1Reason(v3))
+
+// Live evidence: Pinterest role at "Los Angeles, CA, US; Remote, CA, US"
+// was "Likely open to Africa • 90%".
+const v4 = classifyGeoEligibility({ text: "About Pinterest: Millions of people around the world come to our platform.", locationField: "Los Angeles, CA, US; Remote, CA, US" })
+check("Pinterest US-state remote → restricted", v4.tier === "restricted", v1Reason(v4))
+check("Pinterest verdict carries the us-state-remote reason", v4.reason === "us-state-remote" || v4.reason === "location-lock", v4.reason)
+
+// Live evidence: MongoDB Gurugram hybrid EMEA HR role → "Likely open to
+// Africa • 80%" (coverage-context EMEA misread).
+const GURUGRAM_TEXT = `The EMEA HR Shared Services team comprises five members, including the team lead, and supports operations across 19 countries in the EMEA region. The team manages end-to-end employee lifecycle processes. Comfortable with working in a shift of 2PM-10PM.`
+const v5 = classifyGeoEligibility({ text: GURUGRAM_TEXT, locationField: "Gurugram" })
+check("Gurugram EMEA-coverage role → NOT likely", v5.tier !== "likely", v1Reason(v5))
+
+/* -------------------------------------------------------------------- */
+/* 4 · Positive controls — genuine eligibility must survive               */
+/* -------------------------------------------------------------------- */
+console.log("\n4 · Positive controls")
+
+// Live evidence: Hostaway Staff PM — FULLY remote, "candidate must be
+// within EMEA", recruit countries include Ghana/Nigeria/South Africa.
+const HOSTAWAY_TEXT = `NOTE: This is a FULLY remote role, but the candidate must be within EMEA to collaborate with their team, peers, and internal customers. You do not have to be in the specific country or city shown in this listing, but please only apply if you are within EMEA.`
+const v6 = classifyGeoEligibility({ text: HOSTAWAY_TEXT, locationField: "Australia, Canada, Ghana, India, Ireland, New Zealand, Nigeria, South Africa, United Kingdom, United States" })
+check("Hostaway (Africa countries named in location) → explicit", v6.tier === "explicit", v1Reason(v6))
+
+const v7 = classifyGeoEligibility({ text: HOSTAWAY_TEXT, locationField: "Remote - EMEA" })
+check("Hostaway without country list → likely (hiring-context EMEA)", v7.tier === "likely", v1Reason(v7))
+
+const v8 = classifyGeoEligibility({ text: "Work from anywhere in the world. We hire globally across all time zones.", locationField: null })
+check("Genuine 'work from anywhere' → likely", v8.tier === "likely", v1Reason(v8))
+
+/* -------------------------------------------------------------------- */
+/* 5 · Deterministic ingest tier shares the SAME corpus                  */
+/* -------------------------------------------------------------------- */
+console.log("\n5 · Ingest tier parity")
+
+check("classifyEligibility(audit JD) agrees with corpus", classifyEligibility("San Francisco", "Finance & Operations Audit Leader", OPENAI_AUDIT_TEXT) === v1.tier, classifyEligibility("San Francisco", "Finance & Operations Audit Leader", OPENAI_AUDIT_TEXT))
+check("classifyEligibility(Oben) → restricted", classifyEligibility("Romania", "GCP Senior Consultant", OBEN_TEXT) === "restricted")
+
+/* -------------------------------------------------------------------- */
+/* 6 · Persistence contract — skills, evidence, salary display            */
+/* -------------------------------------------------------------------- */
+console.log("\n6 · Persistence contract")
+
+// Live evidence: skills rendered as raw JSON objects with markdown escapes.
+const dirtySkills = [
+  { skill: "large-cohort onboarding at scale", evidence: "Run large-cohort onboarding at scale." },
+  "\\*\\*5+ years building internet-scale software\\*\\*",
+  "Finance",
+  "finance",
+  { skill: "Finance" },
+  "distributed talent pool management",
+] as unknown
+check("asSkillList extracts object skills", asSkillList(dirtySkills).includes("large-cohort onboarding at scale"), asSkillList(dirtySkills))
+check("asSkillList unescapes markdown", asSkillList(dirtySkills).includes("**5+ years building internet-scale software**"), asSkillList(dirtySkills))
+check("asSkillList dedupes case-insensitively", asSkillList(dirtySkills).filter((s) => s.toLowerCase() === "finance").length === 1, asSkillList(dirtySkills))
+check("asSkillList never returns objects", asSkillList(dirtySkills).every((s) => typeof s === "string"))
+
+check("cleanEvidenceText unescapes quotes", cleanEvidenceText("ek evidence: \\*\\*'Location: Remote'\\*\\* in header") === "ek evidence: **'Location: Remote'** in header")
+
+const q = extractQuote(OPENAI_AUDIT_TEXT, /\bmali\b/i)
+check("extractQuote returns null when nothing matches (no fabrication)", q === null)
+const q2 = extractQuote(OPENAI_AUDIT_TEXT, /anomalies/)
+check("extractQuote is word-aligned (no '…mali'-style fragments)", q2 !== null && !/\bali\b/.test(q2 || "") && (q2!.includes("anomalies") || q2!.includes("…")), q2)
+
+// Live evidence: $13–36/hr displayed as "USD0.013k - USD0.036k"; "USD 0 – 0"
+// displayed as disclosed.
+check("formatSalary hourly renders honestly", formatSalary({ min: 13, max: 36, currency: "USD", period: "hour", raw: "" }) === "$13 - $36/hour", formatSalary({ min: 13, max: 36, currency: "USD", period: "hour", raw: "" }))
+check("formatSalary annual still k-formats", formatSalary({ min: 50000, max: 70000, currency: "USD", period: "year", raw: "" }) === "$50k - $70k", formatSalary({ min: 50000, max: 70000, currency: "USD", period: "year", raw: "" }))
+check("salaryDisplay rejects k-collapsed junk", salaryDisplay("USD0.013k - USD0.036k").isExplicit === false)
+check("salaryDisplay rejects 0–0 as disclosed", salaryDisplay("USD 0 – 0").isExplicit === false)
+check("salaryDisplay keeps real values", salaryDisplay("$123,684—$254,644").isExplicit === true)
+
+/* -------------------------------------------------------------------- */
+
+function v1Reason(v: { tier: string; reason: string }) {
+  return `${v.tier}/${v.reason}`
+}
+
+
+/* -------------------------------------------------------------------- */
+/* 7 · Trust differentiation (truth plane must not be static)            */
+/* Live evidence 2026-08-05: ~30/30 JAI-unknown cards at flat 59; queued  */
+/* MongoDB hub all "Low 32"; first-seen recruiter raw trust_score 100.    */
+
+import {
+  unifiedTrustScore,
+  softCapTrust,
+  rescoreTrustSignals,
+} from "../lib/trust/engine"
+
+console.log("7 · Trust differentiation")
+
+function mkJob(over: Record<string, any>): any {
+  return {
+    id: "j1",
+    slug: "x",
+    title: "Senior Operations Manager",
+    company: "Acme Corp",
+    company_logo: "https://cdn.example.com/logo.png",
+    description_md: "A real role. Run operations well.",
+    apply_url: "https://himalayas.app/companies/acme/jobs/x",
+    category: "operations",
+    location: "Remote",
+    country: "Worldwide",
+    salary_range: "USD50k - USD70k",
+    salary_min: 50000,
+    salary_max: 70000,
+    salary_currency: "USD",
+    salary_period: "year",
+    employment_type: "full_time",
+    tags: ["ops"],
+    is_remote: true,
+    is_open_to_africa: true,
+    eligibility: "likely",
+    posted_at: "2026-08-01T10:00:00.000Z",
+    created_at: "2026-08-05T10:00:00.000Z",
+    expires_at: null,
+    source: "himalayas",
+    source_id: "himalayas:abc",
+    ...over,
+  }
+}
+
+// 7a · soft cap math: monotone, bounded, order-preserving
+{
+  const s70 = softCapTrust(70)
+  const s90 = softCapTrust(90)
+  const s100 = softCapTrust(100)
+  check("softCap keeps ceiling ≤ 59", s100 <= 59)
+  check("softCap preserves ordering (70 < 90 < 100)", s70 < s90 && s90 < s100)
+  check("softCap spreads identical-plateau raws (73 vs 80)", softCapTrust(73) !== softCapTrust(80))
+  check("softCap leaves below-cap untouched", softCapTrust(45) === 45)
+}
+
+// 7b · Africa-unknown: different evidence depths MUST surface differently
+// (prod: evidence 19% and 95% both displayed 59)
+{
+  const job = mkJob({ trust_score: 70 })
+  const thin = unifiedTrustScore(job, { overall_confidence: 19, africa_eligibility: "unknown" } as any)
+  const deep = unifiedTrustScore(job, { overall_confidence: 95, africa_eligibility: "unknown" } as any)
+  check("unknown-Africa stays capped (deep ≤ 59)", deep <= 59)
+  check("unknown-Africa variance restored (thin ≠ deep)", thin !== deep, { thin, deep })
+  check("deeper evidence reads higher", deep > thin, { thin, deep })
+}
+
+// 7c · [ARCHITECTURE] The render cap gates on the CANONICAL STORED verdict —
+// never on a render-time re-read of the posting (A3 revert). Stored explicit
+// is uncapped; stored unknown is soft-capped.
+{
+  const job = mkJob({ trust_score: 80 })
+  const unknown63 = unifiedTrustScore(job, { overall_confidence: 63, africa_eligibility: "unknown" } as any)
+  const explicit63 = unifiedTrustScore(job, { overall_confidence: 63, africa_eligibility: "explicit" } as any)
+  check("stored explicit is uncapped at render (canonical verdict governs)", explicit63 > 59, explicit63)
+  check("stored unknown is soft-capped", unknown63 <= 59, unknown63)
+  check("explicit outranks unknown at equal evidence", explicit63 > unknown63, { explicit63, unknown63 })
+}
+
+// 7c-bis · [ARCHITECTURE] mali-class rows DISPLAY their stored verdict —
+// the honest stale state — until re-verification/backfill heals the row at
+// the write path. The corpus re-read that used to mask them at render now
+// lives only in the verifier domain (suite 12).
+{
+  const maliRow = mkJob({ trust_score: 80, description_md: "Use data analytics, and AI to improve risk assessment, scoping, testing, continuous monitoring, and reporting, including identifying anomalies, control weaknesses, and emerging risks." })
+  const stored = unifiedTrustScore(maliRow, { overall_confidence: 75, africa_eligibility: "explicit" } as any)
+  check("render does not mask a stale stored verdict (mali row blends unmasked)", stored === 77, stored)
+}
+
+// 7d · blocked evidence_state caps even strong evidence
+{
+  const job = mkJob({ trust_score: 70, evidence_state: "blocked", description_md: "Open to applicants across Africa. Run operations well." })
+  const s = unifiedTrustScore(job, { overall_confidence: 95, africa_eligibility: "explicit" } as any)
+  check("blocked explicit role capped ≤ 59", s <= 59, s)
+}
+
+// 7e · fabricated posted_at (== created_at) yields honest zero-impact signal
+// (asserted through the WRITE-PLANE rescore math — render consumes persisted)
+{
+  const fabricated = mkJob({ posted_at: "2026-08-05T04:21:24.938Z", created_at: "2026-08-05T04:21:24.938Z", trust_signals: [
+    { id: "posting_freshness", label: "Fresh • 0 days ago", scoreImpact: 12, confidence: "high", tone: "positive", explanation: "x", source: "freshness" },
+  ] })
+  const { signals, score } = rescoreTrustSignals(fabricated)
+  const freshSig = signals.find((s: any) => s.id === "posting_freshness") as any
+  check("fabricated freshness gets 0 impact", freshSig?.scoreImpact === 0, freshSig && { label: freshSig.label, scoreImpact: freshSig.scoreImpact })
+  check("fabricated freshness is labeled honestly (no date from source)", /no date|cannot verify freshness/i.test((freshSig?.label || "") + " " + (freshSig?.explanation || "")))
+  check("the +12 illusion is removed from the number", score <= 100 - 12 + 1, score)
+}
+
+// 7f · measured learning entries survive the WRITE-PLANE rescore
+// (they encode real history a ctx-free rescore cannot rebuild)
+{
+  const job = mkJob({ trust_signals: [
+    { id: "company_history", label: "Established employer • 407 roles", scoreImpact: 8, confidence: "high", tone: "positive", explanation: "x", source: "history" },
+    { id: "source_learning", label: "Source track record", scoreImpact: 8, confidence: "medium", tone: "positive", explanation: "x", source: "learning" },
+  ] })
+  const { signals } = rescoreTrustSignals(job)
+  check("company_history kept from persisted set", signals.some((s: any) => s.id === "company_history"))
+  check("source_learning kept from persisted set", signals.some((s: any) => s.id === "source_learning"))
+}
+
+// 7g · first-seen logo employer no longer pins legitimacy at 100
+// (rot-era: MindPackets/MindPlus raw 100 with logo+8 & board-domain +8)
+{
+  const legit = rescoreTrustSignals(mkJob({})).score
+  check("legitimacy for logo-first-seen feed job < 100", legit < 100, legit)
+  check("legitimacy still lands in a sane band (>= 60)", legit >= 60, legit)
+}
+
+// 7h · queued (no AI): legitimacy differences flow through 0.4 weighting
+{
+  const a = unifiedTrustScore(mkJob({ company_logo: null, apply_url: "https://jobs.ashbyhq.com/x/1" }), null)
+  const b = unifiedTrustScore(mkJob({}), null)
+  check("queued rows differentiate by evidence (a ≠ b)", a !== b, { a, b })
+}
+
+
+// 7i · ceiling honesty: rich-signal listings report their overrun out loud
+{
+  const rich = rescoreTrustSignals(mkJob({}) as any)
+  check("clamped score stays ≤ 100", rich.score <= 100, rich.score)
+  check("rawSum exposed for ceiling marking", typeof rich.rawSum === "number")
+  check("score equals min(100, rawSum)", rich.score === Math.min(100, Math.max(0, rich.rawSum)), { score: rich.score, rawSum: rich.rawSum })
+}
+
+console.log("8 · Evidence crawler states (Evidence Intelligence V1.1)")
+
+import {
+  EVIDENCE_STATES,
+  crawlerStateLabel,
+  isEvidenceState,
+  sameContentHash,
+  shouldDeferLiveFetch,
+  workerStateFor,
+} from "../lib/ai/evidence"
+
+// 8a · state vocabulary — every writer must stay inside the legal set
+{
+  check("vocabulary has exactly the 8 migrated states", EVIDENCE_STATES.length === 8, EVIDENCE_STATES)
+  check("every vocabulary entry passes the guard", EVIDENCE_STATES.every((s) => isEvidenceState(s)))
+  check("'timeout' is NOT a legal crawler state", !isEvidenceState("timeout"))
+  check("garbage is rejected by the guard", !isEvidenceState("Evidence: verified") && !isEvidenceState("") && !isEvidenceState(null))
+}
+
+// 8b · worker nav failure maps to failed, never the made-up 'timeout' state
+{
+  const navTimeout = workerStateFor("timeout", 0, "anything")
+  check("nav timeout resolves to failed", navTimeout === "failed", navTimeout)
+  check("nav timeout stays in-vocabulary", isEvidenceState(navTimeout))
+  const refused = workerStateFor(null, 403, "")
+  check("server 403 still blocked", refused === "blocked", refused)
+  const challenge = workerStateFor(null, 200, "<html>Just a moment… cloudflare challenge-platform</html>")
+  check("challenge page still blocked", challenge === "blocked", challenge)
+  const clean = workerStateFor(null, 200, "Senior Engineer role description with real content")
+  check("healthy page yields no block state", clean === null, clean)
+}
+
+// 8c · honest human copy — raw enums never reach the UI
+{
+  for (const st of EVIDENCE_STATES) {
+    const { label } = crawlerStateLabel(st)
+    check(`label for '${st}' is not the raw enum`, label !== st && !label.includes(`Evidence: ${st}`), label)
+    check(`label for '${st}' carries real words`, label.length > 12, label)
+  }
+  check("blocked copy preserved verbatim (regression)", crawlerStateLabel("blocked").label === "Page blocked — evidence unavailable, retrying later")
+  check("failed state admits the failure and the retry", /could not be read/.test(crawlerStateLabel("failed").label) && /retry/i.test(crawlerStateLabel("failed").label), crawlerStateLabel("failed").label)
+  check("unknown state degrades honestly, not to jargon", crawlerStateLabel("weird").label === "Page evidence state not recorded", crawlerStateLabel("weird").label)
+  check("tone map complete", EVIDENCE_STATES.every((s) => ["red", "green", "amber"].includes(crawlerStateLabel(s).tone)))
+}
+
+// 8d · retry_at deference — a refused page is not re-hit inside its window
+{
+  const future = new Date(Date.now() + 6 * 3_600_000).toISOString()
+  const past = new Date(Date.now() - 60_000).toISOString()
+  check("blocked + future retry defers", shouldDeferLiveFetch({ status: "blocked", retry_at: future }))
+  check("failed + future retry defers", shouldDeferLiveFetch({ status: "failed", retry_at: future }))
+  check("blocked + window open refetches", !shouldDeferLiveFetch({ status: "blocked", retry_at: past }))
+  check("verified evidence never defers", !shouldDeferLiveFetch({ status: "verified", retry_at: future }))
+  check("blocked without retry_at refetches (no schedule to respect)", !shouldDeferLiveFetch({ status: "blocked", retry_at: null }))
+  check("no evidence yet refetches", !shouldDeferLiveFetch(null))
+  check("garbage retry_at does not defer", !shouldDeferLiveFetch({ status: "blocked", retry_at: "not-a-date" }))
+}
+
+// 8e · evidence store holds versions, not echoes
+{
+  check("identical hash is a duplicate", sameContentHash("abc123", "abc123"))
+  check("changed content is not a duplicate", !sameContentHash("abc123", "def456"))
+  check("missing hashes never dedupe away evidence", !sameContentHash(null, "abc123") && !sameContentHash("abc123", null) && !sameContentHash(null, null))
+}
+
+console.log("9 · Quote integrity + canonical stored-verdict display (B-keepers)")
+
+import { plainifyPosting, traceableQuote, deriveEvidence } from "../lib/evidence"
+
+// 9a · plain rendering — hrefs and escapes can never leak into prose
+{
+  const md = "Trusted by 20,000+ property managers worldwide, [Hostaway](https://himalayas.app/companies/hostaway) is an industry leading platform. \\*\\*NOTE: fully remote.\\*\\*"
+  const plain = plainifyPosting(md)
+  check("links collapse to their label", plain.includes("Hostaway is an industry"), plain)
+  check("no URL survives in plain text", !/https?/.test(plain), plain)
+  check("markdown escapes resolve and emphasis stays out of prose", plain.includes("NOTE: fully remote.") && !plain.includes("\\") && !plain.includes("*"), plain)
+}
+
+// 9b · live-case quotes: the mangled classes die, the genuine ones survive
+{
+  // Real posting shape (Hostaway, live 2026-08-05): URL-adjacent prose.
+  const hostawayPlain = plainifyPosting("Trusted by 20,000+ property managers worldwide, [Hostaway](https://himalayas.app/companies/hostaway) is an industry leading, AI-powered vacation rental management platform.")
+  const sig = deriveEvidence({ description_md: "Trusted by 20,000+ property managers worldwide, [Hostaway](https://himalayas.app/companies/hostaway) is an industry leading, AI-powered vacation rental management platform.", location: "Australia, Canada, Ghana, India, Ireland, New Zealand, Nigeria, South Africa, United Kingdom, United States", eligibility: "explicit", is_remote: true } as any)
+  const worldwide = sig.find((x: any) => x.id === "scope-worldwide")
+  check("worldwide excerpt has no href contamination", worldwide?.excerpt ? !/https?|\(|\[/.test(worldwide.excerpt) : false, worldwide?.excerpt)
+  const elig = sig.find((x: any) => x.id === "eligibility-explicit")
+  check("explicit quote is word-aligned (no 'app)' prefix)", !!elig?.excerpt && !elig.excerpt.startsWith("app)"), elig?.excerpt)
+  check("explicit quote names an African country", !!elig?.excerpt && /Nigeria|Ghana|South Africa/.test(elig.excerpt), elig?.excerpt)
+  check("quotes never slice mid-word", sig.every((x: any) => !x.excerpt || !/\p{L}\p{N}…$|^\p{L}\p{N}*app\)/u.test(x.excerpt)), sig.map((x: any) => x.excerpt).filter(Boolean))
+  check("traceability drops href fragment quotes", traceableQuote("app/companies/micro1) provides a comprehensive benefits package, including up to 100% reimbursement for health-insurance premiums, paid time off, a 401(K) pl", hostawayPlain) === null)
+  check("traceability keeps a genuine verbatim quote", traceableQuote("Trusted by 20,000+ property managers worldwide, Hostaway is an industry leading, AI-powered vacation rental management platform.", hostawayPlain) !== null)
+  check("traceability drops mid-word-start fragments (mali class)", traceableQuote("d AI to improve risk assessment, audit scoping, testing", plainifyPosting("Use data analytics, and AI to improve risk assessment, scoping, testing, continuous monitoring, and reporting, including identifying anomalies, control weaknesses, and emerging risks.")) === null)
+  check("escaped stored quote still verifies after unescape", traceableQuote("\\*\\*NOTE: fully remote.\\*\\*", plainifyPosting("\\*\\*NOTE: fully remote.\\*\\* Apply now.")) !== null)
+  check("short fragments are not quotes", traceableQuote("app) Worldwide", hostawayPlain) === null)
+}
+
+// 9d · skills rendered deduped, never JSON, never tags-as-'Required'
+{
+  check("'Finance, Finance' dedupes at render boundary", asSkillList(["Finance", "Finance"]).length === 1, asSkillList(["Finance", "Finance"]))
+  check("stored skill-objects never render as JSON", asSkillList([{ skill: "onboarding at scale", evidence: "x" }] as any)[0] === "onboarding at scale", asSkillList([{ skill: "onboarding at scale", evidence: "x" }] as any))
+}
+
+
+console.log("10 · V1.2 consistency — skills JSON, salary authority, segment quotes")
+
+// 10a · the exact stored micro1 payload never renders JSON again
+{
+  const liveStored = [
+    "{\"skill\":\"large-cohort onboarding at scale\",\"evidence\":\"Run large-cohort onboarding at scale (fast, clean, zero chaos).\"}",
+    "{\"skill\":\"distributed talent pool management\",\"evidence\":\"Activate and manage distributed talent pools powering AI training + data ops.\"}",
+    "{\"skill\":\"enterprise client relationship management\",\"evidence\":\"Build and maintain high-trust enterprise client relationships.\"}",
+  ]
+  const out = asSkillList(liveStored as any)
+  check("stringified skill objects unwrap to names", out.join("|") === "large-cohort onboarding at scale|distributed talent pool management|enterprise client relationship management", out)
+  check("no JSON syntax survives the boundary", !out.some((s) => s.includes("{") || s.includes("\"evidence\"")), out)
+  check("broken JSON text is dropped, not rendered", asSkillList(["{broken json" as any]).length === 0, asSkillList(["{broken json" as any]))
+}
+
+// 10b · [ARCHITECTURE] No render-plane salary authority (A4 revert). The
+// canonical feed plane displays verbatim; the Nexa Intelligence range
+// displays in its own panel with provenance. Conflicting planes are
+// reconciled at the write path (salary_authority_applied) and by the
+// salary-conflict backfill — never silently adjudicated at render.
+{
+  const sigs = deriveEvidence(mkJob({ salary_range: "USD70k - USD110k", description_md: "The national pay range for this full-time position is base salary of $50,000 –$70,000 USD. Other text." }) as any)
+  const sal = sigs.find((x: any) => x.id === "salary-disclosed")
+  check("evidence panel displays the canonical feed salary plane", !!sal?.reason?.includes("USD70k - USD110k"), sal?.reason)
+  check("render never silently substitutes a posting-extracted number", !!sal && !sal.reason.includes("USD50k - USD70k"), sal?.reason)
+  const fed = salaryDisplay("USD70k - USD110k" as any, {} as any)
+  check("card displays the feed range with the same junk guard", fed.isExplicit === true && fed.label.includes("110k"), fed.label)
+}
+
+// 10c · quotes never splice across the description/location join
+{
+  const sigs = deriveEvidence(mkJob({ description_md: "Role overview. Originally posted on Himalayas", location: "Worldwide" }) as any)
+  const worldwide = sigs.find((x: any) => x.id === "scope-worldwide")
+  check("no cross-segment splice ('Originally posted on Himalayas Worldwide')", worldwide?.excerpt === undefined || worldwide.excerpt !== "Originally posted on Himalayas Worldwide", worldwide?.excerpt)
+}
+
+console.log("11 · V1.2 salary hygiene + copy honesty")
+
+// Reproduce the label logic boundary via a tiny probe of the same rules
+// (component renders these exact decisions — fixtures pin the semantics).
+function probeSalaryLabel(row: any): { junk: boolean; disclosed: boolean } {
+  const nmin = typeof row.salary_min === "number" ? row.salary_min : null
+  const nmax = typeof row.salary_max === "number" ? row.salary_max : null
+  const currency = row.salary_currency || ""
+  const period = row.salary_period ?? null
+  const zeroRange = (nmax != null && nmax <= 0) && (nmin == null || nmin <= 0)
+  const kCollapsed = nmax != null && nmax > 0 && nmax < 500 && (period == null || period === "year") && (currency === "" || currency === "USD")
+  return { junk: zeroRange || kCollapsed, disclosed: row.salary_transparency === "disclosed" && !zeroRange && !kCollapsed }
+}
+
+{
+  // Live 2026-08-05: BI Consultant card rendered "Salary disclosed: USD 0 – 0 • 100%".
+  const zero = probeSalaryLabel({ salary_transparency: "disclosed", salary_min: 0, salary_max: 0, salary_currency: "USD" })
+  check("'USD 0 – 0' is junk, not disclosure", zero.junk === true && zero.disclosed === false, zero)
+  // Live 2026-08-05: three micro1 cards rendered "USD0.03k – USD0.1k"-style rows.
+  const k1 = probeSalaryLabel({ salary_transparency: "disclosed", salary_min: 30, salary_max: 100, salary_currency: "USD", salary_period: "year" })
+  check("k-collapsed 'yearly' range is junk", k1.junk === true, k1)
+  const k2 = probeSalaryLabel({ salary_transparency: "disclosed", salary_min: 30, salary_max: 100, salary_currency: "USD", salary_period: null })
+  check("k-collapsed no-period range is junk", k2.junk === true, k2)
+  // Genuine cases must survive untouched.
+  const hourly = probeSalaryLabel({ salary_transparency: "disclosed", salary_min: 13, salary_max: 36, salary_currency: "USD", salary_period: "hour" })
+  check("genuine hourly range survives ($13–36/hour)", hourly.junk === false && hourly.disclosed === true, hourly)
+  const yearly = probeSalaryLabel({ salary_transparency: "disclosed", salary_min: 120000, salary_max: 150000, salary_currency: "USD", salary_period: "year" })
+  check("genuine yearly range survives (USD120–150k)", yearly.junk === false && yearly.disclosed === true, yearly)
+  const eurSmall = probeSalaryLabel({ salary_transparency: "disclosed", salary_min: 50, salary_max: 90, salary_currency: "EUR", salary_period: "hour" })
+  check("non-USD hourly survives", eurSmall.junk === false, eurSmall)
+}
+
+// 11b · feed-range fallback inherits the chip's junk guard (same-card truth)
+{
+  const junk = salaryDisplay("USD0.03k - USD0.1k" as any, {} as any)
+  check("stored 'USD0.03k - USD0.1k' is junk-guarded (same test the chip uses)", junk.isExplicit === false, junk)
+  const zero = salaryDisplay("USD 0 – 0" as any, {} as any)
+  check("stored 'USD 0 – 0' is junk-guarded", zero.isExplicit === false, zero)
+  const real = salaryDisplay("USD120k - USD150k" as any, {} as any)
+  check("genuine range stays explicit", real.isExplicit === true, real)
+}
+
+// 11c · EvidencePanel metadata branch applies the same guard (same-page truth)
+{
+  const sigs = deriveEvidence(mkJob({ salary_range: "USD0.03k - USD0.08k" }) as any)
+  check("EvidencePanel never asserts junk as disclosed salary", !sigs.some((x: any) => x.id === "salary-disclosed"), sigs.filter((x: any) => x.id.startsWith("salary")).map((x: any) => x.id))
+  const real = deriveEvidence(mkJob({}) as any)
+  check("EvidencePanel keeps genuine disclosed salary", real.some((x: any) => x.id === "salary-disclosed"), real.filter((x: any) => x.id.startsWith("salary")).map((x: any) => x.id))
+}
+
+console.log("12 · Architecture boundary — one canonical owner per decision")
+
+import { corroborateAfricaClaim } from "../lib/geo/eligibility"
+import { readFileSync, readdirSync, statSync, existsSync } from "node:fs"
+import { join, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
+
+// 12a · Verifier-domain corroboration — the checks that briefly ran inside
+// the render layer (A1) now pin in their canonical home (verifier corpus),
+// consumed by re-verification/backfill, never by the UI.
+{
+  // Positive control: Africa named in location -> corpus-explicit claim holds.
+  const hostaway = corroborateAfricaClaim({ text: "NOTE: This is a FULLY remote role, but the candidate must be within EMEA to collaborate with their team, peers, and internal customers.", locationField: "Australia, Canada, Ghana, India, Ireland, New Zealand, Nigeria, South Africa, United Kingdom, United States" }, "explicit")
+  check("hostaway stored explicit is corpus-corroborated (no requeue)", hostaway.supported === true && hostaway.corpusTier === "explicit", hostaway)
+  // Oben Romania (live): stored likely vs Romania-locked text -> NOT supported.
+  const oben = corroborateAfricaClaim({ text: "Job details Job Location: Remote (Anywhere Romania) Effort Schedule:8 Hours/Day Business Hours: EET Timeframe Language: English, Romanian Customers Background: (EU, WorldWide)", locationField: "Romania" }, "likely")
+  check("oben stored likely contradicted by corpus (requeue for re-verification)", oben.supported === false && oben.corpusTier === "restricted", oben)
+  // mali FP (live audit-leader): stored explicit, no Africa in posting -> NOT supported.
+  const mali = corroborateAfricaClaim({ text: "This role is based in San Francisco, CA. We use a hybrid work model of 3 days in the office per week and offer relocation assistance to new employees.", locationField: "San Francisco" }, "explicit")
+  check("mali stored explicit not supported by corpus (requeue)", mali.supported === false && mali.reason === "stored-explicit-not-in-current-text", mali)
+  // MindPlus (live): marketing worldwide is a dead zone; stored likely unsupported.
+  const mind = corroborateAfricaClaim({ text: "The organization partners with businesses worldwide to deliver innovative, data-driven solutions that enhance operational efficiency and business growth.", locationField: "Sri Lanka" }, "likely")
+  check("mindplus marketing worldwide does not support stored likely", mind.supported === false, mind)
+  // Genuine worldwide hiring supports stored likely.
+  const genuine = corroborateAfricaClaim({ text: "This is a fully remote role. Work from anywhere in the world. We hire globally across all time zones.", locationField: "Worldwide" }, "likely")
+  check("genuine worldwide hiring supports stored likely", genuine.supported === true, genuine)
+  // Nigeria-named text supports a stored explicit.
+  const named = corroborateAfricaClaim({ text: "Open to applicants in Nigeria and Kenya. Fully remote.", locationField: "Worldwide" }, "explicit")
+  check("Africa-named text supports stored explicit", named.supported === true && named.corpusTier === "explicit", named)
+  // Protective stored verdicts are never auto-cleared by corpus silence.
+  const silent = corroborateAfricaClaim({ text: "A role with no location language at all.", locationField: null }, "restricted")
+  check("stored restricted survives corpus silence (protective)", silent.supported === true, silent)
+  const storedUnknown = corroborateAfricaClaim({ text: "A role with no location language at all.", locationField: null }, "unknown")
+  check("stored unknown is never a corroboration suspect", storedUnknown.supported === true, storedUnknown)
+}
+
+// 12b · Structural boundary: the render layer CANNOT quietly become a second
+// intelligence engine again — the modules/identifiers of the reverted
+// overrides are absent from every app/components/lib file. If one returns,
+// this suite fails loudly.
+{
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..")
+  check("render arbitration module is deleted", !existsSync(join(root, "lib", "geo", "render-eligibility.ts")))
+  const walk = (dir: string): string[] => {
+    const out: string[] = []
+    for (const e of readdirSync(dir)) {
+      if (e === "node_modules" || e.startsWith(".")) continue
+      const p = join(dir, e)
+      const st = statSync(p)
+      if (st.isDirectory()) out.push(...walk(p))
+      else if (/\.(ts|tsx)$/.test(e)) out.push(p)
+    }
+    return out
+  }
+  const planeFiles = [...walk(join(root, "app")), ...walk(join(root, "components")), ...walk(join(root, "lib"))]
+  const offenders = (needle: string) => planeFiles.filter((p) => readFileSync(p, "utf8").includes(needle))
+  check("no app/components/lib file references the deleted arbitration module", offenders("render-eligibility").length === 0, offenders("render-eligibility"))
+  check("render trust correction is gone everywhere", offenders("correctedTrustSignals").length === 0 && offenders("displayLegitimacy").length === 0, [...offenders("correctedTrustSignals"), ...offenders("displayLegitimacy")])
+  check("render-plane salary authority is gone", offenders("jaiSalaryDisplay").length === 0, offenders("jaiSalaryDisplay"))
+  check("render confidence gating on corroboration is gone", offenders("corroborated").length === 0, offenders("corroborated"))
+  const engine = readFileSync(join(root, "lib", "trust", "engine.ts"), "utf8")
+  check("unified trust performs no render-time freshness/richness recompute", !/verifiedDays|dimensionCount|Date\.now\(/.test(engine), null)
+  const layout = readFileSync(join(root, "components", "job-detail-layout.tsx"), "utf8")
+  check("detail page displays the persisted trust plane only", layout.includes("trust_signals") && !layout.includes("rescoreTrustSignals"), null)
+}
+
+// 9f · [EVIDENCE PLANE RESTORE 2026-08-06] Truncation-marked stored excerpts
+// render again; unmarked mangling stays dead. Every vector below is a REAL
+// stored row captured from the live preview during the evidence-plane audit.
+{
+  const veeamPlain = plainifyPosting("What You’ll Get \n- 26 paid vacation days, plus 4 extra global VeeaMe Days for self-care and 24 paid volunteer hours annually through Veeam Cares\n- Annual allowance for private healthcare plan\n- Supplementary pension scheme with employer and employee contributions\n- Long-term sickness coverage: salary protection for up to two years\n\nPlease note: If an applicant is permanently located outside of Netherlands, Veeam reserves the right to decline the application.")
+  // REAL stored excerpt (jobs.intelligence, benefit=paid time off, Veeam row)
+  const ptoStored = "- 26 paid vacation days, plus 4 extra global VeeaMe Days for self-care and 24 paid volunteer hours annually through Veeam Cares - Annual allowance for privat..."
+  check("truncation-marked stored benefit excerpt renders again", traceableQuote(ptoStored, veeamPlain) !== null)
+  const scopeStored = "Headquartered in Seattle with offices in more than 30 countries, Veeam protects over 550,000 customers worldwide, who trust Veeam to keep their businesses ru..."
+  const veeamScopePlain = plainifyPosting("Headquartered in Seattle with offices in more than 30 countries, Veeam protects over 550,000 customers worldwide, who trust Veeam to keep their businesses running. Join us.")
+  check("stored scope excerpt truncated mid-word renders with its mark", traceableQuote(scopeStored, veeamScopePlain) !== null)
+  check("interior-ellipsis stored excerpt matches in order", traceableQuote("26 paid vacation days, plus 4 extra global VeeaMe Days ... Veeam Cares - Annual allowance for privat...", veeamPlain) !== null)
+  check("reversed segments are NOT a quote (order matters)", traceableQuote("Veeam Cares - Annual allowance for privat ... 26 paid vacation days, plus 4 extra global", veeamPlain) === null)
+  check("fragmentary segments under 12 chars are not quotes", traceableQuote("abcdef ... 26 paid vacation days, plus 4 extra global VeeaMe Days", veeamPlain) === null)
+
+  // REAL stored africa_evidence (the mali row) — unmarked mid-word slice: dead.
+  const auditPlain = plainifyPosting("This role is based in San Francisco, CA. We use a hybrid work model of 3 days in the office per week and offer relocation assistance to new employees. Use data analytics, automation, and AI to improve risk assessment, audit scoping, testing, continuous monitoring, and reporting, including identifying anomalies, control weaknesses, and emerging risks. - Build trusted relationships across Finance, Accounting, Operations, Legal, Compliance.")
+  const maliStored = "d AI to improve risk assessment, audit scoping, testing, continuous monitoring, and reporting, including identifying anomalies, control weaknesses, and emerging risks. - Build trusted relationships ac"
+  check("unmarked mid-word slice (mali stored quote) stays dead", traceableQuote(maliStored, auditPlain) === null)
+
+  // REAL stored scope evidence (video editor row) — href-adjacent slice: dead.
+  const videoPlain = plainifyPosting("Job Title: Video Editor. Originally posted on Himalayas")
+  check("href-adjacent stored fragment stays dead", traceableQuote("app) Worldwide Video-Editor Video-Editing Video-Content-Editor Creative-Video-Editor Social-Vid", videoPlain) === null)
+
+  // Card Evidence block: a malformed stored quote must never HIDE a
+  // traceable stored quote beside it; nothing renders when none survives.
+  const candidatesMali = [maliStored, "We use a hybrid work model of 3 days in the office per week", null]
+  const firstT = candidatesMali.find((t) => t && traceableQuote(t as any, auditPlain))
+  check("first TRACEABLE stored quote wins over a malformed first", firstT === "We use a hybrid work model of 3 days in the office per week", firstT)
+  const noneT = [maliStored, "pl"].find((t) => t && traceableQuote(t as any, auditPlain)) ?? null
+  check("no traceable stored quote -> block renders nothing (no bare heading)", noneT === null, noneT)
+}
+
+/* -------------------------------------------------------------------- */
+/* 13 · Evidence-plane repair + company-legitimacy ownership (§17)        */
+/*     All versions/cases are the REAL values sampled live in §16.        */
+/* -------------------------------------------------------------------- */
+console.log("\n13 · Write-path repair — evidence plane + canonical company legitimacy")
+{
+  // 13a — Seal classification: regex/no-AI tiers are FAILURES, never terminal.
+  check("seal: regex row sealed today is a failure tier", isFailedModelVersion("regex-extracted-33bytes"))
+  check("seal: regex row sealed 7/29 is a failure tier", isFailedModelVersion("regex-extracted-7880bytes"))
+  check("seal: no-providers is a failure tier", isFailedModelVersion("no-ai-providers"))
+  check("seal: verifier threw is a failure tier", isFailedModelVersion("verifyJobReal-threw"))
+  check("seal: legacy rule-based fast tier is a failure tier", isFailedModelVersion("rule-based-v1-fast"))
+  check("seal: real provider (mistral) is NOT a failure tier", !isFailedModelVersion("mistral:mistral-medium-2505"))
+  check("seal: real provider (github models) is NOT a failure tier", !isFailedModelVersion("github_models:gpt-4o-mini"))
+
+  // 13b — Requeue decisions on the exact live row shapes from the §16 table.
+  const stripeSealedToday = { model_version: "regex-extracted-8036bytes", evidence_refs: { sources: ["https://stripe.com/jobs/search?gh_jid=8099206"], pageStatus: 200, provenance: "company_page", dimensionCount: 2 } }
+  check("requeue: regex tier sealed with V1 evidence refs re-enters (thin tier)", queueRepairDecision({ error: null }, stripeSealedToday) === "thin_tier")
+  const redditMistralPreV1 = { model_version: "mistral:mistral-medium-2505", evidence_refs: null }
+  check("requeue: real-AI row predating the evidence plane re-enters (pre-V1)", queueRepairDecision({ error: null }, redditMistralPreV1) === "pre_v1_evidence")
+  const currentRow = { model_version: "github_models:gpt-4o-mini", evidence_refs: { sources: [], pageStatus: 200, provenance: "page", dimensionCount: 2 } }
+  check("requeue: current real row with stored evidence stays completed", queueRepairDecision({ error: null }, currentRow) === null)
+  check("requeue: admission rejection stays terminal (never requeued)", queueRepairDecision({ error: "Rejected: Not open to African applicants [africa_eligibility]" }, stripeSealedToday) === null)
+  check("requeue: completed-without-JAI left to orphan-heal (no double handling)", queueRepairDecision({ error: null }, undefined) === null)
+
+  // 13c — Preservation merge: never blank stored evidence; never mis-attribute it.
+  check("preserve: lost quote survives while verdict unchanged", preserveQuote(null, "We use a hybrid work model of 3 days in the office per week", true) === "We use a hybrid work model of 3 days in the office per week")
+  check("preserve: changed verdict must not inherit the old quote", preserveQuote(null, "We use a hybrid work model of 3 days in the office per week", false) === null)
+  check("preserve: fresh quote always wins", preserveQuote("$245,800—$344,100", "old stored quote", true) === "$245,800—$344,100")
+  check("preserve: nothing stored, nothing new -> honest absence", preserveQuote(null, null, true) === null)
+
+  // 13d — Canonical owner: identity never depends on per-run fetch luck.
+  const redditVerdict = companyLegitimacyOwner({ company: "Reddit", source: "greenhouse:reddit" })
+  check("owner: Reddit canonical verdict is verified via the registry", redditVerdict.value === "verified" && redditVerdict.basis === "curated_registry" && redditVerdict.confidence === 95, redditVerdict)
+  check("owner: curator evidence states the channel basis", !!redditVerdict.evidence && redditVerdict.evidence.includes("curated employer registry"), redditVerdict.evidence)
+  const redditScam = companyLegitimacyOwner({ company: "Reddit", source: "greenhouse:reddit", suspiciousEvidence: "pay a registration fee to apply" })
+  check("owner: posting-level scam evidence cannot demote a channel-authenticated employer", redditScam.value === "verified", redditScam.value)
+  const mindplusVerdict = companyLegitimacyOwner({ company: "MindPlus (Pvt) Ltd" })
+  check("owner: non-registry company with nothing measured is honestly unknown (AI cannot elevate)", mindplusVerdict.value === "unknown" && mindplusVerdict.confidence === 0, mindplusVerdict)
+  const scamVerdict = companyLegitimacyOwner({ company: "QuickCash Now", suspiciousEvidence: "buy the starter kit before your first shift" })
+  check("owner: posting-level scam evidence demotes non-registry to suspicious with the quote", scamVerdict.value === "suspicious" && scamVerdict.basis === "posting_scam_evidence" && scamVerdict.evidence === "buy the starter kit before your first shift", scamVerdict)
+  const measured = companyLegitimacyOwner({ company: "Decision Inc.", learning: { totalRoles: 12, verificationRate: 0.5 } })
+  check("owner: measured hiring history yields bounded likely_legit", measured.value === "likely_legit" && measured.basis === "measured_learning" && measured.confidence === 58, measured)
+  const tinyVolume = companyLegitimacyOwner({ company: "NewCo", learning: { totalRoles: 2, verificationRate: 1 } })
+  check("owner: below minimum measured volume stays unknown", tinyVolume.value === "unknown", tinyVolume)
+  const placeholder = companyLegitimacyOwner({ company: "Company", learning: { totalRoles: 50, verificationRate: 0.9 } })
+  check("owner: placeholder names never get legitimacy", placeholder.value === "unknown", placeholder)
+  check("owner: isCuratedEmployer is case/space tolerant on the name, strict on the channel",
+    isCuratedEmployer(" mongodb ", "greenhouse:mongodb") && isCuratedEmployer("STRIPE", "greenhouse:stripe"))
+  // [V2 finding — preview 2026-08-06] Channel authentication: the registry
+  // premise is "this job arrived via the company's official ATS feed". A
+  // third-party board naming a registry company must NOT inherit verified.
+  const redditHimalayas = companyLegitimacyOwner({ company: "Reddit", source: "himalayas" })
+  check("owner: third-party board naming a registry company is NOT verified (impersonation-safe)", redditHimalayas.value === "unknown" && redditHimalayas.basis === "insufficient_evidence", redditHimalayas)
+  const redditLegacy = companyLegitimacyOwner({ company: "Reddit", source: "greenhouse", sourceId: "greenhouse:reddit:7997020" })
+  check("owner: legacy rows authenticate via source_id label", redditLegacy.value === "verified" && redditLegacy.basis === "curated_registry", redditLegacy)
+  const redditNoChannel = companyLegitimacyOwner({ company: "Reddit" })
+  check("owner: no channel recorded -> honest unknown, never name-matched verified", redditNoChannel.value === "unknown", redditNoChannel)
+  const spoof = companyLegitimacyOwner({ company: "Reddit", source: "remoteok" })
+  check("owner: name alone on an open board cannot claim the channel fact", spoof.value === "unknown", spoof)
+
+  // 13e — Trust signal asks the same owner: parity with the stored plane.
+  const redditSignal = employerLegitimacySignal({ company: "Reddit", company_logo: null, source: "greenhouse:reddit" } as any)
+  check("trust parity: same owner, same verified basis, same +15", redditSignal?.label === "Verified employer" && redditSignal?.scoreImpact === 15 && redditSignal?.tone === "positive", redditSignal)
+  const newcoSignal = employerLegitimacySignal({ company: "Totally New Co", company_logo: null, source: "himalayas" } as any)
+  check("trust parity: unknown employer stays the honest new-employer zero", newcoSignal?.label === "New employer" && newcoSignal?.scoreImpact === 0, newcoSignal)
+  const logoSignal = employerLegitimacySignal({ company: "Logo Only Co", company_logo: "https://example.com/logo.png", source: "himalayas" } as any)
+  check("trust parity: logo remains cosmetic branding (+3), never legitimacy", logoSignal?.label === "Employer branding present" && logoSignal?.scoreImpact === 3, logoSignal)
+
+  // 13f — Ingest-plane evidence: every accepted job writes preference-1 evidence.
+  const longDesc = "We are hiring a platform engineer. " + "Responsibilities include building reliable systems. ".repeat(25)
+  const ingestRow = ingestEvidenceRow({ apply_url: "https://example.com/jobs/1", description_md: longDesc })
+  check("ingest evidence: accepted job with stored description gets an ats_api verified row", !!ingestRow && ingestRow.evidence_type === "ats_api" && ingestRow.status === "verified" && typeof ingestRow.content_hash === "string" && ingestRow.content_hash.length === 32, ingestRow)
+  check("ingest evidence: excerpt bounded and whitespace-normalized", !!ingestRow && typeof ingestRow.excerpt === "string" && ingestRow.excerpt.length <= 800 && !/\s{2,}/.test(ingestRow.excerpt))
+  check("ingest evidence: short/absent description is honest absence, not a blank row", ingestEvidenceRow({ apply_url: "https://example.com/jobs/2", description_md: "Too short." }) === null && ingestEvidenceRow({ apply_url: "https://example.com/jobs/3", description_md: null }) === null)
+
+  // 13g — Structural boundary: the owner and the repair live ONLY in the write plane.
+  {
+    const root = join(dirname(fileURLToPath(import.meta.url)), "..")
+    const walk = (dir: string): string[] => {
+      const out: string[] = []
+      for (const e of readdirSync(dir)) {
+        if (e === "node_modules" || e.startsWith(".")) continue
+        const p = join(dir, e)
+        const st = statSync(p)
+        if (st.isDirectory()) out.push(...walk(p))
+        else if (/\.(ts|tsx)$/.test(e)) out.push(p)
+      }
+      return out
+    }
+    const uiFiles = [...walk(join(root, "app")), ...walk(join(root, "components"))]
+    const ownerImporters = uiFiles.filter((p) => readFileSync(p, "utf8").includes("companyLegitimacyOwner"))
+    check("boundary: render never calls the canonical owner (presentation only)", ownerImporters.length === 0, ownerImporters)
+    const engineSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "ai", "engine.ts"), "utf8")
+    check("boundary: seal guard runs before any JAI upsert", engineSrc.indexOf("isFailedModelVersion(intelligence.modelVersion)") < engineSrc.indexOf("Main upsert") && engineSrc.includes("repair_requeued"))
+    check("boundary: ingest writes preference-1 evidence in the crawler path", readFileSync(join(root, "lib", "ingest", "run.ts"), "utf8").includes("recordIngestEvidence"))
+    const consolidatedSrc = readFileSync(join(root, "lib", "ai", "verifiers", "consolidated.ts"), "utf8")
+    check("boundary: per-job AI is forbidden from identity verdicts in the prompt", consolidatedSrc.includes('NEVER return "verified" or "likely_legit"'))
+  }
+}
+
+/* -------------------------------------------------------------------- */
+/* 14 · Deterministic Africa + slug identity (§18) — live-pinned values   */
+/* -------------------------------------------------------------------- */
+console.log("\n14 · Deterministic Africa eligibility + duplicate slug identity")
+{
+  // REAL Reddit adoption posting (both duplicates share this evidence shape).
+  const adoptionText = `**Location:** Remote from NYC, Chicago, SF or LA
+We're growing our collaborative team of individuals to drive Reddit Ads product adoption within our Global Sales organization and with advertisers. In this role, you will be responsible for scaling ads product adoption and scale across the Large Customer Sales advertisers in the United States.`
+  const a1 = adjudicateAfricaEligibility({ title: "Senior Product Adoption Strategist, Shopping", description_md: adoptionText, location: "Remote - United States" })
+  const a2 = adjudicateAfricaEligibility({ title: "Senior Product Adoption Strategist, Shopping", description_md: adoptionText, location: "Remote - United States" })
+  check("adjudicator: identical posting, identical verdict across runs", JSON.stringify(a1) === JSON.stringify(a2), [a1, a2])
+  check("adjudicator: US-locked Reddit posting is restricted (was ingest-likely)", a1.value === "restricted" && a1.confidence === 80 && a1.basis === "corpus:us-state-remote", a1)
+  check("adjudicator: restriction quote is the raw location evidence", a1.evidence === "Remote - United States" && a1.countryRestrictions.includes("United States"), a1)
+
+  // REAL PRS marketing text (fabricated-explicit class must stay dead).
+  const prsText = "MongoDB is built for change. MongoDB's unified database platform, the most widely available, globally distributed data platform on the market, helps organizations modernize legacy workloads."
+  const prs = adjudicateAfricaEligibility({ title: "Principal Research Scientist", description_md: prsText, location: "New York City; Palo Alto" })
+  check("adjudicator: business-coverage marketing cannot mint an eligibility verdict", prs.value !== "explicit" && prs.value !== "likely", prs)
+  check("adjudicator: no signal -> honest unknown with no quote", prs.value === "unknown" && prs.confidence === 0 && prs.evidence === null, prs)
+
+  // Positive control: Africa named in hiring context.
+  const africaText = "We are hiring globally. This role is open to candidates in Ghana, Nigeria, South Africa and all of Africa."
+  const af = adjudicateAfricaEligibility({ title: "Staff Product Manager", description_md: africaText, location: "Worldwide" })
+  check("adjudicator: Africa-named hiring text is explicit with corpus quote", af.value === "explicit" && af.confidence === 85 && !!af.evidence && af.evidence.toLowerCase().includes("africa"), af)
+
+  // Evidence differs honestly -> verdicts may differ honestly.
+  const engMgrText = "Reddit has a flexible workforce! Don't live near one of our offices? No worries: You can apply to work remotely in any country in which we have a physical presence."
+  const eng = adjudicateAfricaEligibility({ title: "Engineering Manager, Ads ML Efficiency", description_md: engMgrText, location: "Remote - United States" })
+  check("adjudicator: genuine work-anywhere language yields likely (evidence truly differs)", eng.value === "likely" && eng.confidence === 60, eng)
+  check("adjudicator: same company, different evidence -> honestly different verdicts", eng.value !== a1.value, [eng.value, a1.value])
+
+  // REAL duplicate-slug case (adoption pair, exact live contenders).
+  const dupBase = "senior-product-adoption-strategist-shopping-reddit-worldwide"
+  const dupContenders = [
+    { slug: dupBase, source_id: "greenhouse:reddit:7997020", created_at: "2026-07-23T15:18:50.995442+00:00" },
+    { slug: dupBase, source_id: "greenhouse:reddit:8081271", created_at: "2026-07-26T09:20:01.071347+00:00" },
+  ]
+  const key1 = postingSlugKey("greenhouse", "greenhouse:reddit:7997020")
+  const key2 = postingSlugKey("greenhouse", "greenhouse:reddit:8081271")
+  check("slug: source keys are deterministic and distinct per posting", key1.length > 0 && key1 !== key2, [key1, key2])
+  check("slug: oldest posting owns the base slug", chooseJobSlug({ base: dupBase, sourceId: "greenhouse:reddit:7997020", contenders: dupContenders, key: key1 }) === dupBase)
+  const resolved = chooseJobSlug({ base: dupBase, sourceId: "greenhouse:reddit:8081271", contenders: dupContenders, key: key2 })
+  check("slug: later duplicate resolves to a deterministic suffixed slug", resolved.startsWith(`${dupBase}-dup-`) && resolved !== dupBase, resolved)
+  check("slug: resolution is stable across runs", chooseJobSlug({ base: dupBase, sourceId: "greenhouse:reddit:8081271", contenders: dupContenders, key: key2 }) === resolved)
+  check("slug: solo posting takes the base slug", chooseJobSlug({ base: dupBase, sourceId: "greenhouse:reddit:9999999", contenders: [], key: key1 }) === dupBase)
+
+  // Structural ownership + hygiene.
+  {
+    const root = join(dirname(fileURLToPath(import.meta.url)), "..")
+    const engineSrc = readFileSync(join(root, "lib", "ai", "engine.ts"), "utf8")
+    check("boundary: adjudic incoherence impossible — adjudicator assigned before upsert", engineSrc.indexOf("adjudicateAfricaEligibility(") > -1 && engineSrc.indexOf("adjudicateAfricaEligibility(") < engineSrc.indexOf("Main upsert"))
+    check("boundary: completed queue rows clear their stale error", engineSrc.includes('status: "completed", completed_at: new Date().toISOString(), error: null'))
+    check("boundary: ingest resolves unique slugs", readFileSync(join(root, "lib", "ingest", "run.ts"), "utf8").includes("chooseJobSlug("))
+    const walk = (dir: string): string[] => {
+      const out: string[] = []
+      for (const e of readdirSync(dir)) {
+        if (e === "node_modules" || e.startsWith(".")) continue
+        const p = join(dir, e)
+        const st = statSync(p)
+        if (st.isDirectory()) out.push(...walk(p))
+        else if (/\.(ts|tsx)$/.test(e)) out.push(p)
+      }
+      return out
+    }
+    const uiFiles = [...walk(join(root, "app")), ...walk(join(root, "components"))]
+    const leaked = uiFiles.filter((p) => { const s = readFileSync(p, "utf8"); return s.includes("adjudicateAfricaEligibility") || s.includes("chooseJobSlug") })
+    check("boundary: render never imports the adjudicator or slug chooser", leaked.length === 0, leaked)
+  }
+}
+
+/* -------------------------------------------------------------------- */
+/* 15 · TRUTH LAYER V2 — validation: contradictions, heal classes,      */
+/*      drain simulation, zero-unexplained invariant                    */
+/* -------------------------------------------------------------------- */
+import {
+  modelBucket,
+  quoteTraceableFor,
+  storedSignalSum,
+  storedEmployerClaim,
+  contradictionFlags,
+  repairClassFor,
+  evaluateRecord,
+  evidenceCaseFor,
+  projectRecord,
+  summarize,
+  type ValidationRecord,
+  type ValidationJaiInput,
+} from "../lib/validation/truth-v2"
+
+{
+  console.log("\n15 · Truth Layer V2 validation")
+
+  const mkJob = (over: Partial<ValidationRecord["job"]> = {}): ValidationRecord["job"] => ({
+    id: "job-fixture-1",
+    slug: "fixture-role",
+    title: "Senior Product Adoption Strategist, Shopping",
+    company: "Reddit",
+    location: "Remote - United States",
+    description_md:
+      "**Location:** Remote from NYC, Chicago, SF or LA\nWe're growing our collaborative team of individuals to drive Reddit Ads product adoption within our Global Sales organization and with advertisers. In this role, you will be responsible for scaling ads product adoption and scale across the Large Customer Sales advertisers in the United States.",
+    source: "greenhouse:reddit",
+    source_id: "greenhouse:reddit:7997020",
+    is_remote: true,
+    eligibility: "likely",
+    is_open_to_africa: true,
+    salary_min: 182000,
+    salary_max: 254800,
+    salary_currency: "USD",
+    salary_range: "$182,000—$254,800",
+    trust_score: 75,
+    trust_signals: [
+      { id: "employer_legitimacy", label: "Verified employer", scoreImpact: 15 },
+      { id: "posting_freshness", label: "Fresh posting", scoreImpact: 10 },
+    ],
+    evidence_state: null,
+    ...over,
+  })
+  const mkJai = (over: Partial<ValidationJaiInput> = {}): ValidationJaiInput => ({
+    model_version: "real-model-v1",
+    evidence_refs: { sources: [], pageStatus: 200, provenance: "ats", dimensionCount: 3 },
+    africa_eligibility: "restricted",
+    africa_confidence: 80,
+    africa_evidence: "Remote - United States",
+    remote_eligibility: "fully_remote",
+    remote_evidence: null,
+    visa_sponsorship: "unknown",
+    visa_evidence: null,
+    salary_transparency: "disclosed",
+    salary_evidence: "$182,000—$254,800",
+    salary_min: 182000,
+    salary_max: 254800,
+    company_legitimacy: "verified",
+    company_confidence: 95,
+    company_evidence: null,
+    job_quality: "high",
+    job_quality_evidence: null,
+    ...over,
+  })
+  const mkRec = (over: Partial<ValidationRecord> = {}): ValidationRecord => ({
+    job: mkJob(),
+    jai: mkJai(),
+    queue: { status: "completed", error: null },
+    evidence: { rowCount: 1, kinds: ["ats_api"], statuses: ["verified"] },
+    learning: null,
+    ...over,
+  })
+
+  /* 15a · buckets + primitives */
+  check("v2: model buckets never leak providers (none/rule-based/real-model)",
+    modelBucket(null) === "none" && modelBucket("regex-extracted-8079bytes") === "rule-based" && modelBucket("real-model-v1") === "real-model",
+    [modelBucket(null), modelBucket("regex-extracted-8079bytes"), modelBucket("real-model-v1")])
+
+  check("v2: posting quote traceable", quoteTraceableFor("africa", "scaling ads product adoption and scale across the Large Customer Sales advertisers in the United States", mkJob(), null) === true)
+  check("v2: fabricated marketing quote fails", quoteTraceableFor("africa", "operations across the EMEA region with partners worldwide", mkJob(), null) === false)
+  check("v2: short posting makes quotes unverifiable, not fabricated", quoteTraceableFor("africa", "anything at all here", mkJob({ description_md: "too short" }), null) === null)
+  const ownerSentence = "Reddit is on Nexa's curated employer registry — this job arrived via the company's official ATS feed, a channel Nexa verified directly."
+  check("v2: owner basis sentence counts as provenance, not a posting quote", quoteTraceableFor("company", ownerSentence, mkJob(), ownerSentence) === true)
+  check("v2: salary evidence matching the feed range is ATS-metadata traceable", quoteTraceableFor("salary", "$182,000—$254,800", mkJob(), null) === true)
+  check("v2: location-field corpus quote is traceable (adjudicator quotes the location verbatim)", quoteTraceableFor("africa", "Remote - United States", mkJob(), null) === true)
+  check("v2: salary evidence beyond the posting and the feed range fails", quoteTraceableFor("salary", "$999,999 total comp guaranteed", mkJob(), null) === false)
+
+  check("v2: trust signal arithmetic primitive", storedSignalSum([{ scoreImpact: 15 }, { scoreImpact: 10 }]) === 25)
+  check("v2: employer claim primitive", storedEmployerClaim([{ id: "employer_legitimacy", label: "Verified employer" }]) === true && storedEmployerClaim([{ id: "employer_legitimacy", label: "New employer" }]) === false)
+
+  const desc = mkJob().description_md as string
+
+  /* 15b · contradiction flags */
+  check("v2: converged fixture has zero flags", JSON.stringify(contradictionFlags(mkJob(), mkJai(), null)) === JSON.stringify({ companyMismatch: false, africaMismatch: false, untraceableQuote: false }), contradictionFlags(mkJob(), mkJai(), null))
+  check("v2: africa drift flagged", contradictionFlags(mkJob(), mkJai({ africa_eligibility: "likely" }), null).africaMismatch === true)
+  check("v2: company drift flagged (registry company stored unknown)", contradictionFlags(mkJob(), mkJai({ company_legitimacy: "unknown" }), null).companyMismatch === true)
+  check("v2: fetch-era <title> company quote flagged", contradictionFlags(mkJob(), mkJai({ company_evidence: "<title>Jobs at Reddit</title>" }), null).untraceableQuote === true)
+  check("v2: registry company can never be stored suspicious without a flag", contradictionFlags(mkJob(), mkJai({ company_legitimacy: "suspicious", company_evidence: "pay a fee" }), null).companyMismatch === true)
+  {
+    const scamJob = mkJob({ company: "Acme Hiring Ltd", description_md: desc + "\nApplicants must pay a $50 registration fee before the interview." })
+    const scamJai = mkJai({ company_legitimacy: "suspicious", company_evidence: "Applicants must pay a $50 registration fee before the interview." })
+    check("v2: non-registry scam demotion with verbatim posting quote is legal (not a flag)", contradictionFlags(scamJob, scamJai, null).companyMismatch === false, contradictionFlags(scamJob, scamJai, null))
+    const fabricatedScam = mkJai({ company_legitimacy: "suspicious", company_evidence: "classic advance-fee fraud pattern detected" })
+    check("v2: non-registry scam demotion with unverifiable quote is a flag", contradictionFlags(scamJob, fabricatedScam, null).companyMismatch === true)
+  }
+
+  /* 15c · repair classes + heal routing (the zero-unexplained theorem) */
+  check("v2: completed africa-drift row requeues as africa_vs_adjudicator", repairClassFor(mkRec({ jai: mkJai({ africa_eligibility: "likely" }) })) === "africa_vs_adjudicator")
+  check("v2: completed company-drift row requeues as company_vs_owner", repairClassFor(mkRec({ jai: mkJai({ company_legitimacy: "unknown" }) })) === "company_vs_owner")
+  check("v2: completed bad-quote row requeues as untraceable_quote", repairClassFor(mkRec({ jai: mkJai({ remote_evidence: "not in the posting text anywhere at all" }) })) === "untraceable_quote")
+  check("v2: thin tier keeps base precedence over contradiction classes", repairClassFor(mkRec({ jai: mkJai({ model_version: "regex-extracted-8079bytes", africa_eligibility: "likely", company_legitimacy: "unknown" }) })) === "thin_tier")
+  check("v2: pre-V1 keeps base precedence over contradiction classes", repairClassFor(mkRec({ jai: mkJai({ evidence_refs: null, africa_eligibility: "likely" }) })) === "pre_v1_evidence")
+  check("v2: pending rows are not repair-scanned (already moving)", repairClassFor(mkRec({ queue: { status: "pending", error: null }, jai: mkJai({ africa_eligibility: "likely" }) })) === null)
+  check("v2 loop-guard: terminal admission rows never requeue, even with drifting JAI",
+    repairClassFor(mkRec({ queue: { status: "completed", error: "Rejected: region lock [africa_eligibility]" }, jai: mkJai({ africa_eligibility: "likely", company_legitimacy: "unknown" }) })) === null,
+    repairClassFor(mkRec({ queue: { status: "completed", error: "Rejected: region lock [africa_eligibility]" }, jai: mkJai({ africa_eligibility: "likely", company_legitimacy: "unknown" }) })))
+  {
+    const rejected = evaluateRecord(mkRec({ queue: { status: "completed", error: "Rejected: region lock [africa_eligibility]" }, jai: mkJai({ africa_eligibility: "likely", company_legitimacy: "unknown" }) }))
+    check("v2 loop-guard: rejected-row contradictions are admission_terminal, never needs_fix",
+      rejected.contradictions.length > 0 && rejected.contradictions.every((c) => c.heal === "admission_terminal"),
+      rejected.contradictions)
+  }
+
+  {
+    const evDrift = evaluateRecord(mkRec({ jai: mkJai({ africa_eligibility: "likely" }) }))
+    check("v2: every deterministic-plane contradiction on a completed row is drain-healable (never unexplained)",
+      evDrift.contradictions.length > 0 && evDrift.contradictions.every((c) => (c.heal === "drain_requeue" || c.heal === "ingest_rescore" || c.kind === "salary_jobs_vs_jai" ? true : c.heal !== "needs_fix"), ),
+      evDrift.contradictions)
+    const evPending = evaluateRecord(mkRec({ queue: { status: "pending", error: null }, jai: mkJai({ company_legitimacy: "unknown" }) }))
+    check("v2: pending-row contradiction is awaiting_processing, not needs_fix",
+      evPending.contradictions.find((c) => c.kind === "company_vs_owner")?.heal === "awaiting_processing",
+      evPending.contradictions)
+    const evFailed = evaluateRecord(mkRec({ queue: { status: "failed", error: "Rejected: all AI providers failed after 7 attempts" }, jai: mkJai({ company_legitimacy: "unknown" }) }))
+    check("v2: failed-row contradiction is awaiting_rerun (deliberate stop, explained)",
+      evFailed.contradictions.find((c) => c.kind === "company_vs_owner")?.heal === "awaiting_rerun",
+      evFailed.contradictions)
+  }
+
+  /* 15d · evidence-plane six honest cases */
+  check("v2: case never_written (no queue row)", evidenceCaseFor(mkRec({ queue: null })) === "never_written")
+  check("v2: case overwritten_by_thin_tier", evidenceCaseFor(mkRec({ jai: mkJai({ model_version: "regex-extracted-8079bytes" }) })) === "overwritten_by_thin_tier")
+  check("v2: case stale_pre_v1", evidenceCaseFor(mkRec({ jai: mkJai({ evidence_refs: null }) })) === "stale_pre_v1")
+  check("v2: case exists_and_renders", evidenceCaseFor(mkRec()) === "exists_and_renders")
+  check("v2: case collection_failed (only blocked rows)", evidenceCaseFor(mkRec({ jai: mkJai({ africa_evidence: null, salary_evidence: null }), evidence: { rowCount: 2, kinds: ["page_html"], statuses: ["blocked"] } })) === "collection_failed", evidenceCaseFor(mkRec({ jai: mkJai({ africa_evidence: null, salary_evidence: null }), evidence: { rowCount: 2, kinds: ["page_html"], statuses: ["blocked"] } })))
+  check("v2: case admission_rejected", evidenceCaseFor(mkRec({ queue: { status: "completed", error: "Rejected: region lock [africa_eligibility]" }, jai: null })) === "admission_rejected")
+
+  /* 15e0 · loop-guard 2 — the corpus adjudicator's own short location quote
+     must pass the checker (else requeue → re-mint → same quote → requeue ∞).
+     Live class: 7 stored rows (executive-assistant mongodb, deal-strategist/
+     business-value stripe …) whose location-field quotes sit under the
+     12-char quote affordance. */
+  {
+    const shortLocJob = mkJob({ location: "New York" })
+    const simBad = mkRec({ job: shortLocJob, jai: mkJai({ africa_eligibility: "unknown", africa_evidence: null }) })
+    const expAfrica = adjudicateAfricaEligibility({ title: shortLocJob.title, description_md: shortLocJob.description_md || "", location: shortLocJob.location })
+    check("v2 loop-guard2: fixture location really is restriction-locked", expAfrica.value === "restricted", expAfrica)
+    const simJai = mkJai({ africa_eligibility: "restricted", africa_evidence: expAfrica.evidence })
+    const flagsShort = contradictionFlags(shortLocJob, simJai, null)
+    check("v2 loop-guard2: corpus quote equality counts as provenance (no self-churn flag)", flagsShort.untraceableQuote === false, flagsShort)
+    const projected = evaluateRecord(projectRecord(mkRec({ job: shortLocJob, jai: simJai })))
+    check("v2 loop-guard2: short-location row converges in one pass",
+      projected.contradictions.filter((c) => c.kind === "quote_untraceable" || c.kind === "africa_vs_adjudicator").length === 0,
+      projected.contradictions)
+  }
+
+  /* 15e · drain simulation converges (projection kills every deterministic contradiction) */
+  {
+    const broken = mkRec({
+      jai: mkJai({
+        africa_eligibility: "likely",
+        africa_confidence: 55,
+        company_legitimacy: "unknown",
+        company_confidence: 22,
+        company_evidence: "<title>Jobs at Reddit</title>",
+        remote_evidence: "not in the posting text anywhere at all",
+      }),
+    })
+    const before = evaluateRecord(broken)
+    check("v2: broken fixture really carries deterministic contradictions",
+      before.contradictions.some((c) => c.kind === "africa_vs_adjudicator") && before.contradictions.some((c) => c.kind === "company_vs_owner") && before.contradictions.some((c) => c.kind === "quote_untraceable"),
+      before.contradictions.map((c) => c.kind))
+    const after = evaluateRecord(projectRecord(broken, before))
+    const remaining = after.contradictions.filter((c) => c.kind === "africa_vs_adjudicator" || c.kind === "company_vs_owner" || c.kind === "quote_untraceable")
+    check("v2: simulated drain converges all three deterministic classes to zero", remaining.length === 0, remaining)
+    check("v2: simulated drain lands the owner/company + adjudicator/africa values",
+      after.storedCompany === after.expectedCompany.value && after.storedAfrica === after.expectedAfrica.value,
+      [after.storedCompany, after.expectedCompany.value, after.storedAfrica, after.expectedAfrica.value])
+    const again = evaluateRecord(projectRecord({ ...broken, jai: { ...broken.jai!, africa_eligibility: "restricted", africa_confidence: 80, company_legitimacy: "verified", company_confidence: 95, company_evidence: null, remote_evidence: null } }))
+    check("v2: projection is idempotent on an already-converged record", again.contradictions.filter((c) => c.kind !== "trust_score_arithmetic" && c.kind !== "salary_jobs_vs_jai").length === 0, again.contradictions)
+  }
+
+  /* 15f · summarize() metric math + cohort divergence detection */
+  {
+    const good = evaluateRecord(mkRec())
+    const badCo = evaluateRecord(mkRec({ job: mkJob({ slug: "other-reddit-role" }), jai: mkJai({ company_legitimacy: "unknown" }) }))
+    const m = summarize([good, badCo])
+    check("v2: summarize counts unexplained contradictions correctly (all drain-healable here)", m.contradictions.unexplained === 0 && m.contradictions.total >= 1, m.contradictions)
+    check("v2: cohort of a flipping company is detected as divergent", m.companyConsistency.divergentCohorts >= 1, m.companyConsistency.cohorts)
+    check("v2: africa consistency counts stored-vs-adjudicator", m.africaConsistency.total === 2 && m.africaConsistency.matches === 2, m.africaConsistency)
+  }
+
+  /* 15g · structural boundaries */
+  {
+    const root = join(dirname(fileURLToPath(import.meta.url)), "..")
+    const engineSrc = readFileSync(join(root, "lib", "ai", "engine.ts"), "utf8")
+    check("v2 boundary: engine repair pass decides with the shared pure functions",
+      engineSrc.includes("contradictionRepairDecision(contradictionFlags("))
+    check("v2 boundary: engine has the canonical-plane sync on the protected path",
+      engineSrc.includes("plane_sync_error") && engineSrc.includes("[V2 CANONICAL-PLANE SYNC]"))
+    const routeSrc = readFileSync(join(root, "app", "api", "validation", "truth-layer-v2", "route.ts"), "utf8")
+    const writes = [".insert(", ".update(", ".upsert(", ".delete(", ".rpc("].filter((w) => routeSrc.includes(w))
+    check("v2 boundary: validation endpoint is provably read-only (no DML in source)", writes.length === 0, writes)
+    check("v2 boundary: endpoint never emits raw model_version (provider secrecy)", !routeSrc.includes("model_version:") || routeSrc.includes('"v2-simulated"'))
+    check("v2 boundary: endpoint never returns evidence excerpts (kinds/statuses only)", !routeSrc.includes("excerpt"))
+    const uiFilesList = (() => { const walk = (dir: string): string[] => { const out: string[] = []; for (const e of readdirSync(dir)) { if (e === "node_modules" || e.startsWith(".")) continue; const p = join(dir, e); const st = statSync(p); if (st.isDirectory()) out.push(...walk(p)); else if (/\.(ts|tsx)$/.test(e)) out.push(p) } return out }; return [...walk(join(root, "app", "jobs")), ...walk(join(root, "app", "role")), ...walk(join(root, "components"))] })().filter((p) => existsSync(p))
+    const v2Leak = uiFilesList.filter((p) => readFileSync(p, "utf8").includes("lib/validation/truth-v2"))
+    check("v2 boundary: render never imports the validation module", v2Leak.length === 0, v2Leak)
+  }
+}

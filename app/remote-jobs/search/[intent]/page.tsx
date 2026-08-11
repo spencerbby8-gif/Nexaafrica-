@@ -81,6 +81,10 @@ export default async function IntentPage({ params }: { params: Promise<Params> }
   const baseLimit = intent.titleKeywords ? 120 : intent.filters.limit ?? 24
   const candidates = await getJobsWithAI({ ...intent.filters, limit: baseLimit })
   const matched = applyTitleKeywords(candidates, intent.titleKeywords)
+  // [ARCHITECTURE — single-owner doctrine] Page membership follows the
+  // canonical stored flags (set at ingest / re-verification). The render
+  // layer must not re-decide which jobs qualify; stale rows are healed at
+  // the write path, never masked at render.
   const jobs = matched.slice(0, intent.filters.limit ?? 24)
 
   const url = `/remote-jobs/search/${slug}`

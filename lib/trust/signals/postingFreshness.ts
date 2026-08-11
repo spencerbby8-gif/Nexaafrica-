@@ -7,8 +7,31 @@ export function postingFreshnessSignal(job: Job): TrustSignal {
   const expiresAt = job.expires_at ? new Date(job.expires_at).getTime() : null
   const createdAt = new Date(job.created_at).getTime()
 
+  // [TRUTH LAYER v1] Fabricated-date honesty. Several feeds publish no real
+  // posting date; ingest then coalesces posted_at := created_at (DB trigger),
+  // which made EVERY such job read "Fresh • 0 days" (+12) forever — fabricated
+  // freshness evidence at scale (audit P2-2). Detector: posted_at ===
+  // created_at to the millisecond can only arise from the coalesce path.
+  // Honest treatment: no freshness impact, and the signal says why.
+  const fabricatedDate =
+    postedAt != null && postedAt === createdAt
+
   const effectivePosted = postedAt || createdAt
   const ageDays = (now - effectivePosted) / (1000 * 60 * 60 * 24)
+
+  if (fabricatedDate) {
+    return {
+      id: "posting_freshness",
+      label: "Listed recently · no date from source",
+      scoreImpact: 0,
+      confidence: "low",
+      tone: "neutral",
+      explanation:
+        "This source publishes no posting date, so Nexa cannot verify freshness. The listing time shown is when Nexa ingested it — not evidence of freshness.",
+      evidence: `Ingested: ${job.created_at}`,
+      source: "freshness",
+    }
+  }
 
   if (expiresAt && expiresAt < now) {
     return {

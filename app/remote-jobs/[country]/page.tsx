@@ -54,6 +54,10 @@ export default async function CountryHubPage({
       ? { openToAfrica: true, limit: 60 }
       : { country: c.name, limit: 60 }
 
+  // [ARCHITECTURE — single-owner doctrine] Hub membership is a stored-flag
+  // decision made at ingest/re-verification (the canonical planes); the
+  // render layer must not re-decide which jobs qualify for the page.
+  // Stale membership rows are healed at the write path, never masked here.
   const [jobs, total, categories] = await Promise.all([
     getJobsWithAI(filter),
     countJobs(filter),

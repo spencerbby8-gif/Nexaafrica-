@@ -83,6 +83,62 @@ export function calculateTrustScore(job: Job, ctx?: TrustContext): TrustResult {
 }
 
 
+/** Signal ids that require measured learning context (TrustContext) — kept
+ * from the persisted set during a rescore, since per-row rescoring without
+ * ctx cannot rebuild measured history. */
+const PERSISTED_LEARNING_IDS = new Set(["company_history", "company_learning", "source_learning"])
+
+/**
+ * [ARCHITECTURE 2026-08-05 — single-owner doctrine] WRITE-PLANE rescore.
+ *
+ * Recomputes a row's trust with the CURRENT signal weights/copy while
+ * preserving the persisted measured-learning entries (company_history /
+ * company_learning / source_learning encode real measured history that a
+ * per-row rescore cannot rebuild without its context). Downstream fields
+ * (confidence, warning, flag) are derived from the merged set exactly as
+ * calculateTrustScore derives them.
+ *
+ * Consumers: the write path ONLY — POST /api/jobs/backfill-trust and any
+ * re-verification pass — which PERSISTS the result. The render layer must
+ * NEVER call this: it displays the persisted trust_signals / trust_score.
+ * Stale truth is healed here; it is never masked at render. (This is the
+ * computation that used to run at read time — reverted under the doctrine.
+ * Render now shows the stored plane, and old rows are re-healed by rescore.)
+ */
+export function rescoreTrustSignals(job: Job, ctx?: TrustContext): TrustResult & { rawSum: number } {
+  let fresh: TrustSignal[] = []
+  try {
+    fresh = calculateTrustScore(job, ctx).signals
+  } catch {
+    fresh = []
+  }
+  const persisted: TrustSignal[] = Array.isArray((job as any).trust_signals) ? (job as any).trust_signals : []
+  const keptLearning = persisted.filter((s) => s && PERSISTED_LEARNING_IDS.has((s as any).id))
+
+  let signals: TrustSignal[]
+  if (fresh.length === 0 && keptLearning.length === 0) {
+    signals = persisted // total fallback: old persisted set (better than nothing)
+  } else {
+    const freshIds = new Set(fresh.map((s) => s.id))
+    signals = [...fresh, ...keptLearning.filter((s) => !freshIds.has((s as any).id))] as TrustSignal[]
+  }
+  const rawSum = Math.round(50 + signals.reduce((acc, s) => acc + (Number((s as any).scoreImpact) || 0), 0))
+  const score = Math.max(0, Math.min(100, rawSum))
+
+  const hasWarning = signals.some((s) => s.tone === "warning")
+  const isWarning = hasWarning || score < 40
+  const isFlagged = score < 30 || signals.some((s) => s.id === "scam_indicators" && s.scoreImpact <= -15)
+  let flaggedReason: string | undefined
+  if (isFlagged) {
+    const worst = signals.filter((s) => s.tone === "warning").sort((a, b) => a.scoreImpact - b.scoreImpact)[0]
+    flaggedReason = worst ? `${worst.label}: ${worst.explanation}` : `Low trust score ${score}`
+  }
+  const confidence = calculateConfidence(signals)
+
+  return { score, confidence, version: TRUST_VERSION, signals, isFlagged, flaggedReason, isWarning, rawSum }
+}
+
+
 /**
  * UNIFIED trust score — one truth path.
  *
@@ -101,14 +157,45 @@ export function calculateTrustScore(job: Job, ctx?: TrustContext): TrustResult {
  *   no AI evidence yet  -> legitimacy * 0.4  (real listing, not yet analysed)
  *   AI evidence present  -> legitimacy * 0.4 + evidence * 0.6
  */
+/**
+ * [TRUTH LAYER v1] Soft cap. The old hard clamps (min(score, 59)) quantized
+ * every above-cap score to the SAME value — production sample: ~30/30 cards
+ * rendered identical 59; evidence 19% and evidence 95% were indistinguishable
+ * (audit P1-2). A compressed cap keeps the protective ceiling (unverified or
+ * restricted Africa, or a blocked page, must never read as Trusted/Highly
+ * Trusted for an African audience) while preserving evidence-driven ordering
+ * beneath it: score' = cap - (100 - score) * CAP_SLOPE for score > cap.
+ * Monotone, bounded (<= cap), and honest: stronger evidence always shows a
+ * higher number; the BEST an unverified job can show is just under Trusted.
+ */
+const TRUST_CAP = 59
+const CAP_SLOPE = 0.35
+export function softCapTrust(score: number, cap: number = TRUST_CAP): number {
+  if (score <= cap) return score
+  return Math.max(0, Math.min(cap, Math.round(cap - (100 - score) * CAP_SLOPE)))
+}
+
 export function unifiedTrustScore(
   job: Job,
-  ai?: { overall_confidence?: number | null; africa_eligibility?: string | null; last_verified_at?: string | null; evidence_refs?: any; evidence_provenance?: string | null; page_status?: number | null } | null,
+  ai?: { overall_confidence?: number | null; africa_eligibility?: string | null } | null,
 ): number {
+  // [ARCHITECTURE 2026-08-05 — single-owner doctrine] This is a PRESENTATION
+  // METRIC over canonical persisted inputs ONLY: the persisted listing-
+  // legitimacy score (written by the Trust Engine at ingest / rescore) and
+  // the persisted Nexa Intelligence overall_confidence. It performs no new
+  // intelligence at render — no freshness decay, no richness or provenance
+  // bonuses, no page-status re-judgement, no corpus re-arbitration. Evidence
+  // age/depth are weighed by the verifier plane into overall_confidence at
+  // write time, and stale signal weights are healed by the rescore backfill
+  // (POST /api/jobs/backfill-trust).
   const legitimacyRaw = (job as any).trust_score
   const legitimacy =
     typeof legitimacyRaw === "number"
       ? legitimacyRaw
+      // Compute-on-miss: a row never scored by the write path is scored by
+      // the Trust Engine itself (the canonical owner) — never by render-
+      // invented logic. New ingests persist a score; this fallback exists
+      // only for legacy rows lacking one.
       : (calculateTrustScore(job).score ?? 50)
   const evidence = ai?.overall_confidence
   let score =
@@ -116,33 +203,12 @@ export function unifiedTrustScore(
       ? Math.round(legitimacy * 0.4)
       : Math.round(legitimacy * 0.4 + evidence * 0.6)
 
-  // [V1] Dynamic evidence adjustments — every delta derives from stored
-  // fields, never static. The same job's score moves as its evidence ages,
-  // grows, or gets blocked.
-  //  a) Evidence freshness: verification older than 7d loses a little,
-  //     older than 30d loses more (stale evidence = weaker trust).
-  const verifiedMs = ai?.last_verified_at ? Date.now() - new Date(ai.last_verified_at).getTime() : Infinity
-  const verifiedDays = verifiedMs / 86_400_000
-  if (verifiedDays > 30) score -= 8
-  else if (verifiedDays > 7) score -= 4
-
-  //  b) Evidence richness: more dimensions with stored evidence => +2
-  //     (capped), from evidence_refs.dimensionCount when present.
-  const dimCount = Number(ai?.evidence_refs?.dimensionCount) || 0
-  if (dimCount >= 5) score += 2
-  else if (dimCount >= 3) score += 1
-
-  //  c) Evidence quality: page-level verification provenance adds a small
-  //     confidence bonus; dead pages (404/410) reduce trust.
-  const prov = ai?.evidence_provenance ?? null
-  if (prov === "company_page" || prov === "page") score += 2
-  const pageStatus = Number(ai?.page_status) || 0
-  if (pageStatus === 404 || pageStatus === 410) score -= 10
-
-  //  d) Job-level crawler state: a blocked page caps trust (evidence
-  //     couldn't be read — never pretend otherwise).
+  // Job-level crawler state (stored, canonical plane): a blocked page caps
+  // trust — evidence couldn't be read, never pretend otherwise. [C3] The
+  // cap decision is the pre-existing rule; the soft cap is its monotone,
+  // order-preserving presentation and alters no business decision.
   const evState = (job as any).evidence_state ?? null
-  if (evState === "blocked") score = Math.min(score, 59)
+  if (evState === "blocked") score = softCapTrust(score)
 
   score = Math.max(0, Math.min(100, score))
 
@@ -150,8 +216,11 @@ export function unifiedTrustScore(
   // verdict says Africa eligibility is unknown or restricted, the job can
   // never display as Trusted/Highly Trusted for an African audience —
   // cap at Moderate Trust (59) until the AI verifies it.
+  // [ARCHITECTURE — single-owner doctrine] The cap gates on the CANONICAL
+  // stored verdict. The render layer never re-arbitrates it; a stale
+  // verdict is healed by re-verification/backfill, never masked here.
   const africa = ai?.africa_eligibility
-  if (africa === 'unknown' || africa === 'restricted') return Math.min(score, 59)
+  if (africa === 'unknown' || africa === 'restricted') return softCapTrust(score)
   return score
 }
 

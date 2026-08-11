@@ -1,16 +1,20 @@
 import type { Job } from "@/lib/types"
 import type { TrustSignal } from "../types"
-import { INGEST_SOURCES } from "@/lib/ingest/companies"
-
-const CURATED_COMPANIES = new Set(INGEST_SOURCES.map(s => s.company.toLowerCase()))
+import { companyLegitimacyOwner } from "@/lib/company/legitimacy"
 
 export function employerLegitimacySignal(job: Job): TrustSignal | null {
-  const companyLower = job.company.toLowerCase().trim()
   const hasLogo = !!job.company_logo
-  const isCurated = CURATED_COMPANIES.has(companyLower) || CURATED_COMPANIES.has(job.company)
+  // [§17 CANONICAL COMPANY PLANE] The trust plane never re-derives company
+  // identity on its own: it asks the single canonical owner. "Verified
+  // employer" asserts exactly what the JAI row asserts — the same registry,
+  // the same basis sentence.
+  // [V2] Channel-authenticated: the registry premise is "this job arrived
+  // via the company's official ATS feed". A third-party board naming the
+  // same company never inherits the verified verdict.
+  const verdict = companyLegitimacyOwner({ company: job.company, source: (job as any).source ?? null, sourceId: (job as any).source_id ?? null })
 
-  // Known high-trust companies (from curated list)
-  if (isCurated) {
+  // Known high-trust companies (canonical owner: curated registry)
+  if (verdict.value === "verified") {
     return {
       id: "employer_legitimacy",
       label: "Verified employer",
@@ -24,13 +28,18 @@ export function employerLegitimacySignal(job: Job): TrustSignal | null {
   }
 
   if (hasLogo) {
+    // [TRUTH LAYER v1] A logo is branding metadata, NOT evidence of
+    // legitimacy. Proven live: a first-seen recruiting agency reached raw
+    // trust_score 100 partly via "+8 logo indicates legitimate employer
+    // presence". Logos are trivially copyable by scammers; they earn a
+    // small presentation-quality point with honest copy, nothing more.
     return {
       id: "employer_legitimacy",
-      label: "Employer with logo",
-      scoreImpact: 8,
-      confidence: "medium",
-      tone: "positive",
-      explanation: `Listing includes company logo and uses official ATS source (${job.source || "direct"}), indicating legitimate employer presence.`,
+      label: "Employer branding present",
+      scoreImpact: 3,
+      confidence: "low",
+      tone: "neutral",
+      explanation: `Listing includes a company logo via the ${job.source || "source"} feed. A logo is cosmetic metadata — it is not proof that the employer is legitimate.`,
       evidence: job.company_logo || undefined,
       source: "company",
     }

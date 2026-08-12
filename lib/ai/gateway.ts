@@ -70,6 +70,12 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
         config: {
           systemInstruction: req.systemInstruction, temperature: req.temperature ?? 0.3,
           maxOutputTokens: req.maxTokens ?? 1024,
+          // Gemini 3.x models think by default. For structured extraction and
+          // CV transformation we need fast, deterministic JSON — thinking
+          // burned the token budget in the live JSON probe (gemini-3.5-flash
+          // returned unusable output at 6.9s latency, 2026-08-12) and adds
+          // latency to every call. thinkingBudget 0 = no hidden reasoning.
+          thinkingConfig: { thinkingBudget: 0 },
           ...(req.responseSchema ? { responseMimeType:"application/json", responseSchema:req.responseSchema } : {}),
         },
         }),

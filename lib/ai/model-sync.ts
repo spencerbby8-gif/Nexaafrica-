@@ -101,7 +101,19 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
       res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 16 } }),
+        // [V2.2] Gemini 3.x thinks by default: with a 16-token budget the
+        // probe measured thinking noise instead of JSON capability
+        // (gemini-3.5-flash → structuredJSON:false at 6.9s, 2026-08-12).
+        // Disable thinking, raise the budget, and force JSON MIME so the
+        // probe actually measures what the pipeline needs.
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            maxOutputTokens: 256,
+            thinkingConfig: { thinkingBudget: 0 },
+            responseMimeType: 'application/json',
+          },
+        }),
         signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
       })
     } else if (provider === 'cloudflare') {

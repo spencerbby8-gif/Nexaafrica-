@@ -75,7 +75,7 @@ export async function parseCvWithGemini(rawText: string): Promise<ParseResult> {
 
   // Route through the Smart Router via aiGateway
   // agentId "cv:parsing" triggers taskType detection → "cv_parsing"
-  const gwResult = await aiGateway({
+  let gwResult = await aiGateway({
     prompt,
     systemInstruction: SYSTEM_INSTRUCTION,
     agentId: "cv:parsing",
@@ -97,25 +97,83 @@ export async function parseCvWithGemini(rawText: string): Promise<ParseResult> {
     json = JSON.parse(cleaned)
   }
 
-  const parsed = validateParsedProfile(json)
+  try {
+    const parsed = validateParsedProfile(json)
 
-  console.log(JSON.stringify({
-    scope: "cv_parsing",
-    event: "parsed_success",
-    provider: gwResult.response.provider,
-    model: gwResult.response.model,
-    latencyMs: gwResult.response.latencyMs,
-    fallbackUsed: gwResult.fallbackUsed,
-    tokensIn: gwResult.response.tokensInput,
-    tokensOut: gwResult.response.tokensOutput,
-  }))
+    console.log(JSON.stringify({
+      scope: "cv_parsing",
+      event: "parsed_success",
+      provider: gwResult.response.provider,
+      model: gwResult.response.model,
+      latencyMs: gwResult.response.latencyMs,
+      fallbackUsed: gwResult.fallbackUsed,
+      tokensIn: gwResult.response.tokensInput,
+      tokensOut: gwResult.response.tokensOutput,
+    }))
 
-  return {
-    parsed,
-    tokensInput: gwResult.response.tokensInput,
-    tokensOutput: gwResult.response.tokensOutput,
-    provider: gwResult.response.provider,
-    model: gwResult.response.model,
+    return {
+      parsed,
+      tokensInput: gwResult.response.tokensInput,
+      tokensOutput: gwResult.response.tokensOutput,
+      provider: gwResult.response.provider,
+      model: gwResult.response.model,
+    }
+  } catch (firstError) {
+    // [V2.2] CV resilience: the first provider returned unusable output
+    // (unparseable JSON or an invalid profile). That is a ROUTER failure,
+    // not a product failure — record it (cooldown + re-ranking) and retry
+    // ONCE through the orchestrator so a healthy JSON-capable provider
+    // (e.g. gemini-3.5-flash-lite) gets the job. Mirrors the verifier's
+    // Phase-1 retry. Bounded: exactly one retry.
+    if (gwResult.fallbackChain.length !== 1) throw firstError
+    const provider = gwResult.response.provider
+    const model = gwResult.response.model
+    console.log(JSON.stringify({ scope: "cv_parsing", event: "json_retry", provider, model }))
+    try {
+      const { recordRouterFailure } = await import("@/lib/ai/smart-router")
+      recordRouterFailure(provider, "cv_parse_failed: model returned unusable output for profile transformation")
+    } catch {}
+    try {
+      const { orchestrate } = await import("@/lib/ai/orchestrator")
+      const gw2 = await orchestrate({
+        prompt,
+        systemInstruction: SYSTEM_INSTRUCTION,
+        agentId: "cv:parsing",
+        temperature: 0.75,
+        maxTokens: 3000,
+      })
+      const text2 = gw2.response.text
+      if (!text2) throw new Error("Empty response from model on retry.")
+      let json2: unknown
+      try {
+        json2 = JSON.parse(text2)
+      } catch {
+        const cleaned2 = text2
+          .replace(/^```(?:json)?/i, "")
+          .replace(/```$/i, "")
+          .trim()
+        json2 = JSON.parse(cleaned2)
+      }
+      const parsed2 = validateParsedProfile(json2)
+      console.log(JSON.stringify({
+        scope: "cv_parsing",
+        event: "parsed_success_after_retry",
+        provider: gw2.response.provider,
+        model: gw2.response.model,
+        latencyMs: gw2.response.latencyMs,
+      }))
+      return {
+        parsed: parsed2,
+        tokensInput: gw2.response.tokensInput,
+        tokensOutput: gw2.response.tokensOutput,
+        provider: gw2.response.provider,
+        model: gw2.response.model,
+      }
+    } catch (retryError) {
+      // Both attempts failed — surface the ORIGINAL error so the user sees
+      // the real cause, not a nested retry exception.
+      throw firstError
+    }
   }
 }
 

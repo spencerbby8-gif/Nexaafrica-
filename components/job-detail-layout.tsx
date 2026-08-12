@@ -152,6 +152,8 @@ export function JobDetailLayout({ companyJobCount,
   isAuthed = false,
   initialSaved = false,
   aiIntelligence,
+  companyIntel,
+  sourceIntel,
 }: {
   companyJobCount?: number | null
   job: Job
@@ -160,6 +162,11 @@ export function JobDetailLayout({ companyJobCount,
   isAuthed?: boolean
   initialSaved?: boolean
   aiIntelligence?: JobAIIntelligenceRow | null
+  /** [V1-HONESTY] Live learning rows fetched fresh on the role page — the
+   * trust engine consumes them so rendered signals always match the live
+   * Company Intelligence panel (2026-08-12 deep audit F2/F3). */
+  companyIntel?: Record<string, any> | null
+  sourceIntel?: Record<string, any> | null
 }) {
   const employment = employmentLabel(job.employment_type)
   // Freshness + posted label derive from the real provider posting date.
@@ -314,7 +321,7 @@ export function JobDetailLayout({ companyJobCount,
           // For SSR, this is pure and fast (<5ms)
           try {
             // @ts-ignore - allow optional fields
-            const detTrust = (job as any).trust_score != null && (job as any).trust_signals?.length
+            const persisted = (job as any).trust_score != null && (job as any).trust_signals?.length
               ? {
                   score: (job as any).trust_score,
                   confidence: (job as any).trust_confidence || "medium",
@@ -324,14 +331,37 @@ export function JobDetailLayout({ companyJobCount,
                   flaggedReason: (job as any).flagged_reason,
                   isWarning: ((job as any).trust_score || 0) < 40,
                 }
-              : calculateTrustScore(job)
+              : null
+            // [V1-HONESTY] Trust is computed from LIVE context: the page
+            // fetched companyIntel/sourceIntel fresh and counted
+            // companyJobCount live, so the rendered signals always match the
+            // live Company Intelligence panel. Persisted jobs.trust_signals
+            // are ingest-time snapshots that contradicted the panel
+            // (2026-08-12 deep audit F2: company_history 645 vs panel 659;
+            // F3: the honest company_learning logic never rendered). The
+            // persisted snapshot is only a fallback if live compute fails.
+            let detTrust: ReturnType<typeof calculateTrustScore>
+            try {
+              detTrust = calculateTrustScore(job, {
+                companyJobCount: companyJobCount ?? 0,
+                companyIntel: (companyIntel as any) || null,
+                sourceIntel: (sourceIntel as any) || null,
+              })
+            } catch {
+              detTrust = persisted ?? calculateTrustScore(job)
+            }
             // Unified: listing legitimacy blended with AI opportunity-evidence.
             const aiConf = (aiIntelligence as any)?.overall_confidence ?? null
-            const trust = { ...(detTrust as any), score: unifiedTrustScore(job, aiIntelligence as any) }
-            const capNote = unifiedCapNote((aiIntelligence as any)?.africa_eligibility ?? null, (job as any).evidence_state ?? null)
+            const trust = { ...detTrust, score: unifiedTrustScore(job, aiIntelligence as any) }
+            let capNote = unifiedCapNote((aiIntelligence as any)?.africa_eligibility ?? null, (job as any).evidence_state ?? null)
+            // [V1-HONESTY] No AI evidence -> say so explicitly instead of a
+            // bare low score with no reason (2026-08-12 deep audit F6).
+            if (!capNote && aiConf == null && trust.score < 60) {
+              capNote = 'No AI evidence yet — this score reflects listing legitimacy only. Nexa Intelligence will verify the role.'
+            }
             return (
               <>
-                <TrustCard trust={trust as any} legitimacyScore={(job as any).trust_score ?? detTrust.score} aiConfidence={aiConf} capNote={capNote} />
+                <TrustCard trust={trust as any} legitimacyScore={detTrust.score} aiConfidence={aiConf} capNote={capNote} />
                 <div className="mt-4 flex justify-end">
                   <ReportButton jobId={job.id} jobSlug={job.slug} />
                 </div>

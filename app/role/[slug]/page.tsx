@@ -295,6 +295,8 @@ export default async function RolePage({ params }: { params: Promise<Params> }) 
         initialSaved={initialSaved}
         aiIntelligence={aiIntelligence}
         companyJobCount={companyJobCount}
+        companyIntel={companyIntel}
+        sourceIntel={sourceIntel}
       />
 
       <div className="mx-auto mt-6 max-w-6xl px-4 sm:px-6">

@@ -338,7 +338,7 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
 
     const queue = await fetchAllRows<any>(sb, 'ai_processing_queue', 'job_id, status, error')
     const logs = await fetchAllRows<any>(sb, 'ai_provider_log', 'job_id')
-    const jai = await fetchAllRows<any>(sb, 'job_ai_intelligence', 'job_id, quality_score, africa_eligibility')
+    const jai = await fetchAllRows<any>(sb, 'job_ai_intelligence', 'job_id, quality_score, africa_eligibility, page_status')
 
     // Ingest-run history for reliability: source column is like
     // "greenhouse:stripe" or "remoteok:api" — key by the prefix.
@@ -391,9 +391,11 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
     for (const r of (queue || [])) queueMap.set(r.job_id, r)
     const jaiQuality = new Map<string, number | null>()
     const jaiElig = new Map<string, string | null>()
+    const jaiPageStatus = new Map<string, number | null>()
     for (const r of (jai || [])) {
       jaiQuality.set(r.job_id, r.quality_score ?? null)
       jaiElig.set(r.job_id, r.africa_eligibility ?? null)
+      jaiPageStatus.set(r.job_id, r.page_status ?? null)
     }
 
     const stats = new Map<string, any>()
@@ -418,6 +420,10 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
       const qScore = jaiQuality.get((job as any).id)
       if (qScore != null && qScore >= 40) s.verified++
       if (isRejected) s.rejected++ // gate-rejected
+      // [V1-HONESTY] dead links = AI-verified page status >= 400 (was never
+      // populated — dead_link_count stayed 0, deep audit F5).
+      const pageStatus = jaiPageStatus.get((job as any).id)
+      if (pageStatus != null && pageStatus >= 400) s.dead++
       if (q?.error?.toLowerCase().includes('duplicate')) s.dup++
       if (job.expires_at && new Date(job.expires_at).getTime() < now) s.expired++
       if (job.posted_at) {

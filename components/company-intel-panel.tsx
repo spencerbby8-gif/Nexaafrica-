@@ -35,8 +35,11 @@ export function CompanyIntelPanel({ companyIntel, sourceIntel, company }: Props)
     ? Math.round(Number(companyIntel.remote_friendliness) * 100) : null
 
   // [V1-HONESTY] AI-truth Africa metrics: africa_rate = AI-confirmed open /
-  // all active postings; unknown share surfaced alongside so a low rate is
-  // never read as "closed" when it really means "not yet verified".
+  // all active postings; unknown share surfaced ALWAYS alongside, plus the
+  // judged count, so a low rate can never be read as "closed" when it mostly
+  // means "not yet verified". (2026-08-12 deep audit F4: hiding the unknown
+  // share when decided >= 8 hid it exactly when it was biggest — e.g. Stripe
+  // 95% unjudged.)
   const africaRate = companyIntel?.africa_rate != null && Number(companyIntel.africa_rate) > 0
     ? Math.round(Number(companyIntel.africa_rate) * 100) : 0
   const africaUnknownShare = companyIntel?.africa_unknown_share != null
@@ -89,7 +92,7 @@ export function CompanyIntelPanel({ companyIntel, sourceIntel, company }: Props)
             <Globe2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
             <span className="text-muted-foreground">Africa-open (AI-confirmed):</span>
             <span className="ml-auto font-medium">
-              {africaDecided >= 8 ? `${africaRate}%` : `${africaRate}% · ${africaUnknownShare}% unknown`}
+              {africaRate}% · {africaUnknownShare}% unknown ({africaDecided} judged)
             </span>
           </div>
           {salaryConsistency && (

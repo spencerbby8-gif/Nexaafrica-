@@ -44,13 +44,6 @@ export async function POST(req: Request) {
   let companyIntel: unknown = null
   let sourceIntel: unknown = null
   if (chain === 0) {
-    // Refresh company + source intelligence (learning layer)
-    try {
-      const { refreshCompanyIntelligence, refreshSourceIntelligence } = await import('@/lib/ai/admission')
-      const [ci, si] = await Promise.all([refreshCompanyIntelligence(), refreshSourceIntelligence()])
-      companyIntel = ci
-      sourceIntel = si
-    } catch {}
     try {
       const { syncLiveModelRegistry } = await import('@/lib/ai/model-sync')
       modelSync = await syncLiveModelRegistry({
@@ -73,6 +66,19 @@ export async function POST(req: Request) {
     stale = await runDeactivateStale()
   } catch (e) {
     stale = { error: (e instanceof Error ? e.message : String(e)).slice(0, 200) }
+  }
+
+  // [V1-HONESTY] Learning refresh runs AFTER the deactivation sweep (chain
+  // head only) so company/source intelligence reflects the post-sweep state —
+  // previously it ran before deactivation, leaving stored totals (e.g. ashby
+  // 1,189 vs 708 active) stale for a whole day.
+  if (chain === 0) {
+    try {
+      const { refreshCompanyIntelligence, refreshSourceIntelligence } = await import('@/lib/ai/admission')
+      const [ci, si] = await Promise.all([refreshCompanyIntelligence(), refreshSourceIntelligence()])
+      companyIntel = ci
+      sourceIntel = si
+    } catch {}
   }
 
   // ── Drain chain: keep processing while there is real progress ──────

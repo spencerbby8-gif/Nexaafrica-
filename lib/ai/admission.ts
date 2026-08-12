@@ -93,61 +93,57 @@ export function admit(job: AdmissionJob): AdmissionDecision {
 /**
  * Populate company_intelligence from live production data.
  * Called periodically (e.g. at chain head) to keep learning fresh.
+ *
+ * [V1-HONESTY] Fixes from the 2026-08-12 live audit:
+ *  - PRIMARY path: server-side refresh_company_intelligence() — the whole
+ *    upsert runs inside Postgres, bypassing PostgREST's 1,000-row mutation
+ *    cap that silently left ~306 companies (everything after "Quizzly.ai",
+ *    incl. Stripe/Ramp/Reddit/Spotify/Supabase/Zapier) permanently stale.
+ *  - Metrics are AI-truth: africa_rate = AI-confirmed open / all postings;
+ *    remote_friendliness = AI fully-remote share; verified = quality>=40.
+ *  - The legacy deterministic share is preserved as flag_africa_rate and is
+ *    what the ingest gate + crawl priority read (behavior-preserving).
+ *  - Fallbacks below are CHUNKED (250 rows/request) so they can never hit
+ *    the same cap.
  */
 export async function refreshCompanyIntelligence(): Promise<{ updated: number }> {
   const { createServiceClient } = await import('@/lib/supabase/service')
   const sb = createServiceClient()
 
-  // Aggregate per-company metrics from jobs + intelligence + queue
-  let data: any = null
-  try { const r = await sb.rpc('aggregate_company_intelligence' as any); data = r.data } catch {}
-  if (data && Array.isArray(data) && data.length > 0) {
-    // [STABILIZATION] Persist RPC results — the RPC is the source of truth
-    // for company learning; without this upsert the learning never lands.
-    const rows = (data as any[]).map((c: any) => ({
-      company: c.company,
-      total_jobs: c.total_jobs ?? 0,
-      africa_eligible_jobs: c.africa_eligible_jobs ?? 0,
-      remote_jobs: c.remote_jobs ?? 0,
-      rejected_jobs: c.rejected_jobs ?? 0,
-      dead_page_count: c.dead_page_count ?? 0,
-      verified_count: c.verified_count ?? 0,
-      africa_rate: c.africa_rate ?? 0,
-      rejection_rate: c.rejection_rate ?? 0,
-      verification_rate: c.verification_rate ?? 0,
-      trust_avg: c.trust_avg ?? null,
-      // [V2] learning-layer metrics
-      hiring_velocity_30d: c.hiring_velocity_30d ?? 0,
-      salary_consistency: c.salary_consistency ?? 0,
-      duplicate_count: c.duplicate_count ?? 0,
-      scam_reports: c.scam_reports ?? 0,
-      avg_ai_confidence: c.avg_ai_confidence ?? null,
-      // [V4] long-term hiring behavior + remote friendliness
-      first_posted_at: c.first_posted_at ?? null,
-      last_posted_at: c.last_posted_at ?? null,
-      active_months: c.active_months ?? 0,
-      distinct_months: c.distinct_months ?? 0,
-      remote_friendliness: c.remote_friendliness ?? 0,
-      priority: (c.total_jobs ?? 0) > 5 && ((c.rejection_rate ?? 0) >= 0.4 || (c.africa_rate ?? 1) < 0.2) ? 0 : 1,
-      last_updated: new Date().toISOString(),
-    }))
-    const { error: upErr } = await sb.from('company_intelligence').upsert(rows, { onConflict: 'company' })
-    if (upErr) console.error('[company_intel] RPC upsert error:', upErr.message?.slice(0, 150))
-    return { updated: rows.length }
+  // Primary: atomic server-side upsert + prune. No row cap, no partial writes.
+  try {
+    const { data, error } = await sb.rpc('refresh_company_intelligence' as any)
+    if (!error && typeof data === 'number' && data > 0) {
+      console.log(JSON.stringify({ scope: 'company_intel', event: 'refresh_ok', updated: data }))
+      return { updated: data }
+    }
+  } catch (e) {
+    console.warn('[company_intel] server-side refresh unavailable:', e instanceof Error ? e.message.slice(0, 120) : String(e).slice(0, 120))
   }
 
-  // Fallback: manual aggregation if RPC doesn't exist
+  // Fallback 1: aggregate RPC + chunked upsert (never >250 rows/request)
   try {
-    // [CAP-FIX] Paginated fetch — same 1,000-row cap applied to this fallback.
+    const { data } = await sb.rpc('aggregate_company_intelligence' as any)
+    if (data && Array.isArray(data) && data.length > 0) {
+      const rows = (data as any[]).map((c: any) => mapCompanyRow(c))
+      for (let i = 0; i < rows.length; i += 250) {
+        const { error: upErr } = await sb.from('company_intelligence').upsert(rows.slice(i, i + 250), { onConflict: 'company' })
+        if (upErr) console.error('[company_intel] chunked upsert error:', upErr.message?.slice(0, 150))
+      }
+      return { updated: rows.length }
+    }
+  } catch (e) {
+    console.warn('[company_intel] aggregate RPC unavailable:', e instanceof Error ? e.message.slice(0, 120) : String(e).slice(0, 120))
+  }
+
+  // Fallback 2: manual aggregation (legacy) — honest metrics + chunked upsert
+  try {
     const jobs = await fetchAllActiveJobs(sb, 'id, company, is_open_to_africa, is_remote, is_active, source, posted_at, salary_range, duplicate_of')
-
-    const intel = await fetchAllRows<any>(sb, 'job_ai_intelligence', 'job_id, model_version, africa_eligibility, page_status, overall_confidence')
-
+    const intel = await fetchAllRows<any>(sb, 'job_ai_intelligence', 'job_id, model_version, africa_eligibility, remote_eligibility, page_status, quality_score, overall_confidence')
     const queue = await fetchAllRows<any>(sb, 'ai_processing_queue', 'job_id, status, error')
 
     const intelMap = new Map<string, any>()
     for (const r of (intel || [])) intelMap.set(r.job_id, r)
-
     const queueMap = new Map<string, any>()
     for (const r of (queue || [])) queueMap.set(r.job_id, r)
 
@@ -156,16 +152,23 @@ export async function refreshCompanyIntelligence(): Promise<{ updated: number }>
     for (const job of (jobs || [])) {
       const key = job.company
       if (!key) continue
-      const s = stats.get(key) || { company: key, total: 0, africa: 0, remote: 0, rejected: 0, dead: 0, verified: 0, velocity: 0, salary: 0, dup: 0, confSum: 0, confN: 0 }
+      const s = stats.get(key) || { company: key, total: 0, open: 0, restricted: 0, unknown: 0, decided: 0, flagOpen: 0, remoteFull: 0, remoteOther: 0, remoteUnknown: 0, rejected: 0, dead: 0, verified: 0, velocity: 0, salary: 0, dup: 0, confSum: 0, confN: 0 }
       s.total++
-      if (job.is_open_to_africa) s.africa++
-      if (job.is_remote) s.remote++
+      const i = intelMap.get((job as any).id)
+      const afr = i?.africa_eligibility as string | undefined
+      if (afr === 'explicit' || afr === 'likely') { s.open++; s.decided++ }
+      else if (afr === 'restricted') { s.restricted++; s.decided++ }
+      else s.unknown++
+      if (job.is_open_to_africa && afr !== 'restricted') s.flagOpen++
+      const rem = i?.remote_eligibility as string | undefined
+      if (rem === 'fully_remote') s.remoteFull++
+      else if (rem === 'onsite' || rem === 'hybrid') s.remoteOther++
+      else s.remoteUnknown++
       if (job.posted_at && nowMs - new Date(job.posted_at).getTime() < 30 * 86400000) s.velocity++
       if ((job as any).salary_range) s.salary++
       if ((job as any).duplicate_of) s.dup++
-      const i = intelMap.get((job as any).id)
       if (i) {
-        if (i.model_version?.includes(':') && !i.model_version.startsWith('regex')) s.verified++
+        if (i.model_version?.includes(':') && !i.model_version.startsWith('regex') && (i.quality_score ?? 0) >= 40) s.verified++
         if (i.page_status != null && i.page_status >= 400) s.dead++
         if (typeof i.overall_confidence === 'number') { s.confSum += i.overall_confidence; s.confN++ }
       }
@@ -174,34 +177,93 @@ export async function refreshCompanyIntelligence(): Promise<{ updated: number }>
       stats.set(key, s)
     }
 
-    const rows = Array.from(stats.values()).map(s => ({
+    const rows = Array.from(stats.values()).map(s => mapCompanyRow({
       company: s.company,
       total_jobs: s.total,
-      africa_eligible_jobs: s.africa,
-      remote_jobs: s.remote,
+      africa_eligible_jobs: s.open,
+      remote_jobs: s.remoteFull,
       rejected_jobs: s.rejected,
       dead_page_count: s.dead,
       verified_count: s.verified,
-      africa_rate: s.total > 0 ? s.africa / s.total : 0,
+      africa_rate: s.total > 0 ? s.open / s.total : 0,
       rejection_rate: s.total > 0 ? s.rejected / s.total : 0,
       verification_rate: s.total > 0 ? s.verified / s.total : 0,
+      trust_avg: null,
       hiring_velocity_30d: s.velocity,
       salary_consistency: s.total > 0 ? s.salary / s.total : 0,
       duplicate_count: s.dup,
       scam_reports: 0,
       avg_ai_confidence: s.confN > 0 ? Math.round(s.confSum / s.confN) : null,
-      priority: s.total > 5 && (s.rejected / s.total >= 0.4 || s.africa / s.total < 0.2) ? 0 : 1, // reduce priority if <20% Africa-eligible or >=40% rejected
-      last_updated: new Date().toISOString(),
+      first_posted_at: null,
+      last_posted_at: null,
+      active_months: 0,
+      distinct_months: 0,
+      remote_friendliness: s.remoteFull + s.remoteOther > 0 ? s.remoteFull / (s.remoteFull + s.remoteOther) : 0,
+      africa_open_jobs: s.open,
+      africa_restricted_jobs: s.restricted,
+      africa_unknown_jobs: s.unknown,
+      africa_decided_jobs: s.decided,
+      africa_open_of_decided: s.decided > 0 ? s.open / s.decided : 0,
+      africa_unknown_share: s.total > 0 ? s.unknown / s.total : 0,
+      flag_africa_rate: s.total > 0 ? s.flagOpen / s.total : 0,
+      remote_fully_jobs: s.remoteFull,
+      remote_onsite_hybrid_jobs: s.remoteOther,
+      remote_unknown_jobs: s.remoteUnknown,
+      remote_unknown_share: s.total > 0 ? s.remoteUnknown / s.total : 0,
     }))
 
-    if (rows.length > 0) {
-      const { error: upErr } = await sb.from('company_intelligence').upsert(rows, { onConflict: 'company' })
-      if (upErr) console.error('[company_intel] upsert error:', upErr.message?.slice(0, 150))
+    for (let i = 0; i < rows.length; i += 250) {
+      const { error: upErr } = await sb.from('company_intelligence').upsert(rows.slice(i, i + 250), { onConflict: 'company' })
+      if (upErr) console.error('[company_intel] fallback upsert error:', upErr.message?.slice(0, 150))
     }
     return { updated: rows.length }
   } catch (e) {
     console.error('[company_intel] error:', e instanceof Error ? e.message.slice(0, 150) : String(e).slice(0, 150))
     return { updated: 0 }
+  }
+}
+
+/**
+ * Map an aggregate_company_intelligence() row into a company_intelligence
+ * insert. Priority reads the PRESERVED flag_africa_rate so crawl ordering is
+ * unchanged by the honesty switch.
+ */
+function mapCompanyRow(c: any): Record<string, unknown> {
+  return {
+    company: c.company,
+    total_jobs: c.total_jobs ?? 0,
+    africa_eligible_jobs: c.africa_eligible_jobs ?? c.africa_open_jobs ?? 0,
+    remote_jobs: c.remote_jobs ?? c.remote_fully_jobs ?? 0,
+    rejected_jobs: c.rejected_jobs ?? 0,
+    dead_page_count: c.dead_page_count ?? 0,
+    verified_count: c.verified_count ?? 0,
+    africa_rate: c.africa_rate ?? 0,
+    rejection_rate: c.rejection_rate ?? 0,
+    verification_rate: c.verification_rate ?? 0,
+    trust_avg: c.trust_avg ?? null,
+    hiring_velocity_30d: c.hiring_velocity_30d ?? 0,
+    salary_consistency: c.salary_consistency ?? 0,
+    duplicate_count: c.duplicate_count ?? 0,
+    scam_reports: c.scam_reports ?? 0,
+    avg_ai_confidence: c.avg_ai_confidence ?? null,
+    first_posted_at: c.first_posted_at ?? null,
+    last_posted_at: c.last_posted_at ?? null,
+    active_months: c.active_months ?? 0,
+    distinct_months: c.distinct_months ?? 0,
+    remote_friendliness: c.remote_friendliness ?? 0,
+    africa_open_jobs: c.africa_open_jobs ?? 0,
+    africa_restricted_jobs: c.africa_restricted_jobs ?? 0,
+    africa_unknown_jobs: c.africa_unknown_jobs ?? 0,
+    africa_decided_jobs: c.africa_decided_jobs ?? 0,
+    africa_open_of_decided: c.africa_open_of_decided ?? 0,
+    africa_unknown_share: c.africa_unknown_share ?? 0,
+    flag_africa_rate: c.flag_africa_rate ?? 0,
+    remote_fully_jobs: c.remote_fully_jobs ?? 0,
+    remote_onsite_hybrid_jobs: c.remote_onsite_hybrid_jobs ?? 0,
+    remote_unknown_jobs: c.remote_unknown_jobs ?? 0,
+    remote_unknown_share: c.remote_unknown_share ?? 0,
+    priority: (c.total_jobs ?? 0) > 5 && ((c.rejection_rate ?? 0) >= 0.4 || (c.flag_africa_rate ?? 1) < 0.2) ? 0 : 1,
+    last_updated: new Date().toISOString(),
   }
 }
 
@@ -280,15 +342,22 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
 
     // Ingest-run history for reliability: source column is like
     // "greenhouse:stripe" or "remoteok:api" — key by the prefix.
+    // [V1-HONESTY] Paginate — a .limit(1000) silently caps history as runs grow.
     let runsBySource = new Map<string, { total: number; ok: number; failures: number; consecutive: number }>()
     try {
-      const { data: runs } = await sb
-        .from('ingest_runs')
-        .select('source, ok')
-        .order('created_at', { ascending: false })
-        .limit(1000)
+      const allRuns: Array<{ source: string; ok: boolean }> = []
+      for (let from = 0; from < 50000; from += 1000) {
+        const { data: page, error } = await sb
+          .from('ingest_runs')
+          .select('source, ok')
+          .order('created_at', { ascending: false })
+          .range(from, from + 999)
+        if (error || !page || page.length === 0) break
+        allRuns.push(...(page as any[]))
+        if (page.length < 1000) break
+      }
       const groups = new Map<string, any[]>()
-      for (const r of (runs || []) as any[]) {
+      for (const r of allRuns) {
         const key = String(r.source).split(':')[0]
         if (!key) continue
         if (!groups.has(key)) groups.set(key, [])
@@ -343,7 +412,11 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
       if (job.is_open_to_africa) { s.africa++; s.accepted++ }
       const q = queueMap.get((job as any).id)
       const isRejected = q?.status === 'failed' || (q?.status === 'completed' && (q?.error?.startsWith('Skipped') || q?.error?.startsWith('Rejected')))
-      if (q?.status === 'completed' && !isRejected) s.verified++
+      // [V1-HONESTY] "verified" = the AI actually produced a quality row
+      // (quality_score >= 40), NOT merely a completed queue item — a regex
+      // fallback row must not count as verified.
+      const qScore = jaiQuality.get((job as any).id)
+      if (qScore != null && qScore >= 40) s.verified++
       if (isRejected) s.rejected++ // gate-rejected
       if (q?.error?.toLowerCase().includes('duplicate')) s.dup++
       if (job.expires_at && new Date(job.expires_at).getTime() < now) s.expired++
@@ -351,7 +424,6 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
         const ageDays = (now - new Date(job.posted_at).getTime()) / 86400000
         s.freshDays += ageDays
       }
-      const qScore = jaiQuality.get((job as any).id)
       if (qScore != null) { s.qualitySum += qScore; s.qualityN++ }
       s.quota = quotaBySource.get(src) || 0
       stats.set(src, s)

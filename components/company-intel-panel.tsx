@@ -34,6 +34,15 @@ export function CompanyIntelPanel({ companyIntel, sourceIntel, company }: Props)
   const remoteFriendliness = companyIntel?.remote_friendliness != null && Number(companyIntel.remote_friendliness) > 0
     ? Math.round(Number(companyIntel.remote_friendliness) * 100) : null
 
+  // [V1-HONESTY] AI-truth Africa metrics: africa_rate = AI-confirmed open /
+  // all active postings; unknown share surfaced alongside so a low rate is
+  // never read as "closed" when it really means "not yet verified".
+  const africaRate = companyIntel?.africa_rate != null && Number(companyIntel.africa_rate) > 0
+    ? Math.round(Number(companyIntel.africa_rate) * 100) : 0
+  const africaUnknownShare = companyIntel?.africa_unknown_share != null
+    ? Math.round(Number(companyIntel.africa_unknown_share) * 100) : 100
+  const africaDecided = Number(companyIntel?.africa_decided_jobs) || 0
+
   const sourceTrust = Number(sourceIntel?.trust_score) || 0
   // Only surface reliability/verification percentages when they have actually
   // been measured (>0) — a 0 default before the learning refresh is not a
@@ -72,10 +81,17 @@ export function CompanyIntelPanel({ companyIntel, sourceIntel, company }: Props)
           {remoteFriendliness != null && (
             <div className="flex items-center gap-2">
               <Globe2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="text-muted-foreground">Remote roles share:</span>
+              <span className="text-muted-foreground">Remote share (AI-verified):</span>
               <span className="ml-auto font-medium">{remoteFriendliness}%</span>
             </div>
           )}
+          <div className="flex items-center gap-2">
+            <Globe2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+            <span className="text-muted-foreground">Africa-open (AI-confirmed):</span>
+            <span className="ml-auto font-medium">
+              {africaDecided >= 8 ? `${africaRate}%` : `${africaRate}% · ${africaUnknownShare}% unknown`}
+            </span>
+          </div>
           {salaryConsistency && (
             <div className="flex items-center gap-2">
               <Banknote className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
@@ -86,7 +102,7 @@ export function CompanyIntelPanel({ companyIntel, sourceIntel, company }: Props)
           {verificationRate && (
             <div className="flex items-center gap-2">
               <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="text-muted-foreground">Verified by Nexa Intelligence:</span>
+              <span className="text-muted-foreground">AI-verified roles (quality-checked):</span>
               <span className="ml-auto font-medium">{verificationRate} of roles</span>
             </div>
           )}

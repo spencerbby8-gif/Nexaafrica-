@@ -206,16 +206,19 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
     // [STABILIZATION] Company learning gate: companies with measured high
     // rejection or low Africa-eligibility lose crawl priority — their jobs are
     // rejected before validation/upsert.
+    // [V1-HONESTY] Gate reads flag_africa_rate (the preserved deterministic
+    // share) — the AI-truth africa_rate must never gate ingestion on sparse
+    // evidence. Behavior unchanged by the honesty switch.
     let companyGate = new Map<string, { rejection_rate: number; africa_rate: number; total_jobs: number }>()
     try {
       const { data: ci } = await supabase
         .from('company_intelligence')
-        .select('company, rejection_rate, africa_rate, total_jobs')
+        .select('company, rejection_rate, flag_africa_rate, total_jobs')
         .gte('total_jobs', 4)
       for (const c of (ci || []) as any[]) {
         companyGate.set(String(c.company).toLowerCase(), {
           rejection_rate: Number(c.rejection_rate) || 0,
-          africa_rate: Number(c.africa_rate) || 0,
+          africa_rate: Number.isFinite(Number(c.flag_africa_rate)) ? Number(c.flag_africa_rate) : (Number(c.africa_rate) || 0),
           total_jobs: Number(c.total_jobs) || 0,
         })
       }
@@ -521,16 +524,19 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
     // [STABILIZATION] Company learning gate: companies with measured high
     // rejection or low Africa-eligibility lose crawl priority — their jobs are
     // rejected before validation/upsert.
+    // [V1-HONESTY] Gate reads flag_africa_rate (the preserved deterministic
+    // share) — the AI-truth africa_rate must never gate ingestion on sparse
+    // evidence. Behavior unchanged by the honesty switch.
     let companyGate = new Map<string, { rejection_rate: number; africa_rate: number; total_jobs: number }>()
     try {
       const { data: ci } = await supabase
         .from('company_intelligence')
-        .select('company, rejection_rate, africa_rate, total_jobs')
+        .select('company, rejection_rate, flag_africa_rate, total_jobs')
         .gte('total_jobs', 4)
       for (const c of (ci || []) as any[]) {
         companyGate.set(String(c.company).toLowerCase(), {
           rejection_rate: Number(c.rejection_rate) || 0,
-          africa_rate: Number(c.africa_rate) || 0,
+          africa_rate: Number.isFinite(Number(c.flag_africa_rate)) ? Number(c.flag_africa_rate) : (Number(c.africa_rate) || 0),
           total_jobs: Number(c.total_jobs) || 0,
         })
       }

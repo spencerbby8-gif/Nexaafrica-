@@ -15,10 +15,18 @@ export function companyLearningSignal(job: Job, ctx?: TrustContext): TrustSignal
   if (total === 0) return null
 
   const rejectionRate = Number(ci.rejection_rate) || 0
-  const africaRate = Number(ci.africa_rate) ?? 1
   const verificationRate = Number(ci.verification_rate) || 0
   const velocity = Number(ci.hiring_velocity_30d) || 0
   const aiConf = Number(ci.avg_ai_confidence) || 0
+  // [V1-HONESTY] AI-truth Africa metrics. africa_rate is now
+  // AI-confirmed-open / all postings — tiny for almost every company because
+  // the AI has judged only a handful of jobs (92% unknown). A low africa_rate
+  // with sparse evidence is "not enough evidence", NOT "rarely open". The
+  // caution fires ONLY when the AI has actually judged enough jobs (>=8) and
+  // found them mostly not open. Otherwise a neutral note is emitted.
+  const decidedJobs = Number(ci.africa_decided_jobs) || 0
+  const openOfDecided = Number(ci.africa_open_of_decided)
+  const unknownShare = Number(ci.africa_unknown_share) ?? 1
 
   // Hard caution: most of this company's jobs get rejected by the pipeline.
   if (rejectionRate >= 0.5) {
@@ -34,8 +42,8 @@ export function companyLearningSignal(job: Job, ctx?: TrustContext): TrustSignal
     }
   }
 
-  // Caution: mostly not open to Africa.
-  if (total >= 4 && africaRate < 0.2) {
+  // Caution: enough AI-judged postings to conclude they are mostly not open.
+  if (decidedJobs >= 8 && openOfDecided >= 0 && openOfDecided < 0.2) {
     return {
       id: "company_learning",
       label: "Rarely open to Africa",
@@ -43,7 +51,22 @@ export function companyLearningSignal(job: Job, ctx?: TrustContext): TrustSignal
       confidence: "medium",
       tone: "caution",
       explanation: `${job.company} posts mostly region-locked roles — verify eligibility with the employer.`,
-      evidence: `${Math.round(africaRate * 100)}% Africa-eligible share`,
+      evidence: `${Math.round(openOfDecided * 100)}% Africa-open of ${decidedJobs} AI-verified roles`,
+      source: "learning",
+    }
+  }
+
+  // Neutral: honest unknown-share note when evidence is still sparse
+  // (never punishes the company for the pipeline's lack of evidence).
+  if (total >= 4 && decidedJobs < 8 && unknownShare >= 0.5) {
+    return {
+      id: "company_learning",
+      label: "Limited verification",
+      scoreImpact: 0,
+      confidence: "medium",
+      tone: "neutral",
+      explanation: `Nexa has AI-verified only ${decidedJobs} of ${total} of ${job.company}'s active roles (${Math.round(unknownShare * 100)}% unverified). Eligibility should be confirmed with the employer.`,
+      evidence: `${decidedJobs}/${total} roles AI-verified`,
       source: "learning",
     }
   }

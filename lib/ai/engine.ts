@@ -339,6 +339,13 @@ async function triggerSecondOpinionIfNeeded(
         if (error) {
           console.log(JSON.stringify({ scope: "ai_engine", event: "second_opinion_upsert_failed", jobId: job.id.slice(0,8), error: error.message?.slice(0,200) }))
         } else {
+          // [2026-08-13 audit] Observability: persist a trace row so the
+          // second-opinion cost/benefit is measurable (previously only a
+          // console line existed — benefit was unverifiable from the DB).
+          await traceEvent(supabase, job.id, "second_opinion_persisted", {
+            provider: result.provider,
+            detail: { fields: Object.keys(updateRow).length, reason: check.reason, firstModel: intelligence.modelVersion },
+          })
           console.log(JSON.stringify({ scope: "ai_engine", event: "second_opinion_persisted", jobId: job.id.slice(0,8), fields: Object.keys(updateRow).length, provider: result.provider }))
         }
       }

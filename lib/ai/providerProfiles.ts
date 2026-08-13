@@ -84,6 +84,13 @@ const FIXED_PROFILES: Record<ProviderId, ProviderProfile> = {
     avoidFor: ["cv_parsing"],
     avgQualityScore: 0, avgLatencyMs: 2000, successRate: 0, totalEvaluations: 0, taskQuality: {},
   },
+  mistral_backup: {
+    id: "mistral_backup",
+    strengths: ["European provider", "second key", "quota redundancy"],
+    bestFor: ["intelligence", "code_analysis", "fallback"],
+    avoidFor: ["cv_parsing"],
+    avgQualityScore: 0, avgLatencyMs: 2000, successRate: 0, totalEvaluations: 0, taskQuality: {},
+  },
   nvidia: {
     id: "nvidia",
     strengths: ["NIM microservice", "Llama 3.1", "Nemotron"],
@@ -97,6 +104,13 @@ const FIXED_PROFILES: Record<ProviderId, ProviderProfile> = {
     bestFor: [],
     avoidFor: ["all"],
     avgQualityScore: 0, avgLatencyMs: 0, successRate: 0, totalEvaluations: 0, taskQuality: {},
+  },
+  cohere: {
+    id: "cohere",
+    strengths: ["Command A+", "structured JSON outputs", "RAG native"],
+    bestFor: ["intelligence", "structured_extraction", "fallback"],
+    avoidFor: ["high_throughput", "latency_sensitive"],
+    avgQualityScore: 0, avgLatencyMs: 2000, successRate: 0, totalEvaluations: 0, taskQuality: {},
   },
 }
 

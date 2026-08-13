@@ -189,6 +189,20 @@ async function makeInferenceRequest(
           })
         }
       )
+    } else if (model.provider === 'cohere') {
+      // Cohere v2 Chat API — response: message.content[0].text
+      response = await fetch('https://api.cohere.com/v2/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: model.modelId,
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: maxTokens
+        })
+      })
     } else {
       // OpenAI-compatible APIs
       const endpoints: Record<string, string> = {
@@ -197,6 +211,7 @@ async function makeInferenceRequest(
         openrouter: 'https://openrouter.ai/api/v1/chat/completions',
         github_models: 'https://models.inference.ai.azure.com/chat/completions',
         mistral: 'https://api.mistral.ai/v1/chat/completions',
+        mistral_backup: 'https://api.mistral.ai/v1/chat/completions',
         nvidia: 'https://integrate.api.nvidia.com/v1/chat/completions'
       }
       
@@ -248,6 +263,8 @@ async function makeInferenceRequest(
       responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || ''
     } else if (model.provider === 'cloudflare') {
       responseText = data.result?.response || ''
+    } else if (model.provider === 'cohere') {
+      responseText = data.message?.content?.[0]?.text || (typeof data.message?.content === 'string' ? data.message.content : '') || ''
     } else {
       responseText = data.choices?.[0]?.message?.content || ''
     }
@@ -355,8 +372,12 @@ export async function verifyAllModels(discoveredModels: DiscoveredModel[]): Prom
       apiKey = process.env.CLOUDFLARE_API_TOKEN
     } else if (model.provider === 'mistral') {
       apiKey = process.env.MISTRAL_API_KEY
+    } else if (model.provider === 'mistral_backup') {
+      apiKey = process.env.MISTRAL_API_KEY_BACKUP
     } else if (model.provider === 'nvidia') {
       apiKey = process.env.NVIDIA_API_KEY
+    } else if (model.provider === 'cohere') {
+      apiKey = process.env.COHERE_API_KEY
     }
     
     if (!apiKey) {

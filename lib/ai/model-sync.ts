@@ -80,8 +80,10 @@ function keyFor(provider: string): string | undefined {
     github_models: 'GITHUB_MODELS_TOKEN',
     cloudflare: 'CLOUDFLARE_API_TOKEN',
     mistral: 'MISTRAL_API_KEY',
+    mistral_backup: 'MISTRAL_API_KEY_BACKUP',
     nvidia: 'NVIDIA_API_KEY',
     huggingface: 'HUGGINGFACE_API_KEY',
+    cohere: 'COHERE_API_KEY',
   }
   const name = env[provider]
   return name ? process.env[name] : undefined
@@ -124,6 +126,18 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
         body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], max_tokens: 16 }),
         signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
       })
+    } else if (provider === 'cohere') {
+      // Cohere v2 Chat API with JSON mode — response: message.content[0].text
+      res = await fetch('https://api.cohere.com/v2/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: modelId,
+          messages: [{ role: 'user', content: prompt }],
+          response_format: { type: 'json_object' },
+        }),
+        signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
+      })
     } else {
       const endpoints: Record<string, string> = {
         groq: 'https://api.groq.com/openai/v1/chat/completions',
@@ -131,6 +145,7 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
         openrouter: 'https://openrouter.ai/api/v1/chat/completions',
         github_models: 'https://models.inference.ai.azure.com/chat/completions',
         mistral: 'https://api.mistral.ai/v1/chat/completions',
+        mistral_backup: 'https://api.mistral.ai/v1/chat/completions',
         nvidia: 'https://integrate.api.nvidia.com/v1/chat/completions',
         huggingface: 'https://router.huggingface.co/v1/chat/completions',
       }
@@ -154,7 +169,9 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
     const text: string =
       data?.candidates?.[0]?.content?.parts?.[0]?.text ??
       data?.choices?.[0]?.message?.content ??
-      data?.result?.response ?? ''
+      data?.result?.response ??
+      data?.message?.content?.[0]?.text ??
+      (typeof data?.message?.content === 'string' ? data.message.content : '') ?? ''
     const ok = typeof text === 'string' && text.trim().length > 0
     return {
       modelId, ok, latencyMs, quotaExhausted: false,

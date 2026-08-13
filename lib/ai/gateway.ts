@@ -88,7 +88,7 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
       return { text, provider: providerId, model: cfg.model, latencyMs: latency, tokensInput: result.usageMetadata?.promptTokenCount, tokensOutput: result.usageMetadata?.candidatesTokenCount, costCents: Math.round(((result.usageMetadata?.promptTokenCount||0)+(result.usageMetadata?.candidatesTokenCount||0))*cfg.costPer1kTokens/1000) }
     }
 
-    const openAICompat: ProviderId[] = ["groq","cerebras","openrouter","github_models","mistral","nvidia"]
+    const openAICompat: ProviderId[] = ["groq","cerebras","openrouter","github_models","mistral","mistral_backup","nvidia"]
     if (openAICompat.includes(providerId)) {
       const urls: Record<string,string> = {
         groq: "https://api.groq.com/openai/v1/chat/completions",
@@ -96,6 +96,7 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
         openrouter: "https://openrouter.ai/api/v1/chat/completions",
         github_models: "https://models.inference.ai.azure.com/chat/completions",
         mistral: "https://api.mistral.ai/v1/chat/completions",
+        mistral_backup: "https://api.mistral.ai/v1/chat/completions",
         nvidia: "https://integrate.api.nvidia.com/v1/chat/completions",
       }
       const body: any = {
@@ -163,6 +164,42 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
       const latency = Date.now() - start
       diag.push({ provider: providerId, model: cfg.model, event: "success", retryCount, durationMs: latency, promptLen, responseLen: text.length })
       return { text, provider: providerId, model: cfg.model, latencyMs: latency }
+    }
+
+    if (providerId === "cohere") {
+      // Cohere v2 Chat API (official docs: docs.cohere.com/reference/chat)
+      // Structured JSON via response_format {type:"json_object"} (Command A+
+      // and Command R+ support it per official structured-outputs docs).
+      const body: any = {
+        model: cfg.model,
+        messages: [...(req.systemInstruction?[{role:"system",content:req.systemInstruction}]:[]), {role:"user",content:req.prompt}],
+        temperature: req.temperature ?? 0.3,
+        max_tokens: req.maxTokens ?? 1024,
+      }
+      if (req.responseSchema) body.response_format = { type: "json_object", schema: req.responseSchema }
+      const res = await fetch("https://api.cohere.com/v2/chat", {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "Authorization":`Bearer ${apiKey}` },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(cfg.timeoutMs ?? 30000),
+      })
+      if (!res.ok) {
+        const errText = await res.text()
+        const latency = Date.now() - start
+        let ec = `${res.status}`, em = errText.slice(0,500)
+        try { const j=JSON.parse(errText); ec=j.error?.code||ec; em=j.error?.message||j.message||em } catch {}
+        diag.push({ provider: providerId, model: cfg.model, event: "failure", httpStatus: res.status, errorCode: ec, errorMessage: em, errorBody: errText.slice(0,1000), retryCount, durationMs: latency, promptLen })
+        throw new Error(`Cohere ${res.status} (${ec}): ${em.slice(0,200)}`)
+      }
+      const data = await res.json() as any
+      // v2 shape: { message: { role, content: [{ type:"text", text }] } }
+      const text: string = data?.message?.content?.[0]?.text
+        ?? (typeof data?.message?.content === 'string' ? data.message.content : '')
+        ?? ''
+      const latency = Date.now() - start
+      diag.push({ provider: providerId, model: cfg.model, event: "success", retryCount, durationMs: latency, promptLen, responseLen: text.length })
+      gwLog(req.jobId, req.agentId, "provider_success", { provider: providerId, latencyMs: latency, tokensIn: data?.usage?.tokens?.input_tokens, tokensOut: data?.usage?.tokens?.output_tokens })
+      return { text, provider: providerId, model: cfg.model, latencyMs: latency, tokensInput: data?.usage?.tokens?.input_tokens, tokensOutput: data?.usage?.tokens?.output_tokens, costCents: Math.round(((data?.usage?.tokens?.input_tokens||0)+(data?.usage?.tokens?.output_tokens||0))*cfg.costPer1kTokens/1000) }
     }
 
     if (providerId === "huggingface") {

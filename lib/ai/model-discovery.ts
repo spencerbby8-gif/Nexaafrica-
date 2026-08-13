@@ -503,6 +503,68 @@ async function discoverMistralModels(apiKey: string): Promise<DiscoveredModel[]>
 }
 
 /**
+ * Discover models from Cohere API
+ * Endpoint: https://api.cohere.com/v1/models (official docs: /reference/list-models)
+ */
+async function discoverCohereModels(apiKey: string): Promise<DiscoveredModel[]> {
+  const endpoint = 'https://api.cohere.com/v1/models'
+  const models: DiscoveredModel[] = []
+
+  console.log(`[Cohere Discovery] Querying ${endpoint}`)
+
+  try {
+    const response = await fetch(endpoint, {
+      headers: { 'Authorization': `Bearer ${apiKey}` }
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`Cohere API error ${response.status}: ${errorText.substring(0, 200)}`)
+    }
+
+    const data = await response.json() as any
+    const modelList = data.models || []
+
+    console.log(`[Cohere Discovery] Found ${modelList.length} models`)
+
+    for (const model of modelList) {
+      // Only chat-capable, non-deprecated text models (skip embed/rerank/summarize)
+      if (model.is_deprecated) continue
+      const endpoints = model.endpoints || []
+      if (!endpoints.includes('chat')) continue
+      if (/embed|rerank|summarize|classify|tokenize|detokenize|finetune/i.test(model.name || '')) continue
+
+      console.log(`[Cohere Discovery] Discovered ${model.name}`)
+
+      models.push({
+        provider: 'cohere',
+        modelId: model.name,
+        modelName: model.name,
+        discoveredAt: new Date().toISOString(),
+        discoveryEndpoint: endpoint,
+        rawResponse: model,
+        capabilities: { chat: true },
+        health: {
+          verified: false,
+          usable: false,
+          healthScore: 0,
+          successRate: 0,
+          failureRate: 0,
+          avgLatencyMs: 0,
+          quotaStatus: 'ok'
+        },
+        routingPriority: 0
+      })
+    }
+  } catch (error: any) {
+    console.error(`[Cohere Discovery] FAILED: ${error.message}`)
+    throw error
+  }
+
+  return models
+}
+
+/**
  * Discover models from NVIDIA NIM API
  * Endpoint: https://integrate.api.nvidia.com/v1/models
  */
@@ -877,6 +939,62 @@ export async function discoverAllModels(): Promise<ProviderCatalog[]> {
       catalogs.push({
         provider: 'huggingface',
         discoveryEndpoint: 'https://router.huggingface.co/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models: [],
+        totalModels: 0,
+        verifiedModels: 0,
+        usableModels: 0,
+        discoveryError: error.message
+      })
+    }
+  }
+
+  // Mistral Backup key (same API, separate quota bucket)
+  if (process.env.MISTRAL_API_KEY_BACKUP) {
+    try {
+      const models = await discoverMistralModels(process.env.MISTRAL_API_KEY_BACKUP)
+      catalogs.push({
+        provider: 'mistral_backup',
+        discoveryEndpoint: 'https://api.mistral.ai/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models,
+        totalModels: models.length,
+        verifiedModels: 0,
+        usableModels: 0
+      })
+    } catch (error: any) {
+      console.error(`[Discovery] Mistral Backup discovery failed: ${error.message}`)
+      catalogs.push({
+        provider: 'mistral_backup',
+        discoveryEndpoint: 'https://api.mistral.ai/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models: [],
+        totalModels: 0,
+        verifiedModels: 0,
+        usableModels: 0,
+        discoveryError: error.message
+      })
+    }
+  }
+
+  // Cohere
+  if (process.env.COHERE_API_KEY) {
+    try {
+      const models = await discoverCohereModels(process.env.COHERE_API_KEY)
+      catalogs.push({
+        provider: 'cohere',
+        discoveryEndpoint: 'https://api.cohere.com/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models,
+        totalModels: models.length,
+        verifiedModels: 0,
+        usableModels: 0
+      })
+    } catch (error: any) {
+      console.error(`[Discovery] Cohere discovery failed: ${error.message}`)
+      catalogs.push({
+        provider: 'cohere',
+        discoveryEndpoint: 'https://api.cohere.com/v1/models',
         discoveredAt: new Date().toISOString(),
         models: [],
         totalModels: 0,

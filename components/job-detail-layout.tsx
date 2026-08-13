@@ -404,7 +404,7 @@ export function JobDetailLayout({ companyJobCount,
 
       {/* Verification Timeline */}
       <div className="pt-4">
-        <VerificationTimeline job={job} intelligence={aiIntelligence || (job as any).aiIntelligence || null} />
+        <VerificationTimeline job={job} intelligence={aiIntelligence || (job as any).aiIntelligence || null} queueStatus={(job as any)?._queueStatus ?? null} queueError={(job as any)?._queueError ?? null} />
       </div>
 
       {/* Opportunity Intelligence – full panel for detail page, evidence-backed, uses same cleaned AI path + job fallback */}

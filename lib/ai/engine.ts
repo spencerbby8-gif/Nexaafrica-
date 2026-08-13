@@ -472,6 +472,56 @@ export async function processAIQueue(batchSize = 100) {
     console.log(JSON.stringify({ scope: "ai_engine", event: "orphan_heal_error", error: (e instanceof Error ? e.message : String(e)).slice(0,150) }))
   }
 
+  // ── [GATE-REJECT HEAL] Completed rows rejected by the deterministic
+  // admission gate are re-evaluated against the job's CURRENT flags. Jobs
+  // rejected under older classifiers (measured: 2026-07-24 drift left 72
+  // africa-gate + 126 work-auth rejections on jobs that are now open) were
+  // stuck forever — the ingest re-sight only resets 'failed' rows, and the
+  // clean-orphan pass above only covers error-free rows. Bounded to 200
+  // active-job rows per drain; idempotent: only rows that PASS admit() today
+  // are requeued, and rows already producing a JAI row are skipped.
+  try {
+    const { data: gateRejected } = await supabase
+      .from("ai_processing_queue")
+      .select("id, job_id, jobs!inner(id, is_active, eligibility, is_open_to_africa, is_remote, apply_url, country, location, description_md, company, source, source_id, expires_at)")
+      .eq("status", "completed")
+      .or('error.like.Rejected:%,error.like.Skipped:%')
+      .eq("jobs.is_active", true)
+      .order("created_at", { ascending: true })
+      .limit(200)
+    if (gateRejected && gateRejected.length > 0) {
+      const { data: jaiRows } = await supabase
+        .from("job_ai_intelligence")
+        .select("job_id")
+        .in("job_id", gateRejected.map((d: any) => d.job_id))
+      const haveJai = new Set((jaiRows || []).map((r: any) => r.job_id))
+      const candidates = (gateRejected as any[]).filter((d: any) => !haveJai.has(d.job_id))
+      const { admit } = await import("./admission")
+      const requeue: string[] = []
+      for (const c of candidates) {
+        const j = (c as any).jobs
+        if (!j) continue
+        const decision = admit({
+          eligibility: j.eligibility, is_open_to_africa: j.is_open_to_africa,
+          is_remote: j.is_remote, apply_url: j.apply_url, country: j.country,
+          location: j.location, description_md: j.description_md, company: j.company,
+          source: j.source, source_id: j.source_id, expires_at: j.expires_at,
+        })
+        if (decision.admitted) requeue.push(c.id)
+      }
+      if (requeue.length > 0) {
+        const healNow = new Date().toISOString()
+        await supabase
+          .from("ai_processing_queue")
+          .update({ status: "pending", error: "Requeued: previously gate-rejected, now admissible", attempts: 0, completed_at: null, started_at: null, next_retry_at: healNow })
+          .in("id", requeue)
+        console.log(JSON.stringify({ scope: "ai_engine", event: "gate_reject_requeued", count: requeue.length, candidates: candidates.length }))
+      }
+    }
+  } catch (e) {
+    console.log(JSON.stringify({ scope: "ai_engine", event: "gate_reject_heal_error", error: (e instanceof Error ? e.message : String(e)).slice(0,150) }))
+  }
+
   const nowIso = new Date().toISOString()
   const { data: queueItems } = await supabase
     .from("ai_processing_queue")

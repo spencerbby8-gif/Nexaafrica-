@@ -87,11 +87,14 @@ export const PROVIDERS: ProviderConfig[] = [
   { id: "mistral_backup", name: "Mistral Large (backup key)", envKey: "MISTRAL_API_KEY_BACKUP", model: "mistral-large-latest", enabled: true, priority: 10, rateLimitPerSec: 3, timeoutMs: 15000, costPer1kTokens: 3, taskTypes: ["complex_analysis", "european_jobs", "fallback"] },
   // NVIDIA NIM: NVIDIA's inference microservice
   { id: "nvidia", name: "NVIDIA NIM", envKey: "NVIDIA_API_KEY", model: "meta/llama-3.1-70b-instruct", enabled: true, priority: 11, rateLimitPerSec: 5, timeoutMs: 30000, costPer1kTokens: 2, taskTypes: ["job_intelligence", "gpu_accelerated"] },
-  // Cohere: Command A+ (v2 Chat API, structured JSON via response_format).
+  // Cohere: Command A (v2 Chat API, structured JSON via response_format).
   // Wired 2026-08-13: COHERE_API_KEY was configured in Vercel but no cohere
   // provider existed — dead weight. Now a first-class provider with its own
   // gateway branch (api.cohere.com/v2/chat) + discovery (/v1/models).
-  { id: "cohere", name: "Cohere Command A+", envKey: "COHERE_API_KEY", model: "command-a-plus-05-2026", enabled: true, priority: 12, rateLimitPerSec: 2, timeoutMs: 30000, costPer1kTokens: 4, taskTypes: ["job_intelligence", "simple_analysis", "fallback"] },
+  // LIVE-VERIFIED 2026-08-13 09:11 UTC: command-a-03-2025 usable=true,
+  // healthScore=100, 239ms avg; command-a-plus-05-2026 returned failures on
+  // this key (verified=false) — so the default model is the measured one.
+  { id: "cohere", name: "Cohere Command A", envKey: "COHERE_API_KEY", model: "command-a-03-2025", enabled: true, priority: 12, rateLimitPerSec: 2, timeoutMs: 30000, costPer1kTokens: 4, taskTypes: ["job_intelligence", "simple_analysis", "fallback"] },
 ]
 
 export interface ProviderHealth {

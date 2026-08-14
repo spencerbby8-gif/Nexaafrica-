@@ -2,18 +2,29 @@ import { Globe, ShieldCheck, Clock, CheckCircle2, AlertCircle, FileText } from '
 import type { JobAIIntelligenceRow } from '@/lib/ai/queries'
 import type { Job } from '@/lib/types'
 import { relativeTime } from '@/lib/format'
+import { pipelineState } from '@/lib/ai/pipelineState'
 
 /**
  * Verification Timeline — shows the verification journey of a job listing:
  * when it was ingested, when AI verified it, and when the source page was
  * last checked for liveness. Makes freshness visible and honest.
+ *
+ * [2026-08-13 audit F2] The AI step previously derived from model_version
+ * alone and ignored the queue row — every no-AI job rendered "Pending
+ * verification — In queue for AI analysis" even when processing had already
+ * finished (rejected / failed / rule-based). Now the step derives from the
+ * canonical pipelineState so labels always match the stored queue state.
  */
 export function VerificationTimeline({
   job,
   intelligence,
+  queueStatus,
+  queueError,
 }: {
   job: Job
   intelligence?: JobAIIntelligenceRow | null
+  queueStatus?: string | null
+  queueError?: string | null
 }) {
   const steps: Array<{
     icon: typeof Globe
@@ -34,15 +45,38 @@ export function VerificationTimeline({
     tone: 'neutral',
   })
 
-  // Step 2: AI Verified
-  const verified = intelligence?.model_version?.includes(':') && !intelligence.model_version.startsWith('regex')
+  // Step 2: AI verification — canonical pipeline state (queue row aware)
+  const state = pipelineState({
+    modelVersion: intelligence?.model_version ?? null,
+    queueStatus: queueStatus ?? null,
+    queueError: queueError ?? null,
+  })
+  const step2 = (() => {
+    switch (state) {
+      case 'verified':
+        return { label: 'Nexa Intelligence verified', detail: `${intelligence!.evidence_provenance || 'page'} evidence`, done: true, tone: 'positive' as const }
+      case 'rule_based':
+        return { label: 'Rule-based intelligence', detail: 'Extracted from listing data — no live AI verdict', done: true, tone: 'neutral' as const }
+      case 'rejected':
+        return { label: 'Not eligible', detail: 'Role was not admitted by eligibility screening', done: true, tone: 'neutral' as const }
+      case 'failed':
+        return { label: 'Processing failed', detail: 'AI verification could not complete', done: true, tone: 'caution' as const }
+      case 'processing':
+      case 'retrying':
+        return { label: 'Pending verification', detail: 'In queue for AI analysis', done: false, tone: 'caution' as const }
+      case 'queued':
+        return { label: 'Pending verification', detail: 'In queue for AI analysis', done: false, tone: 'caution' as const }
+      default: // not_verified / no queue row
+        return { label: 'Not verified', detail: 'No AI verdict yet — awaiting verification', done: false, tone: 'neutral' as const }
+    }
+  })()
   steps.push({
-    icon: ShieldCheck,
-    label: verified ? 'Nexa Intelligence verified' : 'Pending verification',
+    icon: step2.done ? (state === 'verified' ? CheckCircle2 : state === 'failed' ? AlertCircle : ShieldCheck) : Clock,
+    label: step2.label,
     time: intelligence?.last_verified_at || null,
-    detail: verified ? `${intelligence!.evidence_provenance || 'page'} evidence` : 'In queue for AI analysis',
-    done: !!verified,
-    tone: verified ? 'positive' : 'caution',
+    detail: step2.detail,
+    done: step2.done,
+    tone: step2.tone,
   })
 
   // Step 3: Page liveness check

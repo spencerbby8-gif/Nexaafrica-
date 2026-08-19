@@ -113,6 +113,15 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
         messages: [...(req.systemInstruction?[{role:"system",content:req.systemInstruction}]:[]), {role:"user",content:req.prompt}],
         temperature: req.temperature??0.3, max_tokens: resolvedMaxTokens,
       }
+      // [PHASE-4C] Kimi K3 (served via FreeRouter) reasons by default and
+      // temperature is fixed at 1.0 upstream: reasoning can consume the
+      // whole output budget before the JSON answer (observed: finish_reason
+      // "length", empty content). Constrain reasoning to the minimum needed
+      // for extraction and honor Kimi's fixed temperature.
+      if (providerId === "freerouter" && /kimi/i.test(String(cfg.model))) {
+        body.reasoning_effort = "low"
+        body.temperature = 1.0
+      }
       // OpenRouter: free-tier key routes through deepinfra.
       if (providerId === "openrouter") {
         body.provider = { order: ["deepinfra"], allow_fallbacks: false }
@@ -144,7 +153,10 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
       // [PHASE-4C] FreeRouter may serve a different underlying model than
       // requested (routing gateway). Preserve the real model identity in
       // provenance so job_ai_intelligence.model_version reflects truth.
-      const resolvedModel = providerId === "freerouter" && typeof data?.model === "string" && data.model.length > 0 ? data.model : cfg.model
+      const frHeaderModel = providerId === "freerouter" ? (res.headers.get("X-Free-Router-Model") || res.headers.get("x-free-router-model")) : null
+      const resolvedModel = providerId === "freerouter" && (typeof data?.model === "string" && data.model.length > 0)
+        ? data.model
+        : (frHeaderModel || cfg.model)
       const latency = Date.now() - start
       diag.push({ provider: providerId, model: cfg.model, event: "success", retryCount, durationMs: latency, promptLen, responseLen: text.length })
       gwLog(req.jobId, req.agentId, "provider_success", { provider: providerId, latencyMs: latency, tokensIn: data.usage?.prompt_tokens, tokensOut: data.usage?.completion_tokens })

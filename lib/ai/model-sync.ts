@@ -158,7 +158,16 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
         method: 'POST', headers,
         // [PHASE-4C] Reasoning models (kimi-k3) spend budget on thinking before
         // answering; 16 tokens produced empty content. Give the probe headroom.
-        body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: prompt }], max_tokens: provider === 'freerouter' ? 2048 : 16 }),
+        body: JSON.stringify({
+          model: modelId,
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: provider === 'freerouter' ? 2048 : 16,
+          // [PHASE-4C] Kimi K3 reasons before answering; the JSON probe must
+          // budget for that or the reasoning consumes the answer budget
+          // (finish_reason 'length', empty content). reasoning_effort=low is
+          // the documented Kimi control; temperature 1.0 is fixed upstream.
+          ...(provider === 'freerouter' && /kimi/i.test(modelId) ? { reasoning_effort: 'low' as const, temperature: 1.0 } : {}),
+        }),
         signal: AbortSignal.timeout(probeTimeoutMs),
       })
     }

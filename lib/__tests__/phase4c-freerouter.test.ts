@@ -36,7 +36,10 @@ describe('FreeRouter provider integration', () => {
 
   it('preserves the actual underlying model identity in provenance', () => {
     const gw = read('lib/ai/gateway.ts')
-    expect(gw).toContain('providerId === "freerouter" && typeof data?.model === "string"')
+    // The real model reported by the gateway wins provenance; the router's
+    // identity header is the fallback; only then the configured model.
+    expect(gw).toContain('X-Free-Router-Model')
+    expect(gw).toContain('const resolvedModel = providerId === "freerouter"')
     expect(gw).toContain('model: resolvedModel')
   })
 

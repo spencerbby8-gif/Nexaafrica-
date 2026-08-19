@@ -489,3 +489,53 @@ export async function refreshSourceIntelligence(): Promise<{ updated: number }> 
 export async function healQueue(): Promise<{ expired: number }> {
   return { expired: 0 }
 }
+
+/**
+ * [PHASE-3 FIX] Re-apply Phase 2 remote-truth write-backs after ingestion.
+ *
+ * Root cause (proven 2026-08-19): the ingest upsert writes the FEED value of
+ * is_remote onto existing rows, silently reverting the engine's evidenced
+ * hybrid/onsite write-backs (329 flips reverted to 158 in one Tier-1 cycle —
+ * exactly the 171 re-sighted jobs whose verdicts met the flip criteria).
+ * Re-sighted jobs keep their completed queue rows, so the engine never
+ * reprocesses them — the revert would persist indefinitely without this guard.
+ * Idempotent: flips only rows still claiming is_remote=true despite a
+ * qualifying verdict.
+ */
+export async function reapplyRemoteTruthWrites(): Promise<{ flipped: number }> {
+  try {
+    const { createServiceClient } = await import('@/lib/supabase/service')
+    const { REMOTE_WRITEBACK_MIN_CONFIDENCE } = await import('@/lib/ai/verified')
+    const sb = createServiceClient()
+    const { data: rows, error } = await sb
+      .from('job_ai_intelligence')
+      .select('job_id')
+      .in('remote_eligibility', ['hybrid', 'onsite'])
+      .gte('remote_confidence', REMOTE_WRITEBACK_MIN_CONFIDENCE)
+      .not('remote_evidence', 'is', null)
+      .like('model_version', '%:%')
+      .not('model_version', 'like', 'regex%')
+      .not('model_version', 'like', 'no-ai%')
+      .limit(5000)
+    if (error || !rows || rows.length === 0) return { flipped: 0 }
+    const ids = (rows as Array<{ job_id: string }>).map((r) => r.job_id)
+    const { data: upd, error: upErr } = await sb
+      .from('jobs')
+      .update({ is_remote: false })
+      .eq('is_remote', true)
+      .in('id', ids)
+      .select('id')
+    if (upErr) {
+      console.log(JSON.stringify({ scope: 'remote_truth', event: 'reapply_error', error: upErr.message.slice(0, 150) }))
+      return { flipped: 0 }
+    }
+    const flipped = upd?.length ?? 0
+    if (flipped > 0) {
+      console.log(JSON.stringify({ scope: 'remote_truth', event: 'reapplied', flipped }))
+    }
+    return { flipped }
+  } catch (e) {
+    console.log(JSON.stringify({ scope: 'remote_truth', event: 'reapply_failed', error: (e instanceof Error ? e.message : String(e)).slice(0, 150) }))
+    return { flipped: 0 }
+  }
+}

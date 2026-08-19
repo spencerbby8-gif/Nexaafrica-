@@ -3,10 +3,7 @@ import type { Job } from "@/lib/types"
 import { AI_MODEL_VERSION, AI_INTELLIGENCE_VERSION, type JobAIIntelligence } from "./types"
 import type { ProviderCallDiag } from "./gateway"
 import { PROVIDERS } from "./providers/types"
-
-// [PHASE-2] Minimum AI confidence (with evidence) before a hybrid/onsite
-// verdict overrides the feed-supplied is_remote flag.
-const REMOTE_WRITEBACK_MIN_CONFIDENCE = 60
+import { REMOTE_WRITEBACK_MIN_CONFIDENCE } from "./verified"
 
 
 

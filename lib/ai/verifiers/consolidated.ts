@@ -10,13 +10,15 @@ interface AIResp {
   salary_min: number|null; salary_max: number|null; salary_currency: string|null; salary_period: string|null; salary_is_estimated: boolean
   salary_transparency: "disclosed"|"estimated"|"undisclosed"|"unknown"; salary_confidence: number; salary_evidence: string|null
   company_legitimacy: "verified"|"likely_legit"|"unknown"|"suspicious"; company_confidence: number; company_evidence: string|null
+  // [PHASE-4C] per-dimension model reasoning (job-specific, grounded). null when the dimension is unknown/abstained.
+  africa_reasoning?: string|null; remote_reasoning?: string|null; salary_reasoning?: string|null; company_reasoning?: string|null; experience_reasoning?: string|null; quality_reasoning?: string|null
   job_quality: "high"|"medium"|"low"|"unknown"; job_quality_confidence: number; job_quality_evidence: string|null
   experience_level: "entry"|"mid"|"senior"|"executive"|"unknown"; experience_confidence: number
   required_skills: string[]; transferable_skills: string[]; missing_skills: string[]
   hiring_urgency: "high"|"medium"|"low"|"unknown"; hiring_urgency_confidence: number
 }
 
-const AF: AIResp = { africa_eligibility:"unknown",africa_confidence:0,africa_evidence:null,country_restrictions:[],visa_sponsorship:"unknown",visa_confidence:0,remote_eligibility:"unknown",remote_confidence:0,remote_evidence:null,timezone_requirements:null,salary_min:null,salary_max:null,salary_currency:null,salary_period:null,salary_is_estimated:false,salary_transparency:"unknown",salary_confidence:0,salary_evidence:null,company_legitimacy:"unknown",company_confidence:0,company_evidence:null,job_quality:"unknown",job_quality_confidence:0,job_quality_evidence:null,experience_level:"unknown",experience_confidence:0,required_skills:[],transferable_skills:[],missing_skills:[],hiring_urgency:"unknown",hiring_urgency_confidence:0 }
+const AF: AIResp = { africa_eligibility:"unknown",africa_confidence:0,africa_evidence:null,country_restrictions:[],visa_sponsorship:"unknown",visa_confidence:0,remote_eligibility:"unknown",remote_confidence:0,remote_evidence:null,timezone_requirements:null,salary_min:null,salary_max:null,salary_currency:null,salary_period:null,salary_is_estimated:false,salary_transparency:"unknown",salary_confidence:0,salary_evidence:null,company_legitimacy:"unknown",company_confidence:0,company_evidence:null,africa_reasoning:null,remote_reasoning:null,salary_reasoning:null,company_reasoning:null,experience_reasoning:null,quality_reasoning:null,job_quality:"unknown",job_quality_confidence:0,job_quality_evidence:null,experience_level:"unknown",experience_confidence:0,required_skills:[],transferable_skills:[],missing_skills:[],hiring_urgency:"unknown",hiring_urgency_confidence:0 }
 
 /**
  * Parse the model's response as the structured intelligence schema.
@@ -495,6 +497,20 @@ export function enforceTruthfulness(merged: AIResp, opts: { job: Job; truth: str
     out.experience_level = "unknown"; out.experience_confidence = 0
   }
 
+  // [PHASE-4C] Reasoning must explain a conclusion that EXISTS. When a
+  // dimension abstained (unknown) or was downgraded to unknown by this
+  // guard, its reasoning is dropped — never keep orphaned explanations.
+  if (out.africa_eligibility === "unknown") out.africa_reasoning = null
+  if (out.remote_eligibility === "unknown") out.remote_reasoning = null
+  if (out.company_legitimacy === "unknown") out.company_reasoning = null
+  if (out.experience_level === "unknown") out.experience_reasoning = null
+  if (out.job_quality === "unknown") out.quality_reasoning = null
+  if (out.salary_transparency === "unknown") out.salary_reasoning = null
+  // Cap reasoning length (no decorative prose bloat)
+  for (const k of ["africa_reasoning","remote_reasoning","salary_reasoning","company_reasoning","experience_reasoning","quality_reasoning"] as const) {
+    const v = (out as any)[k]
+    if (typeof v === "string" && v.length > 300) (out as any)[k] = v.slice(0, 300)
+  }
   if (nulled > 0) {
     console.log(JSON.stringify({ scope: "truth_guard", event: "evidence_nulled", company: job.company, nulled }))
   }
@@ -525,7 +541,7 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
     : ""
 
   // P5: abstention-first prompt — models must not guess from priors.
-  const prompt = `Extract intelligence from this job posting as JSON. STRICT RULES: (1) Use ONLY the provided text — never outside knowledge about the company or market. (2) For every *_evidence field, copy an EXACT quote from the text do not paraphrase, do not join fragments, do not invent sentences. (3) If the text does not directly prove a field, return "unknown" and null evidence — abstaining is correct, guessing is a violation. (4) visa_sponsorship = "available" ONLY when the text explicitly offers visa sponsorship/relocation support; otherwise "unknown". (5) company_legitimacy = "unknown" unless the provided company website text proves it. (6) africa_eligibility: "explicit" only if the text mentions Africa or an African country; "restricted" only if the text imposes location/work-authorization limits; "likely" only if the text says worldwide/global/EMEA hiring; else "unknown".\n\n` +
+  const prompt = `Extract intelligence from this job posting as JSON. STRICT RULES: (1) Use ONLY the provided text — never outside knowledge about the company or market. (2) For every *_evidence field, copy an EXACT quote from the text do not paraphrase, do not join fragments, do not invent sentences. (3) If the text does not directly prove a field, return "unknown" and null evidence — abstaining is correct, guessing is a violation. (4) visa_sponsorship = "available" ONLY when the text explicitly offers visa sponsorship/relocation support; otherwise "unknown". (5) company_legitimacy = "unknown" unless the provided company website text proves it. (6) africa_eligibility: "explicit" only if the text mentions Africa or an African country; "restricted" only if the text imposes location/work-authorization limits; "likely" only if the text says worldwide/global/EMEA hiring; else "unknown". (7) *_reasoning fields: ONE short sentence (max 25 words) explaining your conclusion using SPECIFIC details from THIS posting (the actual role, location, requirements, or quoted phrase). No generic prose, no facts outside the text, and null whenever the field is unknown.\n\n` +
     `${job.title} @ ${job.company} | ${job.location||""} | ${job.country} | src=${job.source||""} | emp=${job.employment_type}\n` +
     `Salary: ${job.salary_range||""} ${job.salary_min||""}-${job.salary_max||""} ${job.salary_currency||""} | Tags: ${(job.tags||[]).join(",")}\n\n` +
     `Description:\n${combined.slice(0,5000)}${companyContext}\n\n` +
@@ -539,7 +555,7 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
     `"job_quality":"high|medium|low|unknown","job_quality_confidence":0,"job_quality_evidence":"..."|null,` +
     `"experience_level":"entry|mid|senior|executive|unknown","experience_confidence":0,` +
     `"required_skills":[],"transferable_skills":[],"missing_skills":[],` +
-    `"hiring_urgency":"high|medium|low|unknown","hiring_urgency_confidence":0}`
+    `"hiring_urgency":"high|medium|low|unknown","hiring_urgency_confidence":0,"africa_reasoning":"..."|null,"remote_reasoning":"..."|null,"salary_reasoning":"..."|null,"company_reasoning":"..."|null,"experience_reasoning":"..."|null,"quality_reasoning":"..."|null}`
 
   let aiResp: AIResp = AF; let modelVersion = "no-ai-providers"; let aiUsed = false
   const VERIFIER_SYSTEM = "You extract job intelligence ONLY from the provided text. Never use outside knowledge. Evidence fields must be EXACT quotes from the text, or null. Prefer 'unknown' whenever proof is missing. Output only JSON."

@@ -1,4 +1,4 @@
-export type ProviderId = "cerebras" | "gemini" | "gemini_backup" | "groq" | "openrouter" | "huggingface" | "github_models" | "cloudflare" | "mistral" | "mistral_backup" | "nvidia" | "cohere" | "llm7" | "llm7_fast"
+export type ProviderId = "cerebras" | "gemini" | "gemini_backup" | "groq" | "openrouter" | "huggingface" | "github_models" | "cloudflare" | "mistral" | "mistral_backup" | "nvidia" | "cohere" | "llm7" | "llm7_fast" | "freerouter"
 
 export interface ProviderConfig {
   id: ProviderId
@@ -106,6 +106,13 @@ export const PROVIDERS: ProviderConfig[] = [
   // 429/quota backoff, not by trusting declared rates.
   { id: "llm7", name: "LLM7 Gateway (default routing)", envKey: "LLM7_API_KEY", model: "default", enabled: true, priority: 13, rateLimitPerSec: 1, timeoutMs: 30000, costPer1kTokens: 0, taskTypes: ["job_intelligence", "fast_extraction", "fallback"] },
   { id: "llm7_fast", name: "LLM7 Gateway (fast routing)", envKey: "LLM7_API_KEY", model: "fast", enabled: true, priority: 14, rateLimitPerSec: 1, timeoutMs: 20000, costPer1kTokens: 0, taskTypes: ["fast_extraction", "simple_analysis", "fallback"] },
+  // [PHASE-4C] FreeRouter (freerouter.eu.cc) — OpenAI-compatible gateway over
+  // free models (kimi-k3, glm-5.2, deepseek-v4, gpt-5.x-nano, kiro-auto...).
+  // Kimi K3 is the INITIAL preferred model per operator direction — NOT pinned:
+  // model discovery (/v1/models) + model-sync real-inference probes feed the
+  // dynamic registry, and measured performance can outrank or demote it like
+  // any other provider. Timeout generous: K3 is a reasoning model.
+  { id: "freerouter", name: "FreeRouter (Kimi K3 preferred)", envKey: "FREEROUTER_API_KEY", model: "kimi-k3", enabled: true, priority: 15, rateLimitPerSec: 1, timeoutMs: 60000, costPer1kTokens: 0, taskTypes: ["job_intelligence", "fast_extraction", "complex_analysis", "fallback"] },
 ]
 
 export interface ProviderHealth {

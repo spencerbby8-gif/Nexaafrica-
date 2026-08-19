@@ -105,6 +105,29 @@ function salaryTruthLabel(row: JobAIIntelligenceRow | null | undefined, job?: Jo
 }
 
 /**
+ * [PHASE-4C] One line of the model's job-specific reasoning for a dimension.
+ * Sourced from evidence_refs.reasoning (truth-guarded upstream: null whenever
+ * the dimension abstained). Clearly labeled as AI analysis, distinct from the
+ * verbatim evidence quote.
+ */
+function ReasoningLine({ text }: { text?: string | null }) {
+  if (!text || typeof text !== 'string') return null
+  return (
+    <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+      <span className="font-medium text-foreground/70">AI reasoning: </span>
+      {text}
+    </p>
+  )
+}
+
+const EVIDENCE_SOURCE_LABEL: Record<string, string> = {
+  company_page: 'company website (fetched)',
+  page: 'live job page (fetched)',
+  regex: 'posting text (deterministic)',
+  ats_metadata: 'ATS feed metadata',
+}
+
+/**
  * [PHASE-4B] Product-truth reconciliation for the company row.
  * The page-fetch verifier can honestly report 'unknown' when the employer's
  * website is unfetchable (e.g. Reddit: reddit.com/careers 403s bots, and the
@@ -310,6 +333,11 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons, 
         </div>
       </header>
 
+      {hasAI && intelligence?.evidence_provenance && (
+        <p className="mt-3 text-[10px] uppercase tracking-wider text-muted-foreground">
+          Evidence basis: {EVIDENCE_SOURCE_LABEL[intelligence.evidence_provenance] || intelligence.evidence_provenance}
+        </p>
+      )}
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         <div className="rounded-md border border-border/60 bg-secondary/30 p-3">
           <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"><Globe className="h-3 w-3" aria-hidden /> Africa Fit</p>
@@ -317,6 +345,7 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons, 
           {intelligence?.africa_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.africa_confidence}% confidence</p>}
           {intelligence?.country_restrictions && intelligence.country_restrictions.length > 0 && <p className="mt-1 text-[11px] text-muted-foreground">Restrictions: {intelligence.country_restrictions.join(', ')}</p>}
           {intelligence?.visa_sponsorship && intelligence.visa_sponsorship !== 'unknown' && <p className="mt-1 text-[11px] text-muted-foreground">Visa: {intelligence.visa_sponsorship.replace('_', ' ')}</p>}
+          <ReasoningLine text={intelligence?.evidence_refs?.reasoning?.africa} />
           <EvidenceQuote text={intelligence?.africa_evidence} url={intelligence?.africa_source_urls?.[0]} />
           {!hasAI && job && <p className="mt-1 text-[11px] text-muted-foreground">Source: job eligibility = {job.eligibility}</p>}
         </div>
@@ -326,6 +355,7 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons, 
           <p className="mt-1.5 text-sm font-medium text-foreground/90">{remoteLabel(intelligence?.remote_eligibility, job?.is_remote, intelligence?.remote_evidence)}</p>
           {intelligence?.timezone_requirements && <p className="mt-1 text-[11px] text-muted-foreground">Timezone: {intelligence.timezone_requirements}</p>}
           {intelligence?.remote_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.remote_confidence}% confidence</p>}
+          <ReasoningLine text={intelligence?.evidence_refs?.reasoning?.remote} />
           <EvidenceQuote text={intelligence?.remote_evidence} url={intelligence?.evidence_urls?.[0]} />
         </div>
 
@@ -337,6 +367,7 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons, 
           {intelligence?.salary_transparency && <p className="mt-1 text-[11px] text-muted-foreground">Transparency: {intelligence.salary_transparency}{intelligence.salary_is_estimated ? ' (estimated)' : ''}</p>}
           {intelligence?.salary_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.salary_confidence}% confidence</p>}
           {!hasAI && job?.salary_range && <p className="mt-1 text-[11px] text-muted-foreground">Fallback from feed: {job.salary_range}</p>}
+          <ReasoningLine text={intelligence?.evidence_refs?.reasoning?.salary} />
           <EvidenceQuote text={intelligence?.salary_evidence} url={intelligence?.evidence_urls?.[0]} />
         </div>
 
@@ -347,6 +378,7 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons, 
           {!company.detail && intelligence?.company_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.company_confidence}% confidence</p>}
           {intelligence?.job_quality && <p className="mt-1 text-[11px] text-muted-foreground">Job quality: {intelligence.job_quality} {intelligence.job_quality_confidence ? `(${intelligence.job_quality_confidence}%)` : ''}</p>}
           {intelligence?.application_difficulty && <p className="mt-1 text-[11px] text-muted-foreground">Application: {intelligence.application_difficulty} • Urgency: {intelligence.hiring_urgency || 'unknown'}</p>}
+          <ReasoningLine text={intelligence?.evidence_refs?.reasoning?.company || intelligence?.evidence_refs?.reasoning?.quality} />
           <EvidenceQuote text={intelligence?.company_evidence || intelligence?.job_quality_evidence} url={intelligence?.evidence_urls?.[0]} />
         </div>
 
@@ -354,6 +386,7 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons, 
           <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"><GraduationCap className="h-3 w-3" aria-hidden /> Experience Level</p>
           <p className="mt-1.5 text-sm font-medium text-foreground/90">{expLabel(intelligence?.experience_level, job?.title)}</p>
           {intelligence?.experience_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.experience_confidence}% confidence</p>}
+          <ReasoningLine text={intelligence?.evidence_refs?.reasoning?.experience} />
         </div>
 
         <div className="rounded-md border border-border/60 bg-secondary/30 p-3">

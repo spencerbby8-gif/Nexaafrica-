@@ -88,7 +88,7 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
       return { text, provider: providerId, model: cfg.model, latencyMs: latency, tokensInput: result.usageMetadata?.promptTokenCount, tokensOutput: result.usageMetadata?.candidatesTokenCount, costCents: Math.round(((result.usageMetadata?.promptTokenCount||0)+(result.usageMetadata?.candidatesTokenCount||0))*cfg.costPer1kTokens/1000) }
     }
 
-    const openAICompat: ProviderId[] = ["groq","cerebras","openrouter","github_models","mistral","mistral_backup","nvidia","llm7","llm7_fast"]
+    const openAICompat: ProviderId[] = ["groq","cerebras","openrouter","github_models","mistral","mistral_backup","nvidia","llm7","llm7_fast","freerouter"]
     if (openAICompat.includes(providerId)) {
       const urls: Record<string,string> = {
         groq: "https://api.groq.com/openai/v1/chat/completions",
@@ -101,11 +101,17 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
         // [PHASE-4] LLM7 unified gateway (OpenAI-compatible, Bearer auth).
         llm7: "https://api.llm7.io/v1/chat/completions",
         llm7_fast: "https://api.llm7.io/v1/chat/completions",
+        freerouter: "https://freerouter.eu.cc/v1/chat/completions",
       }
+      // [PHASE-4C] FreeRouter serves reasoning models (kimi-k3): thinking
+      // consumes output budget BEFORE the JSON answer. Floor the budget so
+      // reasoning never starves the structured result (8k headroom; the
+      // gateway bills actual usage only).
+      const resolvedMaxTokens = providerId === "freerouter" ? Math.max(req.maxTokens ?? 1024, 8192) : (req.maxTokens ?? 1024)
       const body: any = {
         model: cfg.model,
         messages: [...(req.systemInstruction?[{role:"system",content:req.systemInstruction}]:[]), {role:"user",content:req.prompt}],
-        temperature: req.temperature??0.3, max_tokens: req.maxTokens??1024,
+        temperature: req.temperature??0.3, max_tokens: resolvedMaxTokens,
       }
       // OpenRouter: free-tier key routes through deepinfra.
       if (providerId === "openrouter") {
@@ -135,10 +141,14 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
       }
       const data = await res.json() as any
       const text = data.choices?.[0]?.message?.content || ""
+      // [PHASE-4C] FreeRouter may serve a different underlying model than
+      // requested (routing gateway). Preserve the real model identity in
+      // provenance so job_ai_intelligence.model_version reflects truth.
+      const resolvedModel = providerId === "freerouter" && typeof data?.model === "string" && data.model.length > 0 ? data.model : cfg.model
       const latency = Date.now() - start
       diag.push({ provider: providerId, model: cfg.model, event: "success", retryCount, durationMs: latency, promptLen, responseLen: text.length })
       gwLog(req.jobId, req.agentId, "provider_success", { provider: providerId, latencyMs: latency, tokensIn: data.usage?.prompt_tokens, tokensOut: data.usage?.completion_tokens })
-      return { text, provider: providerId, model: cfg.model, latencyMs: latency, tokensInput: data.usage?.prompt_tokens, tokensOutput: data.usage?.completion_tokens, costCents: Math.round(((data.usage?.prompt_tokens||0)+(data.usage?.completion_tokens||0))*cfg.costPer1kTokens/1000) }
+      return { text, provider: providerId, model: resolvedModel, latencyMs: latency, tokensInput: data.usage?.prompt_tokens, tokensOutput: data.usage?.completion_tokens, costCents: Math.round(((data.usage?.prompt_tokens||0)+(data.usage?.completion_tokens||0))*cfg.costPer1kTokens/1000) }
     }
 
     if (providerId === "cloudflare") {

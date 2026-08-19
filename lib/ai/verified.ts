@@ -65,3 +65,10 @@ export function partitionVerifiedFirst<T extends { aiIntelligence?: VerifiedCand
   }
   return [...verified, ...rest]
 }
+
+/**
+ * Minimum AI confidence (with evidence, from a real provider row) for a
+ * hybrid/onsite verdict to override the feed-supplied is_remote flag.
+ * Shared by the engine write-back and the ingest re-application guard.
+ */
+export const REMOTE_WRITEBACK_MIN_CONFIDENCE = 60

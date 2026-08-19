@@ -74,8 +74,8 @@ export async function POST(req: Request) {
   // 1,189 vs 708 active) stale for a whole day.
   if (chain === 0) {
     try {
-      const { refreshCompanyIntelligence, refreshSourceIntelligence } = await import('@/lib/ai/admission')
-      const [ci, si] = await Promise.all([refreshCompanyIntelligence(), refreshSourceIntelligence()])
+      const { refreshCompanyIntelligence, refreshSourceIntelligence, reapplyRemoteTruthWrites } = await import('@/lib/ai/admission')
+      const [ci, si] = await Promise.all([refreshCompanyIntelligence(), refreshSourceIntelligence(), reapplyRemoteTruthWrites()])
       companyIntel = ci
       sourceIntel = si
     } catch {}

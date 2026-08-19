@@ -438,6 +438,15 @@ export async function runAllSources(
     console.log(`[ingest] ${disabledSources.size} sources auto-disabled due to 5+ failures: ${Array.from(disabledSources).join(', ')}`)
   }
 
+  // [PHASE-3 FIX] Ingest upserts overwrite is_remote with the feed value;
+  // re-apply evidenced hybrid/onsite write-backs so the revert never sticks.
+  try {
+    const { reapplyRemoteTruthWrites } = await import('@/lib/ai/admission')
+    await reapplyRemoteTruthWrites()
+  } catch (e) {
+    console.log('[ingest] remote-truth reapply failed:', e instanceof Error ? e.message.slice(0, 150) : String(e))
+  }
+
   return results
 }
 

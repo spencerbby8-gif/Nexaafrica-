@@ -26,7 +26,8 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { slug } = await params
   const result = await getCompanyBySlug(slug)
-  if (!result) return {}
+  // [404-INTEGRITY] notFound at metadata time keeps the 404 head clean.
+  if (!result) notFound()
   const { company } = result
   const title = `${company.name} — open remote roles`
   const description = `${company.jobCount} open remote ${

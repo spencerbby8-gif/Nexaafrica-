@@ -24,7 +24,9 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { slug } = await params
   const guide = getGuide(slug)
-  if (!guide) return {}
+  // [404-INTEGRITY] notFound at metadata time keeps the 404 head clean
+  // (no residual layout metadata flushed before the page boundary fires).
+  if (!guide) notFound()
   const ogUrl = ogImage({
     kind: 'guide',
     title: guide.title,

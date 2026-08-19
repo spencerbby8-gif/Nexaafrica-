@@ -174,23 +174,39 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
         // set of parameter variants and adopts the first one that yields real
         // content. The gateway applies the adopted params to live calls.
         const variants: Array<Record<string, unknown>> = [
-          { max_tokens: 8192, max_completion_tokens: 8192 },
-          { max_tokens: 8192, max_completion_tokens: 8192, reasoning_effort: 'low' },
-          { max_tokens: 8192, max_completion_tokens: 8192, chat_template_kwargs: { enable_thinking: false } },
-          { max_tokens: 8192, max_completion_tokens: 8192, thinking: { type: 'disabled' } },
+          // Diagnostic ping: if even a one-word answer comes back empty, the
+          // gateway hard-caps this model's output regardless of budget.
+          { max_tokens: 16384, max_completion_tokens: 16384, __ping: true },
+          { max_tokens: 16384, max_completion_tokens: 16384 },
+          { max_tokens: 16384, max_completion_tokens: 16384, reasoning_effort: 'low' },
+          { max_tokens: 16384, max_completion_tokens: 16384, chat_template_kwargs: { enable_thinking: false } },
+          { max_tokens: 16384, max_completion_tokens: 16384, thinking: { type: 'disabled' } },
+          { max_tokens: 16384, max_completion_tokens: 16384, reasoning_effort: 'minimal' },
+          { max_tokens: 16384, max_completion_tokens: 16384, reasoning_effort: 'none' },
+          { max_tokens: 16384, max_completion_tokens: 16384, reasoning: { effort: 'low' } },
         ]
         let last: any = null
-        for (const extra of variants) {
+        for (const rawExtra of variants) {
+          const { __ping, ...extra } = rawExtra as Record<string, any> & { __ping?: boolean }
+          const variantPrompt = __ping ? 'Reply with exactly one word: hello' : prompt
           res = await fetch(endpoints[provider], {
             method: 'POST', headers,
-            body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: prompt }], ...extra }),
+            body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: variantPrompt }], ...extra }),
             signal: AbortSignal.timeout(probeTimeoutMs),
           })
-          if (!res.ok) break
+          if (!res.ok) continue // this variant is invalid; try the next one
           const peek: any = await res.json().catch(() => ({}))
           last = peek
           const peekContent = peek?.choices?.[0]?.message?.content
-          if (typeof peekContent === 'string' && peekContent.trim().length > 0) {
+          const hasContent = typeof peekContent === 'string' && peekContent.trim().length > 0
+          if (__ping) {
+            // Diagnostic gate: if even one word cannot be emitted, the gateway
+            // hard-caps this model's output and no variant can help.
+            if (!hasContent) break
+            continue // content generation works — proceed to the JSON variants
+          }
+          if (hasContent) {
+            // Adopt the measured params for live gateway calls.
             setFreerouterWorkingParams(extra)
             res = new Response(JSON.stringify(peek), { status: 200, headers: { 'Content-Type': 'application/json' } })
             break

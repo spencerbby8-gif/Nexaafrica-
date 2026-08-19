@@ -46,13 +46,20 @@ export interface ModelVerifyOutcome {
 
 /** Parse a minimal JSON probe response, tolerating code fences. */
 function parseJsonProbe(text: string): boolean {
+  // [PHASE-4C] Aligned with the verifier's lenient extraction (parseAiJson):
+  // reasoning models (kimi-k3 etc.) may wrap the JSON in fences/prose. The
+  // probe must measure what the pipeline actually consumes — first {...} block.
   const t = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim()
-  try {
-    const v = JSON.parse(t)
-    return Boolean(v && typeof v === 'object' && v.ok === true)
-  } catch {
-    return false
+  const candidates = [t]
+  const m = text.match(/\{[\s\S]*\}/)
+  if (m) candidates.push(m[0])
+  for (const c of candidates) {
+    try {
+      const v = JSON.parse(c)
+      if (v && typeof v === 'object' && v.ok === true) return true
+    } catch {}
   }
+  return false
 }
 
 export interface ModelSyncSummary {
@@ -84,6 +91,9 @@ function keyFor(provider: string): string | undefined {
  *  structuredJson=false so the router never prefers it for structured tasks. */
 async function verifyCandidate(provider: string, modelId: string, apiKey: string): Promise<ModelVerifyOutcome> {
   const start = Date.now()
+  // [PHASE-4C] Reasoning models (kimi-k3) legitimately need >12s; use the
+  // provider's configured timeout capped at 30s instead of the flat 12s.
+  const probeTimeoutMs = Math.min(PROVIDERS.find((p) => p.id === provider)?.timeoutMs ?? VERIFY_TIMEOUT_MS, 30000)
   const prompt = 'Reply with ONLY this JSON object and nothing else: {"ok":true}'
   try {
     let res: Response
@@ -104,7 +114,7 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
             responseMimeType: 'application/json',
           },
         }),
-        signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
+        signal: AbortSignal.timeout(probeTimeoutMs),
       })
     } else if (provider === 'cloudflare') {
       const accountId = process.env.CLOUDFLARE_ACCOUNT_ID!
@@ -112,7 +122,7 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], max_tokens: 16 }),
-        signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
+        signal: AbortSignal.timeout(probeTimeoutMs),
       })
     } else if (provider === 'cohere') {
       // Cohere v2 Chat API with JSON mode — response: message.content[0].text
@@ -124,7 +134,7 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
           messages: [{ role: 'user', content: prompt }],
           response_format: { type: 'json_object' },
         }),
-        signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
+        signal: AbortSignal.timeout(probeTimeoutMs),
       })
     } else {
       const endpoints: Record<string, string> = {
@@ -139,14 +149,17 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
         // [PHASE-4] LLM7: plain-prompt probe (free tier rejects response_format).
         llm7: 'https://api.llm7.io/v1/chat/completions',
         llm7_fast: 'https://api.llm7.io/v1/chat/completions',
+        freerouter: 'https://freerouter.eu.cc/v1/chat/completions',
       }
       const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }
       if (provider === 'github_models') headers['api-version'] = '2024-05-01-preview'
       if (provider === 'openrouter') { headers['HTTP-Referer'] = 'https://v0-nexaafrica.vercel.app'; headers['X-Title'] = 'Nexa Africa' }
       res = await fetch(endpoints[provider], {
         method: 'POST', headers,
-        body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: prompt }], max_tokens: 16 }),
-        signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
+        // [PHASE-4C] Reasoning models (kimi-k3) spend budget on thinking before
+        // answering; 16 tokens produced empty content. Give the probe headroom.
+        body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: prompt }], max_tokens: provider === 'freerouter' ? 2048 : 16 }),
+        signal: AbortSignal.timeout(probeTimeoutMs),
       })
     }
     const latencyMs = Date.now() - start
@@ -164,10 +177,17 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
       data?.message?.content?.[0]?.text ??
       (typeof data?.message?.content === 'string' ? data.message.content : '') ?? ''
     const ok = typeof text === 'string' && text.trim().length > 0
+    if (!ok) {
+      // [PHASE-4C] Honest diagnostic: what shape did the gateway return?
+      return { modelId, ok: false, latencyMs, quotaExhausted: false, structuredJson: false, error: 'empty content; choice=' + JSON.stringify(data?.choices?.[0] || {}).slice(0, 200) }
+    }
+    const structuredJson = ok ? parseJsonProbe(text) : false
     return {
       modelId, ok, latencyMs, quotaExhausted: false,
-      structuredJson: ok ? parseJsonProbe(text) : false,
-      error: ok ? undefined : 'empty response',
+      structuredJson,
+      // [PHASE-4C] Honest observability: when a model answers but the JSON
+      // probe fails, persist a raw snippet so failures are diagnosable.
+      error: ok ? (structuredJson ? undefined : 'json-probe: ' + text.replace(/\s+/g, ' ').slice(0, 140)) : 'empty response',
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -210,6 +230,8 @@ function mergeHealth(existing: DiscoveredModel['health'] | undefined, outcome: M
     lastSuccessfulAt: outcome.ok ? now : existing?.lastSuccessfulAt,
     quotaStatus: outcome.quotaExhausted ? 'exhausted' : 'ok',
     cooldownUntil: outcome.quotaExhausted ? new Date(Date.now() + CRON_MIN_MS).toISOString() : undefined,
+    // [PHASE-4C] Probe failures must be diagnosable.
+    lastError: outcome.error || (outcome.ok ? undefined : existing?.lastError),
   }
 }
 

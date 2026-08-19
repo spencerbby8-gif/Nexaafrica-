@@ -39,6 +39,8 @@ export interface DiscoveredModel {
     lastSuccessfulAt?: string
     quotaStatus: 'ok' | 'warning' | 'exhausted'
     cooldownUntil?: string
+    // [PHASE-4C] last probe failure detail (diagnosability).
+    lastError?: string
   }
   // Benchmark results
   benchmarks?: {
@@ -1034,6 +1036,35 @@ export async function discoverAllModels(): Promise<ProviderCatalog[]> {
     }
   }
 
+
+  // [PHASE-4C] FreeRouter unified free-model gateway
+  if (process.env.FREEROUTER_API_KEY) {
+    try {
+      const models = await discoverFreeRouterModels(process.env.FREEROUTER_API_KEY)
+      catalogs.push({
+        provider: 'freerouter',
+        discoveryEndpoint: 'https://freerouter.eu.cc/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models,
+        totalModels: models.length,
+        verifiedModels: 0,
+        usableModels: 0
+      })
+    } catch (error: any) {
+      console.error('[Discovery] FreeRouter discovery failed: ' + error.message)
+      catalogs.push({
+        provider: 'freerouter',
+        discoveryEndpoint: 'https://freerouter.eu.cc/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models: [],
+        totalModels: 0,
+        verifiedModels: 0,
+        usableModels: 0,
+        discoveryError: error.message
+      })
+    }
+  }
+
   // Cache results
   try {
     const supabase = createClient(supabaseUrl, supabaseKey)
@@ -1116,6 +1147,60 @@ async function discoverLlm7Models(apiKey: string): Promise<DiscoveredModel[]> {
     return models
   } catch (error: any) {
     console.error('[LLM7 Discovery] FAILED: ' + error.message)
+    throw error
+  }
+}
+
+/**
+ * [PHASE-4C] Parse a FreeRouter /v1/models payload (OpenAI-compatible list
+ * with gateway metadata: name, contextWindow, owned_by).
+ */
+export function parseFreeRouterModelList(json: any): DiscoveredModel[] {
+  const list = Array.isArray(json?.data) ? json.data : []
+  const endpoint = 'https://freerouter.eu.cc/v1/models'
+  const out: DiscoveredModel[] = []
+  for (const m of list) {
+    const id = typeof m?.id === 'string' ? m.id : null
+    if (!id) continue
+    out.push({
+      provider: 'freerouter',
+      modelId: id,
+      modelName: typeof m?.name === 'string' && m.name ? m.name : id,
+      discoveredAt: new Date().toISOString(),
+      discoveryEndpoint: endpoint,
+      rawResponse: m,
+      capabilities: {
+        maxTokens: typeof m?.contextWindow === 'number' ? m.contextWindow : undefined,
+      },
+      health: { verified: false, usable: false, healthScore: 0, successRate: 0, failureRate: 0, avgLatencyMs: 0, quotaStatus: 'ok' },
+      routingPriority: 0,
+    })
+  }
+  return out
+}
+
+/**
+ * [PHASE-4C] Discover models from the FreeRouter gateway.
+ * Endpoint: https://freerouter.eu.cc/v1/models (OpenAI-compatible).
+ */
+async function discoverFreeRouterModels(apiKey: string): Promise<DiscoveredModel[]> {
+  const endpoint = 'https://freerouter.eu.cc/v1/models'
+  console.log('[FreeRouter Discovery] Querying ' + endpoint)
+  try {
+    const response = await fetch(endpoint, {
+      headers: { Authorization: 'Bearer ' + apiKey },
+      signal: AbortSignal.timeout(20000),
+    })
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error('FreeRouter API error ' + response.status + ': ' + errorText.substring(0, 200))
+    }
+    const data = await response.json()
+    const models = parseFreeRouterModelList(data)
+    console.log('[FreeRouter Discovery] Found ' + models.length + ' models')
+    return models
+  } catch (error: any) {
+    console.error('[FreeRouter Discovery] FAILED: ' + error.message)
     throw error
   }
 }

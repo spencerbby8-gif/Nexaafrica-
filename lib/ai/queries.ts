@@ -56,6 +56,8 @@ export interface JobAIIntelligenceRow {
   quality_score: number | null
   evidence_urls: string[] | null
   evidence_provenance: string | null
+  // [PHASE-4C] per-dimension provenance + model reasoning (jsonb column).
+  evidence_refs: Record<string, any> | null
   page_status: number | null
   page_checked_at: string | null
   last_verified_at: string | null

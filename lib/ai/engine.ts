@@ -220,7 +220,22 @@ export async function enrichJobWithAI(job: Job): Promise<{ intelligence: JobAIIn
   const _evidenceProvenance = bundle?._consolidated ? (
     bundle._consolidated.companyPageFetched ? 'company_page' : bundle._consolidated.aiUsed ? 'page' : 'regex'
   ) : 'ats_metadata'
-  return { intelligence: result, diags: Object.assign(raw_diags as any[], { _pageStatus, _evidenceProvenance }) }
+  // [PHASE-4C] Per-dimension model reasoning captured from the consolidated
+  // AI response (already truth-guarded: nulled for abstained dimensions).
+  const _reasoning = (() => {
+    const ai = bundle?._consolidated?.ai
+    if (!ai) return null
+    const r = {
+      africa: ai.africa_reasoning ?? null,
+      remote: ai.remote_reasoning ?? null,
+      salary: ai.salary_reasoning ?? null,
+      company: ai.company_reasoning ?? null,
+      experience: ai.experience_reasoning ?? null,
+      quality: ai.quality_reasoning ?? null,
+    }
+    return Object.values(r).some(Boolean) ? r : null
+  })()
+  return { intelligence: result, diags: Object.assign(raw_diags as any[], { _pageStatus, _evidenceProvenance, _reasoning }) }
 }
 
 /**
@@ -773,6 +788,8 @@ export async function processAIQueue(batchSize = 100) {
           evidence_refs: {
             provenance: (aiResult as any).diags?._evidenceProvenance ?? null,
             pageStatus: (aiResult as any).diags?._pageStatus ?? null,
+            // [PHASE-4C] grounded per-dimension reasoning from the model.
+            reasoning: (aiResult as any).diags?._reasoning ?? null,
             sources: Array.from(new Set<string>([
               job.apply_url,
               ...(intelligence.africa.sourceUrls || []),

@@ -128,6 +128,15 @@ const FIXED_PROFILES: Record<ProviderId, ProviderProfile> = {
     avoidFor: ["structured_extraction"],
     avgQualityScore: 0, avgLatencyMs: 1200, successRate: 0, totalEvaluations: 0, taskQuality: {},
   },
+  // [PHASE-4C] FreeRouter gateway — Kimi K3 initial preferred; measured
+  // probes govern actual standing (neutral profile until proven).
+  freerouter: {
+    id: "freerouter",
+    strengths: ["frontier-class free models", "structured reasoning", "1M context"],
+    bestFor: ["intelligence", "structured_extraction", "complex_analysis"],
+    avoidFor: [],
+    avgQualityScore: 0, avgLatencyMs: 8000, successRate: 0, totalEvaluations: 0, taskQuality: {},
+  },
 }
 
 export async function getProviderProfiles(): Promise<ProviderProfile[]> {

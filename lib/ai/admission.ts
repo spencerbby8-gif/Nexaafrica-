@@ -11,13 +11,14 @@ export type AdmissionDecision =
   | { admitted: true }
   | { admitted: false; reason: string; gate: string }
 
+import { evaluateLocationPolicy } from '@/lib/locationPolicy'
+
 // Work-authorization restrictions that exclude African applicants
 const RESTRICTION_RE = /must be (?:based|located|residing|licensed|registered) in|work authorization for|authorized to work in the (?:us|uk|eu|canada)|citizens? of|residents? of (?:the )?(?:us|uk|eu|canada) only|(?:us|uk|eu) (?:only|residents only|citizens only|based only)|(?:based|located|residing|licensed|registered) in (?:the )?(?:us|usa|united states|uk|u\.?k\.?|united kingdom|canada|eu|europe|germany|france|spain|italy|netherlands|poland|sweden|norway|denmark|finland|belgium|austria|switzerland|ireland|portugal|australia|new zealand|india|singapore|japan|israel|uae|dubai|qatar|saudi arabia|turkey|brazil|mexico|argentina|colombia|chile|philippines|indonesia|vietnam|thailand|malaysia|south korea|taiwan|hong kong|latam|apac)|(?:based|located|residing|licensed|registered|board[- ]certified) in (?:the )?(?:state of )?(?:connecticut|california|texas|new york|florida|illinois|pennsylvania|ohio|georgia|north carolina|south carolina|michigan|new jersey|virginia|washington|arizona|massachusetts|tennessee|indiana|missouri|maryland|wisconsin|colorado|minnesota|alabama|louisiana|kentucky|oregon|oklahoma|utah|iowa|nevada|arkansas|mississippi|kansas|new mexico|nebraska|west virginia|idaho|hawaii|maine|new hampshire|montana|rhode island|delaware|south dakota|north dakota|alaska|vermont|wyoming)|(?:us|united states) (?:work )?(?:authorization|eligibility|citizenship|resident|remote|only)|(?:must )?(?:be|hold|have) (?:a )?(?:valid )?(?:us|state|medical|nursing|law|attorney|teaching) licen[cs]e|licensed to (?:work|practice) in (?:the )?(?:us|usa|united states|uk|canada)|(?:within|inside) the (?:us|united states|uk|united kingdom|eu|canada)|(?:candidates?|applicants?) (?:must be|need to be|should be|will be) (?:based|located|residing|in)|no (?:visa )?(?:sponsorship|sponsoring)|(?:cannot|cannot|can'?t|do not|don'?t) (?:provide )?(?:visa )?sponsorship|(?:work|employment) authorization (?:is )?required|(?:location|locations?)\s*[:—-]\s*(?:us|usa|united states|uk|u\.?k\.?|canada|eu)/i
 
 // Dead/placeholder apply URLs
 const DEAD_URL_RE = /^(about:blank|javascript:|#)/i
 
-const LOCATION_RESTRICTED_RE = /^(?:us|usa|u\.?s\.?|united\s+states|uk|u\.?k\.?|united\s+kingdom|canada|eu|europe|germany|france|spain|italy|netherlands|poland|sweden|norway|denmark|finland|belgium|austria|switzerland|ireland|portugal|australia|new\s+zealand|india|singapore|japan|israel|uae|dubai|qatar|saudi\s+arabia|turkey|brazil|mexico|argentina|colombia|chile|philippines|indonesia|vietnam|thailand|malaysia|south\s+korea|taiwan|hong\s+kong|latam|apac)$/i
 
 interface AdmissionJob {
   eligibility: string
@@ -48,18 +49,20 @@ export function admit(job: AdmissionJob): AdmissionDecision {
     return { admitted: false, reason: 'Requires work authorization unavailable to African applicants', gate: 'work_authorization' }
   }
 
-  // 2b. Location-field lock: the posting is located in a restricted region
-  // and contains NO global-outreach language anywhere => reject pre-AI.
-  // Catches "based in Connecticut" style postings that evade text regexes.
-  const LOCAL_QUALIFIER = /\b(?:anywhere|worldwide|remote|global(?:ly)?)\b[^.!?\n]{0,50}\b(?:in|within|across|throughout|based)\s+(?:the\s+)?(?:us|usa|united\s+states|uk|u\.?k\.?|united\s+kingdom|canada|europe|eu|germany|france|spain|italy|netherlands|poland|sweden|norway|denmark|finland|belgium|austria|switzerland|ireland|portugal|australia|new\s+zealand|india|singapore|japan|israel|uae|dubai|qatar|saudi\s+arabia|turkey|brazil|mexico|argentina|colombia|chile|philippines|indonesia|vietnam|thailand|malaysia|south\s+korea|taiwan|hong\s+kong|latam|apac)\b/i
-  const FALSE_TOKEN = /\banywhere\s+compan(y|ies)\b/i
-  const globalOutreach = /\b(worldwide|anywhere|emea|africa\b|any\s+(time\s*zone|location|country)|remote\s*[-—,]?\s*(global|worldwide|anywhere|international))\b/i.test(job.description_md) && !LOCAL_QUALIFIER.test(job.description_md) && !FALSE_TOKEN.test(job.description_md)
-  const locText = `${job.country || ''} ${job.location || ''}`.trim()
-  const locParts = locText.split(/[,;]/).map((p: string) => p.trim()).filter(Boolean)
-  const anyRestrictedPart = locParts.some((p: string) => LOCATION_RESTRICTED_RE.test(p))
-  const anyGlobalPart = locParts.some((p: string) => /\b(worldwide|anywhere|remote|africa|emea|global)\b/i.test(p))
-  if (locText && anyRestrictedPart && !anyGlobalPart && !globalOutreach) {
-    return { admitted: false, reason: 'Located in a region restricted for African applicants', gate: 'work_authorization' }
+  // 2b. Location policy — ONE shared rule with the ingest classifier
+  // (lib/locationPolicy.ts). Covers the legacy Western restriction lock AND
+  // the generic specific-location rule (Phase 2): a posting bound to ANY
+  // specific place without strong global outreach is not Africa-compatible,
+  // whatever the source feed claims about is_remote.
+  const locVerdict = evaluateLocationPolicy(job.location, job.country, job.description_md)
+  if (locVerdict.bound) {
+    return {
+      admitted: false,
+      reason: locVerdict.kind === 'restricted_region'
+        ? 'Located in a region restricted for African applicants'
+        : 'Location-bound role without global outreach evidence',
+      gate: 'work_authorization',
+    }
   }
 
   // 3. On-site only outside supported hiring regions

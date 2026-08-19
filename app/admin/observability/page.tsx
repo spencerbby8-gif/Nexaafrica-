@@ -31,7 +31,8 @@ export default async function ObservabilityPage() {
     sb.from("ai_provider_log").select("provider, event, duration_ms, created_at").order("created_at", { ascending: false }).limit(200),
     sb.from("ai_orch_health").select("*").order("provider"),
     sb.from("jobs").select("id", { count: "exact", head: true }).eq("is_active", true),
-    sb.from("job_ai_intelligence").select("id", { count: "exact", head: true }).like("model_version", "%:%").not("model_version", "like", "regex%"),
+    // [PHASE-2] Canonical verified contract: quality_score >= 40 (lib/ai/verified.ts).
+    sb.from("job_ai_intelligence").select("id", { count: "exact", head: true }).like("model_version", "%:%").not("model_version", "like", "regex%").gte("quality_score", 40),
     sb.from("ingest_runs").select("source, ok, fetched, inserted, rejected, created_at").order("created_at", { ascending: false }).limit(20),
     sb.from("source_health_summary").select("*"),
     sb.from("ai_processing_stats").select("*").order("date", { ascending: false }).limit(14),

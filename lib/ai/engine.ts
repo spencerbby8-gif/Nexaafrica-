@@ -4,6 +4,10 @@ import { AI_MODEL_VERSION, AI_INTELLIGENCE_VERSION, type JobAIIntelligence } fro
 import type { ProviderCallDiag } from "./gateway"
 import { PROVIDERS } from "./providers/types"
 
+// [PHASE-2] Minimum AI confidence (with evidence) before a hybrid/onsite
+// verdict overrides the feed-supplied is_remote flag.
+const REMOTE_WRITEBACK_MIN_CONFIDENCE = 60
+
 
 
 const cache = new Map<string, { result: { intelligence: JobAIIntelligence; diags: any[] }; timestamp: number }>()
@@ -711,6 +715,33 @@ export async function processAIQueue(batchSize = 100) {
           failed++
           return
         }
+      }
+
+      // ── [PHASE-2] Remote truth write-back ─────────────────────────────
+      // When a REAL AI verdict with evidence says hybrid/onsite, the public
+      // jobs.is_remote flag must stop claiming "fully remote". The listing
+      // then drops out of remote-board lists (queries filter is_remote=false)
+      // instead of being publicly represented as fully remote against
+      // stronger evidence. Unknown remote verdicts never write back.
+      try {
+        const rv = intelligence.remote.value
+        const rc = intelligence.remote.confidence
+        const realModel = intelligence.modelVersion.includes(":") &&
+          !intelligence.modelVersion.includes("failed-no-evidence") &&
+          !intelligence.modelVersion.includes("no-ai-providers")
+        if ((rv === "hybrid" || rv === "onsite") && rc >= REMOTE_WRITEBACK_MIN_CONFIDENCE && realModel && intelligence.remote.evidence.length > 0) {
+          const { data: flipped } = await supabase
+            .from("jobs")
+            .update({ is_remote: false })
+            .eq("id", job.id)
+            .eq("is_remote", true)
+            .select("id")
+          if (flipped && flipped.length > 0) {
+            console.log(JSON.stringify({ scope: "ai_engine", event: "remote_writeback", jobId: String(job.id).slice(0, 8), verdict: rv, confidence: rc }))
+          }
+        }
+      } catch (e) {
+        console.log(JSON.stringify({ scope: "ai_engine", event: "remote_writeback_error", error: (e instanceof Error ? e.message : String(e)).slice(0, 150) }))
       }
 
       // ── Post-upsert: always run these for every processed item ────────

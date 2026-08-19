@@ -1,4 +1,5 @@
 import { Globe, ShieldCheck, Clock, CheckCircle2, AlertCircle, FileText } from 'lucide-react'
+import { isVerifiedIntelligence } from '@/lib/ai/verified'
 import type { JobAIIntelligenceRow } from '@/lib/ai/queries'
 import type { Job } from '@/lib/types'
 import { relativeTime } from '@/lib/format'
@@ -35,7 +36,8 @@ export function VerificationTimeline({
   })
 
   // Step 2: AI Verified
-  const verified = intelligence?.model_version?.includes(':') && !intelligence.model_version.startsWith('regex')
+  // [PHASE-2] Canonical verified contract (lib/ai/verified.ts).
+  const verified = isVerifiedIntelligence(intelligence)
   steps.push({
     icon: ShieldCheck,
     label: verified ? 'Nexa Intelligence verified' : 'Pending verification',

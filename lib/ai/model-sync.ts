@@ -243,9 +243,10 @@ export async function syncLiveModelRegistry(opts: { force?: boolean; budgetMs?: 
       const provider = catalog.provider
       const apiKey = keyFor(provider)
       const configured = PROVIDERS.find((p) => p.id === (provider as ProviderId))?.model
-      const entry: ModelSyncSummary['providers'][number] = {
+      const entry: ModelSyncSummary['providers'][number] & { bestLatencyMs: number } = {
         provider, discovered: catalog.totalModels, verified: 0, usable: 0, bestModel: null,
         error: catalog.discoveryError,
+        bestLatencyMs: 0,
       }
       const existingById = new Map<string, DiscoveredModel>()
       for (const m of catalog.models) existingById.set(m.modelId, m)
@@ -271,7 +272,12 @@ export async function syncLiveModelRegistry(opts: { force?: boolean; budgetMs?: 
           if (Date.now() >= deadline) break
           const outcome = await verifyCandidate(provider, modelId, apiKey)
           entry.verified++
-          if (outcome.ok) entry.usable++
+          if (outcome.ok) {
+            entry.usable++
+            if (outcome.latencyMs > 0 && (entry.bestLatencyMs === 0 || outcome.latencyMs < entry.bestLatencyMs)) {
+              entry.bestLatencyMs = outcome.latencyMs
+            }
+          }
           const model = existingById.get(modelId) ?? {
             provider, modelId, modelName: modelId,
             discoveredAt: new Date().toISOString(),
@@ -329,6 +335,45 @@ export async function syncLiveModelRegistry(opts: { force?: boolean; budgetMs?: 
       } catch (e) {
         entry.error = entry.error ?? (e instanceof Error ? e.message : String(e)).slice(0, 160)
       }
+      // [PHASE-4] Seed router health with MEASURED probe outcomes. Probes are
+      // real inference calls against the provider's production endpoint; the
+      // Smart Router's documented contract derives scores from live evidence
+      // persisted in ai_orch_health. Without this wiring a newly verified
+      // provider could never win routing and thus never accumulate the live
+      // samples the router expects (verified for llm7, 2026-08-19).
+      const entryAny = entry as any
+      try {
+        if (entry.usable > 0) {
+          const { createServiceClient } = await import('@/lib/supabase/service')
+          const svc = createServiceClient()
+          const { data: prevRow } = await svc.from('ai_orch_health').select('*').eq('provider', provider).maybeSingle()
+          const prev = (prevRow ?? {}) as Record<string, any>
+          const nowIso = new Date().toISOString()
+          await svc.from('ai_orch_health').upsert({
+            provider,
+            total_successes: (Number(prev.total_successes) || 0) + entry.usable,
+            total_failures: (Number(prev.total_failures) || 0) + Math.max(0, entry.verified - entry.usable),
+            last_success_at: entry.usable > 0 ? nowIso : prev.last_success_at ?? null,
+            consecutive_failures: 0,
+            is_quota_exhausted: false,
+            is_rate_limited: false,
+            cooldown_until: null,
+            avg_latency_ms: entry.bestLatencyMs
+              ? (Number(prev.avg_latency_ms) > 0 ? Math.round((Number(prev.avg_latency_ms) + entry.bestLatencyMs) / 2) : entry.bestLatencyMs)
+              : Number(prev.avg_latency_ms) || 0,
+            best_latency_ms: entry.bestLatencyMs ? (Number(prev.best_latency_ms) > 0 ? Math.min(Number(prev.best_latency_ms), entry.bestLatencyMs) : entry.bestLatencyMs) : prev.best_latency_ms ?? null,
+            updated_at: nowIso,
+          }, { onConflict: 'provider' }).then((r: any) => {
+            entryAny.seed = r.error ? ('err:' + String(r.error.message || r.error).slice(0, 120)) : 'ok'
+          })
+        } else {
+          entryAny.seed = 'skip:usable=0'
+        }
+      } catch (e) {
+        entryAny.seed = 'throw:' + (e instanceof Error ? e.message : String(e)).slice(0, 120)
+        console.log(JSON.stringify({ scope: 'model_sync', event: 'health_seed_error', provider, error: (e instanceof Error ? e.message : String(e)).slice(0, 140) }))
+      }
+
       summary.providers.push(entry)
     }),
   )

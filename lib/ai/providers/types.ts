@@ -1,4 +1,4 @@
-export type ProviderId = "cerebras" | "gemini" | "gemini_backup" | "groq" | "openrouter" | "huggingface" | "github_models" | "cloudflare" | "mistral" | "mistral_backup" | "nvidia" | "cohere"
+export type ProviderId = "cerebras" | "gemini" | "gemini_backup" | "groq" | "openrouter" | "huggingface" | "github_models" | "cloudflare" | "mistral" | "mistral_backup" | "nvidia" | "cohere" | "llm7" | "llm7_fast"
 
 export interface ProviderConfig {
   id: ProviderId
@@ -95,6 +95,17 @@ export const PROVIDERS: ProviderConfig[] = [
   // healthScore=100, 239ms avg; command-a-plus-05-2026 returned failures on
   // this key (verified=false) — so the default model is the measured one.
   { id: "cohere", name: "Cohere Command A", envKey: "COHERE_API_KEY", model: "command-a-03-2025", enabled: true, priority: 12, rateLimitPerSec: 2, timeoutMs: 30000, costPer1kTokens: 4, taskTypes: ["job_intelligence", "simple_analysis", "fallback"] },
+  // [PHASE-4] LLM7 (api.llm7.io) — OpenAI-compatible unified gateway behind
+  // OpenAI/Mistral/Azure/Cloudflare/DeepSeek/etc. Model IDs are NOT hardcoded:
+  // "default"/"fast" are the documented routing selectors; model discovery
+  // (/v1/models) + model-sync live probes measure concrete models and the
+  // dynamic registry swaps in the best MEASURED one. Free tier: JSON via
+  // prompt only (response_format is a paid feature) — the gateway never sends
+  // response_format for any provider, and probes for llm7 use plain prompts.
+  // Free limits (~20 req/min, 100 req/hour) are enforced by the Smart Router's
+  // 429/quota backoff, not by trusting declared rates.
+  { id: "llm7", name: "LLM7 Gateway (default routing)", envKey: "LLM7_API_KEY", model: "default", enabled: true, priority: 13, rateLimitPerSec: 1, timeoutMs: 30000, costPer1kTokens: 0, taskTypes: ["job_intelligence", "fast_extraction", "fallback"] },
+  { id: "llm7_fast", name: "LLM7 Gateway (fast routing)", envKey: "LLM7_API_KEY", model: "fast", enabled: true, priority: 14, rateLimitPerSec: 1, timeoutMs: 20000, costPer1kTokens: 0, taskTypes: ["fast_extraction", "simple_analysis", "fallback"] },
 ]
 
 export interface ProviderHealth {

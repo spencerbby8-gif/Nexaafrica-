@@ -71,22 +71,10 @@ export interface ModelSyncSummary {
 }
 
 function keyFor(provider: string): string | undefined {
-  const env: Record<string, string> = {
-    gemini: 'GEMINI_API_KEY',
-    gemini_backup: 'GEMINI_API_KEY_BACKUP',
-    groq: 'GROQ_API_KEY',
-    cerebras: 'CEREBRAS_API_KEY',
-    openrouter: 'OPENROUTER_API_KEY',
-    github_models: 'GITHUB_MODELS_TOKEN',
-    cloudflare: 'CLOUDFLARE_API_TOKEN',
-    mistral: 'MISTRAL_API_KEY',
-    mistral_backup: 'MISTRAL_API_KEY_BACKUP',
-    nvidia: 'NVIDIA_API_KEY',
-    huggingface: 'HUGGINGFACE_API_KEY',
-    cohere: 'COHERE_API_KEY',
-  }
-  const name = env[provider]
-  return name ? process.env[name] : undefined
+  // [PHASE-4] Data-driven from PROVIDERS — the hardcoded map silently left
+  // llm7 unprobeable (drift). Single source of truth prevents recurrence.
+  const cfg = PROVIDERS.find((p) => p.id === provider)
+  return cfg ? process.env[cfg.envKey] : undefined
 }
 
 /** One real inference call against the provider's production endpoint.
@@ -148,6 +136,9 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
         mistral_backup: 'https://api.mistral.ai/v1/chat/completions',
         nvidia: 'https://integrate.api.nvidia.com/v1/chat/completions',
         huggingface: 'https://router.huggingface.co/v1/chat/completions',
+        // [PHASE-4] LLM7: plain-prompt probe (free tier rejects response_format).
+        llm7: 'https://api.llm7.io/v1/chat/completions',
+        llm7_fast: 'https://api.llm7.io/v1/chat/completions',
       }
       const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }
       if (provider === 'github_models') headers['api-version'] = '2024-05-01-preview'

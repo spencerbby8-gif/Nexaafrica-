@@ -48,7 +48,9 @@ export async function POST(req: Request) {
       const { syncLiveModelRegistry } = await import('@/lib/ai/model-sync')
       modelSync = await syncLiveModelRegistry({
         force: url.searchParams.get('discover') === '1',
-        budgetMs: 80_000,
+        // [PHASE-4] Budget raised: llm7 discovery alone can take ~45s; the
+        // old 80s window expired before llm7 probes could start.
+        budgetMs: Math.max(80_000, Math.min(200_000, Number(process.env.MODEL_SYNC_BUDGET_MS) || 140_000)),
       })
     } catch (e) {
       modelSync = { error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }

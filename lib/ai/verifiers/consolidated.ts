@@ -709,6 +709,18 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
       merged.hiring_urgency = aiResp.hiring_urgency
       merged.hiring_urgency_confidence = aiResp.hiring_urgency_confidence
     }
+
+    // [PHASE-4C FIX] Carry the model's per-dimension reasoning through the
+    // merge — it was being generated per the prompt but silently dropped
+    // here, so evidence_refs.reasoning persisted null on every row. The
+    // truthfulness guard below prunes reasoning for any dimension that ended
+    // up unknown, so orphaned explanations can never survive.
+    merged.africa_reasoning = aiResp.africa_reasoning ?? null
+    merged.remote_reasoning = aiResp.remote_reasoning ?? null
+    merged.salary_reasoning = aiResp.salary_reasoning ?? null
+    merged.company_reasoning = aiResp.company_reasoning ?? null
+    merged.experience_reasoning = aiResp.experience_reasoning ?? null
+    merged.quality_reasoning = aiResp.quality_reasoning ?? null
   }
 
   // [V2.1] Honest fallback label: when the live page could not be fetched

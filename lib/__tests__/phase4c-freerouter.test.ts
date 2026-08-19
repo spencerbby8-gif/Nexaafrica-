@@ -114,3 +114,23 @@ describe('verifier output budget', () => {
     }
   })
 })
+
+describe('reasoning survives the regex/AI merge', () => {
+  it('merged output carries per-dimension reasoning from the AI response', () => {
+    // The merge block must copy *_reasoning fields; the truthfulness guard
+    // prunes them only for dimensions that ended up unknown.
+    const src = read('lib/ai/verifiers/consolidated.ts')
+    const mergeTail = src.slice(src.indexOf('Hiring urgency: AI overrides'))
+    expect(mergeTail).toContain('merged.africa_reasoning = aiResp.africa_reasoning')
+    expect(mergeTail).toContain('merged.remote_reasoning = aiResp.remote_reasoning')
+    expect(mergeTail).toContain('merged.company_reasoning = aiResp.company_reasoning')
+    expect(mergeTail).toContain('merged.salary_reasoning = aiResp.salary_reasoning')
+    expect(mergeTail).toContain('merged.experience_reasoning = aiResp.experience_reasoning')
+    expect(mergeTail).toContain('merged.quality_reasoning = aiResp.quality_reasoning')
+  })
+  it('truthfulness guard still prunes reasoning for unknown dimensions', () => {
+    const src = read('lib/ai/verifiers/consolidated.ts')
+    expect(src).toContain('if (out.africa_eligibility === "unknown") out.africa_reasoning = null')
+    expect(src).toContain('if (out.company_legitimacy === "unknown") out.company_reasoning = null')
+  })
+})

@@ -512,8 +512,13 @@ export async function processAIQueue(batchSize = 100) {
         const cutoff = new Date(Date.now() - REVERIFY_MAX_AGE_DAYS * 86_400_000).toISOString()
         const { data: staleRows } = await supabase
           .from("job_ai_intelligence")
-          .select("job_id, last_verified_at, jobs!inner(is_active)")
+          .select("job_id, last_verified_at, jobs!inner(is_active, eligibility, is_open_to_africa)")
           .eq("jobs.is_active", true)
+          // [PHASE-4] Only public-eligible jobs get re-verified. Restricted
+          // rows would otherwise bounce in an admission-reject loop forever
+          // (observed live 2026-08-19: 800 claims -> 800 rejects per link).
+          .in("jobs.eligibility", ["explicit", "likely"])
+          .eq("jobs.is_open_to_africa", true)
           .lt("last_verified_at", cutoff)
           .order("last_verified_at", { ascending: true })
           .limit(REVERIFY_BATCH * 3)

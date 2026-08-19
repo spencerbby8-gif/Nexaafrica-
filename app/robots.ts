@@ -12,7 +12,9 @@ export default function robots(): MetadataRoute.Robots {
         disallow: ['/profile', '/onboarding', '/api/', '/auth/'],
       },
     ],
-    sitemap: `${base}/sitemap.xml`,
+    // [PHASE-3] Crawlers enter through the sitemap index (/sitemaps.xml),
+    // which references the core sitemap and all job chunks.
+    sitemap: [`${base}/sitemaps.xml`],
     host: base,
   }
 }

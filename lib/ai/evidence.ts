@@ -171,6 +171,44 @@ export async function collectPageEvidence(sb: any, job: Job): Promise<{ state: E
     })
     refs.push({ type: "structured_data", sourceKind: "structured_data", url: job.apply_url, hash: sha256(JSON.stringify(ld).slice(0, 4000)), status: structuredState, httpStatus: liveStatus, excerptLen: JSON.stringify(ld).length })
 
+    // [PHASE-4C] Greenhouse official public job API — clean structured job
+    // content (authorized/public; richer and more stable than scraped HTML).
+    try {
+      const u2 = new URL(job.apply_url)
+      const jm = u2.pathname.match(/^\/jobs\/(\d+)$/)
+      if (u2.hostname.endsWith("boards.greenhouse.io") && jm) {
+        const apiUrl = `${u2.origin}/jobs/${jm[1]}`
+        const cj = new AbortController(); const tj = setTimeout(() => cj.abort(), 6000)
+        const rj = await fetch(apiUrl, { headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0 (compatible; NexaBot/2.0)" }, signal: cj.signal })
+        clearTimeout(tj)
+        if (rj.ok) {
+          const jd: any = await rj.json().catch(() => null)
+          if (jd && typeof jd === "object") {
+            const blob = JSON.stringify({
+              title: jd.title ?? null,
+              location: jd.location?.name ?? null,
+              updated_at: jd.updated_at ?? null,
+              content_chars: typeof jd.content === "string" ? jd.content.length : null,
+              departments: Array.isArray(jd.departments) ? jd.departments.map((d: any) => d?.name).filter(Boolean) : [],
+              offices: Array.isArray(jd.offices) ? jd.offices.map((o: any) => o?.name).filter(Boolean) : [],
+            })
+            await upsertEvidence(sb, job.id, {
+              evidence_type: "structured_data",
+              source_url: apiUrl,
+              source_kind: "ats_api",
+              status: "verified",
+              http_status: 200,
+              content_hash: sha256(blob),
+              excerpt: blob.slice(0, 500),
+              detail: { via: "greenhouse_jobs_api" },
+              fetched_at: new Date().toISOString(),
+            })
+            refs.push({ type: "structured_data", sourceKind: "ats_api", url: apiUrl, hash: sha256(blob), status: "verified", httpStatus: 200, excerptLen: blob.length })
+          }
+        }
+      }
+    } catch {}
+
     await upsertEvidence(sb, job.id, {
       evidence_type: "page_html",
       source_url: job.apply_url,

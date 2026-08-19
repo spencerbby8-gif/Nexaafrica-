@@ -93,7 +93,11 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
   const start = Date.now()
   // [PHASE-4C] Reasoning models (kimi-k3) legitimately need >12s; use the
   // provider's configured timeout capped at 30s instead of the flat 12s.
-  const probeTimeoutMs = Math.min(PROVIDERS.find((p) => p.id === provider)?.timeoutMs ?? VERIFY_TIMEOUT_MS, 30000)
+  // freerouter serves reasoning models whose first-token latency is high;
+  // honor the provider's configured timeout instead of the shared 30s cap.
+  const probeTimeoutMs = provider === 'freerouter'
+    ? (PROVIDERS.find((p) => p.id === provider)?.timeoutMs ?? VERIFY_TIMEOUT_MS)
+    : Math.min(PROVIDERS.find((p) => p.id === provider)?.timeoutMs ?? VERIFY_TIMEOUT_MS, 30000)
   const prompt = 'Reply with ONLY this JSON object and nothing else: {"ok":true}'
   try {
     let res: Response
@@ -156,9 +160,11 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
       if (provider === 'openrouter') { headers['HTTP-Referer'] = 'https://v0-nexaafrica.vercel.app'; headers['X-Title'] = 'Nexa Africa' }
       res = await fetch(endpoints[provider], {
         method: 'POST', headers,
-        // [PHASE-4C] Reasoning models (kimi-k3) spend budget on thinking before
-        // answering; 16 tokens produced empty content. Give the probe headroom.
-        body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: prompt }], max_tokens: provider === 'freerouter' ? 2048 : 16 }),
+        // [PHASE-4C] Reasoning models (kimi-k3, glm-5.2) spend budget on
+        // reasoning_content before emitting the JSON answer; a small budget ends
+        // with finish_reason:length and empty content. 8192 matches the verifier
+        // headroom so the probe measures capability, not budget starvation.
+        body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: prompt }], max_tokens: provider === 'freerouter' ? 8192 : 16 }),
         signal: AbortSignal.timeout(probeTimeoutMs),
       })
     }

@@ -54,6 +54,10 @@ export async function refreshProviderRegistry(): Promise<ProviderConfig[]> {
       const usablePool = catalogEntry.models.filter(m => m.health.usable)
       const benchmarked = usablePool.filter((m: any) => typeof m.benchmarks?.overallScore === 'number')
       const pool = benchmarked.length > 0 ? benchmarked : usablePool
+      // [PHASE-4C] The CONFIGURED model is the intentional preference
+      // (e.g. freerouter -> kimi-k3). It leads until measured quality says
+      // otherwise: benchmark scores outrank everything, then configured
+      // preference, then latency. Availability changes never need code edits.
       const bestModel = [...pool].sort((a: any, b: any) => {
         const aBanned = MODEL_JSON_CAPABILITY[a.modelId] === false ? 1 : 0
         const bBanned = MODEL_JSON_CAPABILITY[b.modelId] === false ? 1 : 0
@@ -62,6 +66,10 @@ export async function refreshProviderRegistry(): Promise<ProviderConfig[]> {
           const aB = a.benchmarks?.overallScore ?? 0
           const bB = b.benchmarks?.overallScore ?? 0
           if (aB !== bB) return bB - aB
+        } else {
+          const aPref = a.modelId === provider.model ? 0 : 1
+          const bPref = b.modelId === provider.model ? 0 : 1
+          if (aPref !== bPref) return aPref - bPref
         }
         return (a.health.avgLatencyMs || 9999) - (b.health.avgLatencyMs || 9999)
       })[0]

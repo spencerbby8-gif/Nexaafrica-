@@ -164,7 +164,10 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
         // reasoning_content before emitting the JSON answer; a small budget ends
         // with finish_reason:length and empty content. 8192 matches the verifier
         // headroom so the probe measures capability, not budget starvation.
-        body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: prompt }], max_tokens: provider === 'freerouter' ? 8192 : 16 }),
+        // [PHASE-4C] Reasoning models (kimi-k3) read max_completion_tokens;
+        // plain max_tokens is ignored on that family and the reply is cut at
+        // the server default (finish_reason:length with a near-empty answer).
+        body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: prompt }], max_tokens: provider === 'freerouter' ? 8192 : 16, ...(provider === 'freerouter' ? { max_completion_tokens: 8192 } : {}) }),
         signal: AbortSignal.timeout(probeTimeoutMs),
       })
     }

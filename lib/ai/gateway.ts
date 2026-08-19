@@ -112,6 +112,10 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
         model: cfg.model,
         messages: [...(req.systemInstruction?[{role:"system",content:req.systemInstruction}]:[]), {role:"user",content:req.prompt}],
         temperature: req.temperature??0.3, max_tokens: resolvedMaxTokens,
+        // [PHASE-4C] Reasoning models (kimi-k3 via freerouter) honor
+        // max_completion_tokens — without it replies truncate inside the
+        // reasoning phase and content comes back empty.
+        ...(providerId === "freerouter" ? { max_completion_tokens: Math.max(resolvedMaxTokens, 8192) } : {}),
       }
       // OpenRouter: free-tier key routes through deepinfra.
       if (providerId === "openrouter") {

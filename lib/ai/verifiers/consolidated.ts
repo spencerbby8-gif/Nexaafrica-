@@ -560,7 +560,7 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
   let aiResp: AIResp = AF; let modelVersion = "no-ai-providers"; let aiUsed = false
   const VERIFIER_SYSTEM = "You extract job intelligence ONLY from the provided text. Never use outside knowledge. Evidence fields must be EXACT quotes from the text, or null. Prefer 'unknown' whenever proof is missing. Output only JSON."
   try {
-    let gw = await aiGateway({ prompt, systemInstruction: VERIFIER_SYSTEM, agentId: "verifier:consolidated", jobId: job.id, temperature: 0.2, maxTokens: 1400 })
+    let gw = await aiGateway({ prompt, systemInstruction: VERIFIER_SYSTEM, agentId: "verifier:consolidated", jobId: job.id, temperature: 0.2, maxTokens: 2500 }) // [PHASE-4C] was 1400: the 30-field schema + verbatim quotes + per-dimension reasoning truncated mid-JSON, discarding reasoning and degrading rows to regex fallback
     if (gw.diag) for (const d of gw.diag) diags.push(d)
     let parsed = parseAiJson(gw.response.text)
 
@@ -590,7 +590,7 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
         // Bypass the gateway's 24h response cache by calling the orchestrator
         // directly — a retry must re-route, never replay the cached garbage.
         const { orchestrate } = await import("../orchestrator")
-        const gw2 = await orchestrate({ prompt, systemInstruction: VERIFIER_SYSTEM, agentId: "verifier:consolidated", jobId: job.id, temperature: 0.2, maxTokens: 1400 })
+        const gw2 = await orchestrate({ prompt, systemInstruction: VERIFIER_SYSTEM, agentId: "verifier:consolidated", jobId: job.id, temperature: 0.2, maxTokens: 2500 })
         if (gw2.diag) for (const d of gw2.diag) diags.push(d)
         const parsed2 = parseAiJson(gw2.response.text)
         if (parsed2) {

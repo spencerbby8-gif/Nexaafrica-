@@ -102,3 +102,15 @@ describe('reasoning truth guards', () => {
     expect(engine).toContain('reasoning: (aiResult as any).diags?._reasoning ?? null')
   })
 })
+
+describe('verifier output budget', () => {
+  it('requests enough tokens for the full schema + quotes + reasoning (no mid-JSON truncation)', () => {
+    const v = read('lib/ai/verifiers/consolidated.ts')
+    const calls = v.match(/maxTokens: (\d+)/g) || []
+    expect(calls.length).toBeGreaterThanOrEqual(2)
+    for (const c of calls) {
+      const n = Number(c.replace('maxTokens: ', ''))
+      expect(n, 'verifier budget must cover the 30-field schema with reasoning').toBeGreaterThanOrEqual(2500)
+    }
+  })
+})

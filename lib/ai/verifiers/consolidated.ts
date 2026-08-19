@@ -144,6 +144,27 @@ async function fetchCompanyPage(job: Job): Promise<string> {
           } catch {}
         }
       }
+      // [PHASE-4B] Last fallback: the employer's own ATS board page
+      // (apply_url origin + board slug). A live, branded employer board is
+      // genuine fetched evidence when slug-domain heuristics fail (corporate
+      // domains that differ from the company name, e.g. Reddit/redditinc).
+      try {
+        const segs = applyUrl.pathname.split("/").filter(Boolean)
+        const boardRoot = segs.length > 0 ? `${applyUrl.origin}/${segs[0]}` : applyUrl.origin
+        const c3 = new AbortController()
+        const t3 = setTimeout(() => c3.abort(), 5000)
+        const r3 = await fetch(boardRoot, {
+          headers: { "User-Agent": "Mozilla/5.0 (compatible; NexaBot/2.0; +https://v0-nexaafrica.vercel.app)" },
+          signal: c3.signal, redirect: "follow",
+        })
+        clearTimeout(t3)
+        if (r3.ok) {
+          const html3 = await r3.text()
+          const { cleanDescription: cd3 } = await import("@/lib/cleanDescription")
+          const text3 = cd3(html3)
+          if (text3.length >= 200) return text3.slice(0, 2000)
+        }
+      } catch {}
       return ""
     }
     

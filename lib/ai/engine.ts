@@ -510,16 +510,20 @@ export async function processAIQueue(batchSize = 100) {
         .eq("status", "pending")
       if ((pendingCountNow ?? 0) <= 500) {
         const cutoff = new Date(Date.now() - REVERIFY_MAX_AGE_DAYS * 86_400_000).toISOString()
+        // [PHASE-4B] Two repair classes share the bounded budget:
+        //  a) stale real-AI rows (> REVERIFY_MAX_AGE_DAYS) — freshness;
+        //  b) junk-marker rows (regex-only / verifier-threw / provider-less)
+        //     regardless of age — these were finalized weak/failed results
+        //     and are the main source of 'unknown' intelligence users see.
+        // Both restricted to public-eligible jobs (restricted/inactive jobs
+        // would bounce in an admission-reject loop — observed live).
         const { data: staleRows } = await supabase
           .from("job_ai_intelligence")
-          .select("job_id, last_verified_at, jobs!inner(is_active, eligibility, is_open_to_africa)")
+          .select("job_id, last_verified_at, model_version, jobs!inner(is_active, eligibility, is_open_to_africa)")
           .eq("jobs.is_active", true)
-          // [PHASE-4] Only public-eligible jobs get re-verified. Restricted
-          // rows would otherwise bounce in an admission-reject loop forever
-          // (observed live 2026-08-19: 800 claims -> 800 rejects per link).
           .in("jobs.eligibility", ["explicit", "likely"])
           .eq("jobs.is_open_to_africa", true)
-          .lt("last_verified_at", cutoff)
+          .or(`last_verified_at.lt.${cutoff},model_version.like.regex-extracted%,model_version.eq.verifyJobReal-threw,model_version.like.no-ai%,model_version.like.failed%`)
           .order("last_verified_at", { ascending: true })
           .limit(REVERIFY_BATCH * 3)
         const candidates = (staleRows || []) as Array<{ job_id: string; last_verified_at: string | null }>
@@ -680,7 +684,12 @@ export async function processAIQueue(batchSize = 100) {
       // ── [FIX #1] If all providers failed and no existing record, retry instead of completing ──
       // verifyJobReal-threw is a failed verification (the consolidated verifier
       // threw) — it must be retried, never persisted as a completed row.
-      const allProvidersFailed = intelligence.modelVersion.includes("no-ai-providers") || intelligence.modelVersion.includes("failed-no-evidence") || intelligence.modelVersion.includes("verifyJobReal-threw")
+      // [PHASE-4B] regex-only outcomes mean every provider attempt failed or
+      // never ran while the page was fetched/stored-text processed. Finalizing
+      // them as 'completed' permanently stranded 1,400+ active jobs on weak
+      // intelligence (measured 2026-08-19). They are retried like other
+      // provider failures — with the same backoff and attempt budget.
+      const allProvidersFailed = intelligence.modelVersion.includes("no-ai-providers") || intelligence.modelVersion.includes("failed-no-evidence") || intelligence.modelVersion.includes("verifyJobReal-threw") || intelligence.modelVersion.startsWith("regex-extracted")
       if (allProvidersFailed && !skipUpsert) {
         const { data: existingCheck } = await supabase.from("job_ai_intelligence").select("id").eq("job_id", job.id).maybeSingle()
         if (!existingCheck) {

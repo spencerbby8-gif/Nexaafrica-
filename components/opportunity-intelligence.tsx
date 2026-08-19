@@ -9,6 +9,8 @@ interface Props {
   matchReasons?: string[]
   userSkills?: string[]
   variant?: 'card' | 'detail'
+  // [PHASE-4B] Learning-layer company track record (company_intelligence).
+  companyIntel?: Record<string, any> | null
 }
 
 
@@ -102,6 +104,39 @@ function salaryTruthLabel(row: JobAIIntelligenceRow | null | undefined, job?: Jo
   return { label: 'Salary not disclosed', detail: 'No salary in posting', hasSalary: false }
 }
 
+/**
+ * [PHASE-4B] Product-truth reconciliation for the company row.
+ * The page-fetch verifier can honestly report 'unknown' when the employer's
+ * website is unfetchable (e.g. Reddit: reddit.com/careers 403s bots, and the
+ * corporate domain redditinc.com is not name-derivable). When that happens,
+ * we must NOT fabricate certainty — but we also must not hide the measured
+ * evidence Nexa actually has: the learning layer's track record for the
+ * employer (postings measured, verification share, trust average, scam
+ * reports). This helper presents that record, clearly labeled, instead of a
+ * bare "unknown 0%" that contradicts the trust strip on the same page.
+ */
+export function reconciledCompany(
+  intelligence: JobAIIntelligenceRow | null | undefined,
+  companyIntel: Record<string, any> | null | undefined,
+  hasLogo: boolean | null | undefined,
+): { label: string; tone: 'positive' | 'caution' | 'neutral'; detail?: string } {
+  const base = companyLabel(intelligence?.company_legitimacy, hasLogo)
+  const legit = intelligence?.company_legitimacy
+  if (legit && legit !== 'unknown') return base
+  const total = Number(companyIntel?.total_jobs) || 0
+  const scam = Number(companyIntel?.scam_reports) || 0
+  const trustAvg = Number(companyIntel?.trust_avg) || 0
+  const verifRate = Number(companyIntel?.verification_rate) || 0
+  const strong = total >= 10 && scam === 0 && (trustAvg >= 70 || verifRate >= 0.3)
+  if (!strong) return base
+  const verifPct = Math.round(verifRate * 100)
+  return {
+    label: 'Unverified by AI — strong employer record',
+    tone: 'caution',
+    detail: `Nexa measured ${total} postings from this employer: ${verifPct}% verified${trustAvg ? `, trust ${trustAvg}/100` : ''}, 0 scam reports. Website could not be fetched, so AI abstains.`,
+  }
+}
+
 function companyLabel(legit: string | null | undefined, hasLogo?: boolean | null) {
   if (legit && legit !== 'unknown') {
     switch (legit) {
@@ -162,7 +197,7 @@ function EvidenceQuote({ text, url, allowLink = true }: { text?: string | null; 
 }
 
 // Compact version for job cards (Home feed under "Matching your experience")
-export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons }: Props) {
+export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons, companyIntel }: Props) {
   // Always show something, even when AI missing, using job fallbacks
   const hasAI = !!intelligence
   const state = intelligenceState(intelligence, (job as any)?._queueStatus, (job as any)?._queueError)
@@ -170,7 +205,7 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
   const africa = africaFitLabel(intelligence?.africa_eligibility, job?.eligibility)
   const remote = remoteLabel(intelligence?.remote_eligibility, job?.is_remote, intelligence?.remote_evidence)
   const salary = salaryTruthLabel(intelligence, job || null)
-  const company = companyLabel(intelligence?.company_legitimacy, job?.company_logo ? true : false)
+  const company = reconciledCompany(intelligence, companyIntel, job?.company_logo ? true : false)
   const exp = expLabel(intelligence?.experience_level, job?.title)
   const overall = intelligence?.overall_confidence ?? (hasAI ? 0 : 0)
   const isHigh = overall >= 70
@@ -242,7 +277,7 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
 }
 
 // Full detail version for role pages
-export function OpportunityIntelligencePanel({ intelligence, job, matchReasons }: Props) {
+export function OpportunityIntelligencePanel({ intelligence, job, matchReasons, companyIntel }: Props) {
   if (!intelligence && !job) {
     return (
       <section aria-label="Opportunity Intelligence" className="rounded-lg border border-border/70 bg-secondary/30 px-4 py-4 sm:px-5">
@@ -260,7 +295,7 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons }
   const hasAI = !!intelligence
   const africa = africaFitLabel(intelligence?.africa_eligibility, job?.eligibility)
   const salary = salaryTruthLabel(intelligence, job || null)
-  const company = companyLabel(intelligence?.company_legitimacy, job?.company_logo ? true : false)
+  const company = reconciledCompany(intelligence, companyIntel, job?.company_logo ? true : false)
   const overallConf = intelligence?.overall_confidence ?? 0
 
   return (
@@ -308,7 +343,8 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons }
         <div className="rounded-md border border-border/60 bg-secondary/30 p-3">
           <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"><Building2 className="h-3 w-3" aria-hidden /> Company Legitimacy</p>
           <p className="mt-1.5 text-sm font-medium text-foreground/90">{company.label}</p>
-          {intelligence?.company_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.company_confidence}% confidence</p>}
+          {company.detail && <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{company.detail}</p>}
+          {!company.detail && intelligence?.company_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.company_confidence}% confidence</p>}
           {intelligence?.job_quality && <p className="mt-1 text-[11px] text-muted-foreground">Job quality: {intelligence.job_quality} {intelligence.job_quality_confidence ? `(${intelligence.job_quality_confidence}%)` : ''}</p>}
           {intelligence?.application_difficulty && <p className="mt-1 text-[11px] text-muted-foreground">Application: {intelligence.application_difficulty} • Urgency: {intelligence.hiring_urgency || 'unknown'}</p>}
           <EvidenceQuote text={intelligence?.company_evidence || intelligence?.job_quality_evidence} url={intelligence?.evidence_urls?.[0]} />

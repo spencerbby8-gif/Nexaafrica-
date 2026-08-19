@@ -58,11 +58,22 @@ describe('dynamic preference, not permanent hardcode', () => {
   })
 })
 
-describe('reasoning-model probe headroom', () => {
-  it('freerouter probes use a large token budget + full provider timeout', () => {
+describe('reasoning-model probe headroom + measured variants', () => {
+  it('freerouter probes try measured parameter variants with large budgets', () => {
     const sync = read('lib/ai/model-sync.ts')
-    expect(sync).toMatch(/freerouter' \? 8192 : 16/)
+    // large completion budget present in the variant set
+    expect(sync).toContain('max_completion_tokens: 8192')
+    // variants include thinking-control parameters (measured, not assumed)
+    expect(sync).toContain('reasoning_effort')
+    expect(sync).toContain('enable_thinking')
+    // the probe adopts the first variant that yields real content
+    expect(sync).toContain('setFreerouterWorkingParams')
+    // freerouter gets its full provider timeout
     expect(sync).toMatch(/provider === 'freerouter'/)
+  })
+  it('gateway applies the measured freerouter params', () => {
+    const gw = read('lib/ai/gateway.ts')
+    expect(gw).toContain('getFreerouterWorkingParams')
   })
 })
 

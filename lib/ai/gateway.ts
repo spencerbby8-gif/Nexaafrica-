@@ -5,6 +5,7 @@
 
 import { getProviders, getProvider, refreshProviderRegistry } from './providers/dynamic-registry'
 import type { ProviderId } from './providers/types'
+import { getFreerouterWorkingParams } from './model-sync'
 import { createHash } from "crypto"
 
 export interface AIRequest {
@@ -112,10 +113,16 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
         model: cfg.model,
         messages: [...(req.systemInstruction?[{role:"system",content:req.systemInstruction}]:[]), {role:"user",content:req.prompt}],
         temperature: req.temperature??0.3, max_tokens: resolvedMaxTokens,
-        // [PHASE-4C] Reasoning models (kimi-k3 via freerouter) honor
-        // max_completion_tokens — without it replies truncate inside the
-        // reasoning phase and content comes back empty.
-        ...(providerId === "freerouter" ? { max_completion_tokens: Math.max(resolvedMaxTokens, 8192) } : {}),
+        // [PHASE-4C] freerouter (kimi-k3): apply the body params the probe
+        // MEASURED to produce real content — defaults to large completion
+        // budget; updated dynamically when a variant probe succeeds.
+        ...(providerId === "freerouter" ? (() => {
+          const params = { ...getFreerouterWorkingParams() }
+          const mt = typeof params.max_tokens === 'number' ? params.max_tokens : 8192
+          params.max_tokens = Math.max(mt, resolvedMaxTokens)
+          if (typeof params.max_completion_tokens === 'number') params.max_completion_tokens = Math.max(params.max_completion_tokens, resolvedMaxTokens)
+          return params
+        })() : {}),
       }
       // OpenRouter: free-tier key routes through deepinfra.
       if (providerId === "openrouter") {

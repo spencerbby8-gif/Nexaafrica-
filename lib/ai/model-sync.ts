@@ -27,6 +27,12 @@ const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
 const FRESHNESS_MS = 12 * 60 * 60 * 1000 // skip when catalog younger than 12h
 const VERIFY_TIMEOUT_MS = 12_000
+
+// [PHASE-4C] Body params measured to make freerouter models emit content;
+// applied to live gateway calls (see lib/ai/gateway.ts).
+let freerouterWorkingParams: Record<string, unknown> = { max_tokens: 8192, max_completion_tokens: 8192 }
+function setFreerouterWorkingParams(p: Record<string, unknown>) { freerouterWorkingParams = p }
+export function getFreerouterWorkingParams(): Record<string, unknown> { return freerouterWorkingParams }
 const MAX_DISCOVERED_CANDIDATES = 2
 
 export interface ModelVerifyOutcome {
@@ -158,18 +164,50 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
       const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }
       if (provider === 'github_models') headers['api-version'] = '2024-05-01-preview'
       if (provider === 'openrouter') { headers['HTTP-Referer'] = 'https://v0-nexaafrica.vercel.app'; headers['X-Title'] = 'Nexa Africa' }
-      res = await fetch(endpoints[provider], {
-        method: 'POST', headers,
-        // [PHASE-4C] Reasoning models (kimi-k3, glm-5.2) spend budget on
-        // reasoning_content before emitting the JSON answer; a small budget ends
-        // with finish_reason:length and empty content. 8192 matches the verifier
-        // headroom so the probe measures capability, not budget starvation.
-        // [PHASE-4C] Reasoning models (kimi-k3) read max_completion_tokens;
-        // plain max_tokens is ignored on that family and the reply is cut at
-        // the server default (finish_reason:length with a near-empty answer).
-        body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: prompt }], max_tokens: provider === 'freerouter' ? 8192 : 16, ...(provider === 'freerouter' ? { max_completion_tokens: 8192 } : {}) }),
-        signal: AbortSignal.timeout(probeTimeoutMs),
-      })
+      if (provider === 'freerouter') {
+        res = undefined as unknown as Response
+        // [PHASE-4C] kimi-k3 served via freerouter spent its output budget in a
+        // reasoning phase and returned content:"" at finish_reason:length even
+        // with large max_tokens/max_completion_tokens. Catalog metadata is not
+        // authoritative here ("thinking":"none" while responses carry
+        // reasoning_content), so instead of guessing, the probe measures a small
+        // set of parameter variants and adopts the first one that yields real
+        // content. The gateway applies the adopted params to live calls.
+        const variants: Array<Record<string, unknown>> = [
+          { max_tokens: 8192, max_completion_tokens: 8192 },
+          { max_tokens: 8192, max_completion_tokens: 8192, reasoning_effort: 'low' },
+          { max_tokens: 8192, max_completion_tokens: 8192, chat_template_kwargs: { enable_thinking: false } },
+          { max_tokens: 8192, max_completion_tokens: 8192, thinking: { type: 'disabled' } },
+        ]
+        let last: any = null
+        for (const extra of variants) {
+          res = await fetch(endpoints[provider], {
+            method: 'POST', headers,
+            body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: prompt }], ...extra }),
+            signal: AbortSignal.timeout(probeTimeoutMs),
+          })
+          if (!res.ok) break
+          const peek: any = await res.json().catch(() => ({}))
+          last = peek
+          const peekContent = peek?.choices?.[0]?.message?.content
+          if (typeof peekContent === 'string' && peekContent.trim().length > 0) {
+            setFreerouterWorkingParams(extra)
+            res = new Response(JSON.stringify(peek), { status: 200, headers: { 'Content-Type': 'application/json' } })
+            break
+          }
+        }
+        if (!res) throw new Error('freerouter probe produced no response')
+        if (last && typeof (last as any)?.choices?.[0]?.message?.content === 'string') {
+          // Keep the final attempt's body for the standard parse path below.
+          res = new Response(JSON.stringify(last), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+      } else {
+        res = await fetch(endpoints[provider], {
+          method: 'POST', headers,
+          body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: prompt }], max_tokens: 16 }),
+          signal: AbortSignal.timeout(probeTimeoutMs),
+        })
+      }
     }
     const latencyMs = Date.now() - start
     if (!res.ok) {

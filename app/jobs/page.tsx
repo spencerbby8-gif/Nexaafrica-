@@ -76,7 +76,7 @@ export default async function JobsPage({
   // Fill ONLY with eligible jobs (never restricted/not-Africa).
   // Verified eligible jobs rank first; other eligible jobs fill below.
   const eligibleFill = fillJobs.filter((j: any) =>
-    j.eligibility !== 'restricted' && j.is_open_to_africa !== false
+    j.eligibility !== 'restricted' && j.is_open_to_africa !== false && j.is_remote !== false
   )
   const sortedJobs = filters.verifiedOnly
     ? rankedJobs.slice(0, 20)

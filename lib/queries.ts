@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { createClient } from '@/lib/supabase/server'
 import type { Category, Job, JobFilters } from '@/lib/types'
 import { getAIIntelligenceForJobs, getAIIntelligenceWithQueueStatus, type JobAIIntelligenceRow, type JobWithAI } from '@/lib/ai/queries'
+import { VERIFIED_MIN_QUALITY } from '@/lib/ai/verified'
 
 const JOB_COLUMNS =
   'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, salary_min, salary_max, salary_currency, salary_period, employment_type, intelligence, tags, is_remote, is_open_to_africa, eligibility, posted_at, created_at, expires_at, trust_score, trust_confidence, trust_signals, trust_version, is_flagged, flagged_reason, source, source_id, evidence_state'
@@ -20,6 +21,9 @@ export async function getJobs(filters: JobFilters = {}): Promise<Job[]> {
     .from('jobs')
     .select(JOB_COLUMNS)
     .eq('is_active', true)
+    // [PHASE-2] Nexa is a remote board: listings the evidence marks as not
+    // remote (hybrid/onsite write-back) never surface in public lists.
+    .neq('is_remote', false)
     // [STABILIZATION] Ineligible (location-restricted) jobs never appear in UI lists.
     .not('eligibility', 'eq', 'restricted')
     // [REGION-LOCK] Jobs not open to Africa never surface in UI lists (feeds,
@@ -89,6 +93,7 @@ export async function getRelatedJobs(job: Job, limit = 4): Promise<Job[]> {
     .from('jobs')
     .select(JOB_COLUMNS)
     .eq('is_active', true)
+    .neq('is_remote', false)
     .eq('category', job.category)
     .neq('id', job.id)
     .not('eligibility', 'eq', 'restricted')
@@ -245,6 +250,10 @@ export const getVerifiedJobs = cache(async function getVerifiedJobs(limit = 8): 
     .select('job_id')
     .like('model_version', '%:%')
     .not('model_version', 'like', 'regex%')
+    // [PHASE-2] Canonical verified contract (lib/ai/verified.ts): real
+    // provider rows AND quality_score >= ${VERIFIED_MIN_QUALITY} — the same bar the
+    // learning layer has always applied.
+    .gte('quality_score', VERIFIED_MIN_QUALITY)
     .in('africa_eligibility', ['explicit', 'likely'])
     .order('last_verified_at', { ascending: false })
     .limit(300)
@@ -291,7 +300,8 @@ export const getProofStats = cache(async function getProofStats(): Promise<{
     // [PROOF-TRUTH] Verified/rule-based counts are ACTIVE-JOBS ONLY: join
     // through the FK so rows belonging to deactivated jobs never inflate the
     // coverage the site claims.
-    svc.from('job_ai_intelligence').select('job_id, jobs!inner(is_active)', { count: 'exact', head: true }).like('model_version', '%:%').not('model_version', 'like', 'regex%').eq('jobs.is_active', true),
+    // [PHASE-2] Canonical verified contract: quality_score >= VERIFIED_MIN_QUALITY.
+    svc.from('job_ai_intelligence').select('job_id, jobs!inner(is_active)', { count: 'exact', head: true }).like('model_version', '%:%').not('model_version', 'like', 'regex%').gte('quality_score', VERIFIED_MIN_QUALITY).eq('jobs.is_active', true),
     svc.from('ai_processing_queue').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
     svc.from('job_ai_intelligence').select('job_id, jobs!inner(is_active)', { count: 'exact', head: true }).or('model_version.like.regex%,model_version.like.no-ai%').eq('jobs.is_active', true),
   ])

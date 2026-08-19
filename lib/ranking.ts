@@ -19,6 +19,7 @@
 
 import type { Job } from '@/lib/types'
 import type { JobAIIntelligenceRow } from '@/lib/ai/queries'
+import { isVerifiedIntelligence } from '@/lib/ai/verified'
 
 export interface RankedJob {
   job: Job & { aiIntelligence?: JobAIIntelligenceRow | null }
@@ -104,8 +105,8 @@ export function rankAndFilter(
     .filter((job) => {
       // Public feed eligibility gate — enforced at the display layer
       const ai = job.aiIntelligence
-      const mv = ai?.model_version || ''
-      const verified = mv.includes(':') && !mv.startsWith('regex')
+      // [PHASE-2] Canonical verified contract (lib/ai/verified.ts).
+      const verified = isVerifiedIntelligence(ai)
       const aiRestricted = ai?.africa_eligibility === 'restricted'
       const africaEligible = (job as any).is_open_to_africa !== false && (job as any).eligibility !== 'restricted' && !aiRestricted
       const isRemote = (job as any).is_remote !== false

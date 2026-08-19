@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getAIIntelligenceWithQueueStatus } from '@/lib/ai/queries'
+import { partitionVerifiedFirst } from '@/lib/ai/verified'
 import type { JobFilters } from '@/lib/types'
 
 const JOB_COLUMNS =
@@ -65,6 +66,8 @@ export async function GET(request: NextRequest) {
       .from('jobs')
       .select(JOB_COLUMNS)
       .eq('is_active', true)
+      // [PHASE-2] Remote board integrity: evidence-marked non-remote listings never surface.
+      .neq('is_remote', false)
       .not('eligibility', 'eq', 'restricted')
       // [REGION-LOCK] Jobs not open to Africa never surface in pagination.
       .eq('is_open_to_africa', true)
@@ -135,10 +138,20 @@ export async function GET(request: NextRequest) {
       }
     }
     
+    // [PHASE-2] Same verified-first semantics as the /jobs hub: each page
+    // partitions its window with verified jobs first (canonical contract),
+    // preserving DB order inside each tier. The cursor still walks the
+    // deterministic (posted_at desc, id desc) base ordering, so pagination
+    // is duplicate-free and total across pages.
+    jobsWithAI = partitionVerifiedFirst(jobsWithAI as any) as typeof jobsWithAI
+
     // Determine if there are more jobs
     const hasMore = jobsWithAI.length === limit
-    const nextCursor = hasMore && jobsWithAI.length > 0
-      ? `${jobsWithAI[jobsWithAI.length - 1].posted_at}|${jobsWithAI[jobsWithAI.length - 1].id}`
+    // Cursor anchors to the OLDEST row of the DB window (base ordering),
+    // which the partition above may have moved — keeps boundaries exact.
+    const lastWindowRow = (jobs || [])[(jobs || []).length - 1] as any
+    const nextCursor = hasMore && lastWindowRow
+      ? `${lastWindowRow.posted_at}|${lastWindowRow.id}`
       : null
     
     return NextResponse.json({

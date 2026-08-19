@@ -245,6 +245,7 @@ export async function getMatchedJobs(
       'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, employment_type, tags, is_remote, is_open_to_africa, eligibility, posted_at, created_at, expires_at',
     )
     .eq('is_active', true)
+    .neq('is_remote', false)
     .not('eligibility', 'eq', 'restricted')
     // [REGION-LOCK] Matching Your Experience stays verified-only AND never
     // surfaces jobs the system marks as not open to Africa.
@@ -262,12 +263,12 @@ export async function getMatchedJobs(
     aiMap = await getAIIntelligenceForJobs((data as Job[]).map((j) => j.id))
   } catch {}
 
+  // [PHASE-2] Canonical verified contract (lib/ai/verified.ts).
+  const { isVerifiedIntelligence } = await import('@/lib/ai/verified')
   const scored: MatchedJob[] = []
   for (const j of data as Job[]) {
     const ai = aiMap.get(j.id)
-    const mv = ai?.model_version || ''
-    const isVerified = mv.includes(':') && !mv.startsWith('regex')
-    if (!isVerified) continue // verified jobs only
+    if (!isVerifiedIntelligence(ai)) continue // verified jobs only
     if (ai?.africa_eligibility === 'restricted') continue // never restricted
     const m = scoreJob(j, signals)
     if (m) scored.push(m)

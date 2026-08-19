@@ -161,7 +161,11 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
         body: JSON.stringify({
           model: modelId,
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: provider === 'freerouter' ? 2048 : 16,
+          // [PHASE-4C] Probe with the SAME budget production calls get
+          // (gateway floors freerouter to 8192): reasoning models count
+          // thinking tokens against the cap, so a 2048 probe understates
+          // capability and marked kimi-k3 unusable while real calls succeed.
+          max_tokens: provider === 'freerouter' ? 8192 : 16,
           // [PHASE-4C] Kimi K3 reasons before answering; the JSON probe must
           // budget for that or the reasoning consumes the answer budget
           // (finish_reason 'length', empty content). reasoning_effort=low is

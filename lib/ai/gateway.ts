@@ -88,7 +88,7 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
       return { text, provider: providerId, model: cfg.model, latencyMs: latency, tokensInput: result.usageMetadata?.promptTokenCount, tokensOutput: result.usageMetadata?.candidatesTokenCount, costCents: Math.round(((result.usageMetadata?.promptTokenCount||0)+(result.usageMetadata?.candidatesTokenCount||0))*cfg.costPer1kTokens/1000) }
     }
 
-    const openAICompat: ProviderId[] = ["groq","cerebras","openrouter","github_models","mistral","mistral_backup","nvidia"]
+    const openAICompat: ProviderId[] = ["groq","cerebras","openrouter","github_models","mistral","mistral_backup","nvidia","llm7","llm7_fast"]
     if (openAICompat.includes(providerId)) {
       const urls: Record<string,string> = {
         groq: "https://api.groq.com/openai/v1/chat/completions",

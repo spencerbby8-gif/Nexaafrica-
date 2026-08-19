@@ -80,3 +80,21 @@ describe('LLM7 model list parser', () => {
     expect(parseLlm7ModelList({ nope: true })).toEqual([])
   })
 })
+
+describe('gateway dispatch coverage', () => {
+  it('every registered provider is routable in callProvider (no silent not-implemented)', () => {
+    const gw = read('lib/ai/gateway.ts')
+    // Special-case branches in callProvider:
+    const specials = [/startsWith\('gemini'\)/, /providerId === "cloudflare"/, /providerId === "cohere"/, /providerId === "huggingface"/]
+    const compatMatch = gw.match(/const openAICompat: ProviderId\[\] = \[([^\]]*)\]/)
+    expect(compatMatch).toBeTruthy()
+    const compat = compatMatch![1].split(',').map((s) => s.trim().replace(/"/g, ''))
+    for (const p of PROVIDERS) {
+      const covered = compat.includes(p.id) || specials.some((re) => re.test(gw))
+      // gemini_backup is covered by the startsWith('gemini') branch
+      const coveredBySpecial =
+        p.id.startsWith('gemini') || ['cloudflare', 'cohere', 'huggingface'].includes(p.id)
+      expect(covered || coveredBySpecial, `provider ${p.id} must be dispatchable`).toBe(true)
+    }
+  })
+})

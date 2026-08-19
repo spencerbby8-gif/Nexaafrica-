@@ -112,6 +112,22 @@ const FIXED_PROFILES: Record<ProviderId, ProviderProfile> = {
     avoidFor: ["high_throughput", "latency_sensitive"],
     avgQualityScore: 0, avgLatencyMs: 2000, successRate: 0, totalEvaluations: 0, taskQuality: {},
   },
+  // [PHASE-4] LLM7 unified gateway — profiles start neutral; the Smart
+  // Router's measured health (not these priors) governs actual routing.
+  llm7: {
+    id: "llm7",
+    strengths: ["multi-provider routing", "availability", "balanced quality"],
+    bestFor: ["intelligence", "structured_extraction", "fallback"],
+    avoidFor: [],
+    avgQualityScore: 0, avgLatencyMs: 2500, successRate: 0, totalEvaluations: 0, taskQuality: {},
+  },
+  llm7_fast: {
+    id: "llm7_fast",
+    strengths: ["low latency", "high availability"],
+    bestFor: ["fast_extraction", "simple_analysis"],
+    avoidFor: ["structured_extraction"],
+    avgQualityScore: 0, avgLatencyMs: 1200, successRate: 0, totalEvaluations: 0, taskQuality: {},
+  },
 }
 
 export async function getProviderProfiles(): Promise<ProviderProfile[]> {

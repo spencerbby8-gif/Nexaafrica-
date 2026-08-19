@@ -98,6 +98,9 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
         mistral: "https://api.mistral.ai/v1/chat/completions",
         mistral_backup: "https://api.mistral.ai/v1/chat/completions",
         nvidia: "https://integrate.api.nvidia.com/v1/chat/completions",
+        // [PHASE-4] LLM7 unified gateway (OpenAI-compatible, Bearer auth).
+        llm7: "https://api.llm7.io/v1/chat/completions",
+        llm7_fast: "https://api.llm7.io/v1/chat/completions",
       }
       const body: any = {
         model: cfg.model,

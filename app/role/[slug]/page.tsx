@@ -1,3 +1,4 @@
+import { cache } from 'react'
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { SiteShell } from '@/components/site-shell'
@@ -16,6 +17,14 @@ import { cleanDescription, generateExcerpt } from '@/lib/cleanDescription'
 export const dynamic = 'force-dynamic'
 
 type Params = { slug: string }
+
+/**
+ * [404-INTEGRITY] One cached load shared by generateMetadata and the page.
+ * Metadata must be able to notFound() BEFORE anything is flushed to the
+ * stream — otherwise a restricted job's title/description is emitted into
+ * the HTML head and RSC payload before the page-level notFound() fires.
+ */
+const loadRole = cache(async (slug: string) => getJobBySlugWithAI(slug))
 
 const employmentSchemaMap: Record<string, string> = {
   full_time: 'FULL_TIME',
@@ -110,11 +119,16 @@ export async function generateMetadata({
   params: Promise<Params>
 }): Promise<Metadata> {
   const { slug } = await params
-  const job = await getJobBySlug(slug)
-  if (!job) return {}
-  // [STABILIZATION] Restricted jobs are not indexed and carry no claims.
-  if (job.eligibility === 'restricted') {
-    return { title: job.title, robots: { index: false, follow: false } }
+  const jobWithAI = await loadRole(slug)
+  // [404-INTEGRITY] Missing or ineligible jobs must notFound() at metadata
+  // time — before any head/flight bytes are flushed — so no restricted title,
+  // description, or robots directive can leak into the response. The page
+  // component re-runs the same check (defense in depth, same cached load).
+  if (!jobWithAI) notFound()
+  const job = jobWithAI
+  const metaAiElig = (jobWithAI as { aiIntelligence?: { africa_eligibility?: string | null } | null }).aiIntelligence?.africa_eligibility
+  if (job.eligibility === 'restricted' || metaAiElig === 'restricted') {
+    notFound()
   }
   // Description: prepend a calm trust prefix that compounds CTR by giving the
   // SERP snippet a recognisable Nexa shape. Falls back to body text when the
@@ -181,7 +195,7 @@ export async function generateMetadata({
 
 export default async function RolePage({ params }: { params: Promise<Params> }) {
   const { slug } = await params
-  const jobWithAI = await getJobBySlugWithAI(slug)
+  const jobWithAI = await loadRole(slug)
   if (!jobWithAI) notFound()
   const job = jobWithAI
   const aiIntelligence = (jobWithAI as any).aiIntelligence || null

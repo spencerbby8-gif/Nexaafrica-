@@ -112,7 +112,7 @@ export const PROVIDERS: ProviderConfig[] = [
   // model discovery (/v1/models) + model-sync real-inference probes feed the
   // dynamic registry, and measured performance can outrank or demote it like
   // any other provider. Timeout generous: K3 is a reasoning model.
-  { id: "freerouter", name: "FreeRouter (Kimi K3 preferred)", envKey: "FREEROUTER_API_KEY", model: "kimi-k3", enabled: true, priority: 15, rateLimitPerSec: 1, timeoutMs: 60000, costPer1kTokens: 0, taskTypes: ["job_intelligence", "fast_extraction", "complex_analysis", "fallback"] },
+  { id: "freerouter", name: "FreeRouter (Kimi K3 preferred)", envKey: "FREEROUTER_API_KEY", model: "kimi-k3", enabled: true, priority: 15, rateLimitPerSec: 1, timeoutMs: 120000, costPer1kTokens: 0, taskTypes: ["job_intelligence", "fast_extraction", "complex_analysis", "fallback"] }, // [PHASE-4C] 120s: reasoning models think 30-60s+ on full job prompts; measured live (5/6 calls timed out at 60s, 1 succeeded at 56s)
 ]
 
 export interface ProviderHealth {

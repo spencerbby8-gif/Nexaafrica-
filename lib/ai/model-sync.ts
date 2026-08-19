@@ -71,22 +71,10 @@ export interface ModelSyncSummary {
 }
 
 function keyFor(provider: string): string | undefined {
-  const env: Record<string, string> = {
-    gemini: 'GEMINI_API_KEY',
-    gemini_backup: 'GEMINI_API_KEY_BACKUP',
-    groq: 'GROQ_API_KEY',
-    cerebras: 'CEREBRAS_API_KEY',
-    openrouter: 'OPENROUTER_API_KEY',
-    github_models: 'GITHUB_MODELS_TOKEN',
-    cloudflare: 'CLOUDFLARE_API_TOKEN',
-    mistral: 'MISTRAL_API_KEY',
-    mistral_backup: 'MISTRAL_API_KEY_BACKUP',
-    nvidia: 'NVIDIA_API_KEY',
-    huggingface: 'HUGGINGFACE_API_KEY',
-    cohere: 'COHERE_API_KEY',
-  }
-  const name = env[provider]
-  return name ? process.env[name] : undefined
+  // [PHASE-4] Data-driven from PROVIDERS — the hardcoded map silently left
+  // llm7 unprobeable (drift). Single source of truth prevents recurrence.
+  const cfg = PROVIDERS.find((p) => p.id === provider)
+  return cfg ? process.env[cfg.envKey] : undefined
 }
 
 /** One real inference call against the provider's production endpoint.
@@ -148,6 +136,9 @@ async function verifyCandidate(provider: string, modelId: string, apiKey: string
         mistral_backup: 'https://api.mistral.ai/v1/chat/completions',
         nvidia: 'https://integrate.api.nvidia.com/v1/chat/completions',
         huggingface: 'https://router.huggingface.co/v1/chat/completions',
+        // [PHASE-4] LLM7: plain-prompt probe (free tier rejects response_format).
+        llm7: 'https://api.llm7.io/v1/chat/completions',
+        llm7_fast: 'https://api.llm7.io/v1/chat/completions',
       }
       const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }
       if (provider === 'github_models') headers['api-version'] = '2024-05-01-preview'
@@ -252,9 +243,10 @@ export async function syncLiveModelRegistry(opts: { force?: boolean; budgetMs?: 
       const provider = catalog.provider
       const apiKey = keyFor(provider)
       const configured = PROVIDERS.find((p) => p.id === (provider as ProviderId))?.model
-      const entry: ModelSyncSummary['providers'][number] = {
+      const entry: ModelSyncSummary['providers'][number] & { bestLatencyMs: number } = {
         provider, discovered: catalog.totalModels, verified: 0, usable: 0, bestModel: null,
         error: catalog.discoveryError,
+        bestLatencyMs: 0,
       }
       const existingById = new Map<string, DiscoveredModel>()
       for (const m of catalog.models) existingById.set(m.modelId, m)
@@ -280,7 +272,12 @@ export async function syncLiveModelRegistry(opts: { force?: boolean; budgetMs?: 
           if (Date.now() >= deadline) break
           const outcome = await verifyCandidate(provider, modelId, apiKey)
           entry.verified++
-          if (outcome.ok) entry.usable++
+          if (outcome.ok) {
+            entry.usable++
+            if (outcome.latencyMs > 0 && (entry.bestLatencyMs === 0 || outcome.latencyMs < entry.bestLatencyMs)) {
+              entry.bestLatencyMs = outcome.latencyMs
+            }
+          }
           const model = existingById.get(modelId) ?? {
             provider, modelId, modelName: modelId,
             discoveredAt: new Date().toISOString(),
@@ -338,6 +335,45 @@ export async function syncLiveModelRegistry(opts: { force?: boolean; budgetMs?: 
       } catch (e) {
         entry.error = entry.error ?? (e instanceof Error ? e.message : String(e)).slice(0, 160)
       }
+      // [PHASE-4] Seed router health with MEASURED probe outcomes. Probes are
+      // real inference calls against the provider's production endpoint; the
+      // Smart Router's documented contract derives scores from live evidence
+      // persisted in ai_orch_health. Without this wiring a newly verified
+      // provider could never win routing and thus never accumulate the live
+      // samples the router expects (verified for llm7, 2026-08-19).
+      const entryAny = entry as any
+      try {
+        if (entry.usable > 0) {
+          const { createServiceClient } = await import('@/lib/supabase/service')
+          const svc = createServiceClient()
+          const { data: prevRow } = await svc.from('ai_orch_health').select('*').eq('provider', provider).maybeSingle()
+          const prev = (prevRow ?? {}) as Record<string, any>
+          const nowIso = new Date().toISOString()
+          await svc.from('ai_orch_health').upsert({
+            provider,
+            total_successes: (Number(prev.total_successes) || 0) + entry.usable,
+            total_failures: (Number(prev.total_failures) || 0) + Math.max(0, entry.verified - entry.usable),
+            last_success_at: entry.usable > 0 ? nowIso : prev.last_success_at ?? null,
+            consecutive_failures: 0,
+            is_quota_exhausted: false,
+            is_rate_limited: false,
+            cooldown_until: null,
+            avg_latency_ms: entry.bestLatencyMs
+              ? (Number(prev.avg_latency_ms) > 0 ? Math.round((Number(prev.avg_latency_ms) + entry.bestLatencyMs) / 2) : entry.bestLatencyMs)
+              : Number(prev.avg_latency_ms) || 0,
+            best_latency_ms: entry.bestLatencyMs ? (Number(prev.best_latency_ms) > 0 ? Math.min(Number(prev.best_latency_ms), entry.bestLatencyMs) : entry.bestLatencyMs) : prev.best_latency_ms ?? null,
+            updated_at: nowIso,
+          }, { onConflict: 'provider' }).then((r: any) => {
+            entryAny.seed = r.error ? ('err:' + String(r.error.message || r.error).slice(0, 120)) : 'ok'
+          })
+        } else {
+          entryAny.seed = 'skip:usable=0'
+        }
+      } catch (e) {
+        entryAny.seed = 'throw:' + (e instanceof Error ? e.message : String(e)).slice(0, 120)
+        console.log(JSON.stringify({ scope: 'model_sync', event: 'health_seed_error', provider, error: (e instanceof Error ? e.message : String(e)).slice(0, 140) }))
+      }
+
       summary.providers.push(entry)
     }),
   )

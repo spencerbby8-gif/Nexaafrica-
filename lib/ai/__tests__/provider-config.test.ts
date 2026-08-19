@@ -11,8 +11,8 @@ import { PROVIDERS } from '../providers/types'
 describe('provider config — wired keys match Vercel env', () => {
   const ids = new Set(PROVIDERS.map(p => p.id))
 
-  it('has 12 providers including cohere + mistral_backup', () => {
-    expect(PROVIDERS.length).toBe(12)
+  it('has 14 providers including cohere + mistral_backup + llm7', () => {
+    expect(PROVIDERS.length).toBe(14)
     expect(ids.has('cohere')).toBe(true)
     expect(ids.has('mistral_backup')).toBe(true)
   })

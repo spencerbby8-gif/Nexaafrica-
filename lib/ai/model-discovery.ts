@@ -1005,6 +1005,35 @@ export async function discoverAllModels(): Promise<ProviderCatalog[]> {
     }
   }
 
+
+  // [PHASE-4] LLM7 unified gateway
+  if (process.env.LLM7_API_KEY) {
+    try {
+      const models = await discoverLlm7Models(process.env.LLM7_API_KEY)
+      catalogs.push({
+        provider: 'llm7',
+        discoveryEndpoint: 'https://api.llm7.io/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models,
+        totalModels: models.length,
+        verifiedModels: 0,
+        usableModels: 0
+      })
+    } catch (error: any) {
+      console.error('[Discovery] LLM7 discovery failed: ' + error.message)
+      catalogs.push({
+        provider: 'llm7',
+        discoveryEndpoint: 'https://api.llm7.io/v1/models',
+        discoveredAt: new Date().toISOString(),
+        models: [],
+        totalModels: 0,
+        verifiedModels: 0,
+        usableModels: 0,
+        discoveryError: error.message
+      })
+    }
+  }
+
   // Cache results
   try {
     const supabase = createClient(supabaseUrl, supabaseKey)
@@ -1034,6 +1063,62 @@ export async function discoverAllModels(): Promise<ProviderCatalog[]> {
   return catalogs
 }
 
+
+/**
+ * [PHASE-4] Parse an LLM7 /v1/models payload. Defensive: entries may carry
+ * id/model/name plus provider/context/tool metadata depending on gateway
+ * version. Routing selectors (default/fast/pro) are filtered OUT here —
+ * they participate via the configured provider entries, not as catalog rows.
+ */
+export function parseLlm7ModelList(json: any): DiscoveredModel[] {
+  const list = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : []
+  const endpoint = 'https://api.llm7.io/v1/models'
+  const out: DiscoveredModel[] = []
+  for (const m of list) {
+    const id = typeof m?.id === 'string' ? m.id : typeof m?.modelId === 'string' ? m.modelId : typeof m?.name === 'string' ? m.name : null
+    if (!id) continue
+    if (id === 'default' || id === 'fast' || id === 'pro') continue
+    out.push({
+      provider: 'llm7',
+      modelId: id,
+      modelName: typeof m?.name === 'string' && m.name !== id ? m.name : id,
+      discoveredAt: new Date().toISOString(),
+      discoveryEndpoint: endpoint,
+      rawResponse: m,
+      capabilities: {},
+      health: { verified: false, usable: false, healthScore: 0, successRate: 0, failureRate: 0, avgLatencyMs: 0, quotaStatus: 'ok' },
+      routingPriority: 0,
+    })
+  }
+  return out
+}
+
+/**
+ * [PHASE-4] Discover models from the LLM7 unified gateway.
+ * Endpoint: https://api.llm7.io/v1/models (OpenAI-compatible, Bearer auth).
+ */
+async function discoverLlm7Models(apiKey: string): Promise<DiscoveredModel[]> {
+  const endpoint = 'https://api.llm7.io/v1/models'
+  console.log('[LLM7 Discovery] Querying ' + endpoint)
+  try {
+    const response = await fetch(endpoint, {
+      headers: { Authorization: 'Bearer ' + apiKey },
+      // llm7 /v1/models can be slow; 20s timed out in the first live run.
+      signal: AbortSignal.timeout(45000),
+    })
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error('LLM7 API error ' + response.status + ': ' + errorText.substring(0, 200))
+    }
+    const data = await response.json()
+    const models = parseLlm7ModelList(data)
+    console.log('[LLM7 Discovery] Found ' + models.length + ' models')
+    return models
+  } catch (error: any) {
+    console.error('[LLM7 Discovery] FAILED: ' + error.message)
+    throw error
+  }
+}
 /**
  * Get cached model catalog
  */

@@ -5,6 +5,31 @@ import type { ProviderCallDiag } from "./gateway"
 import { PROVIDERS } from "./providers/types"
 import { REMOTE_WRITEBACK_MIN_CONFIDENCE } from "./verified"
 
+// [PHASE-4] Stale-first re-verification. Before Phase 4 completed queue
+// rows never cycled, so verified intelligence aged out permanently (3,699 of
+// 3,980 active rows were >7d old; re-verification horizon was infinite).
+// Each drain invocation may re-queue at most REVERIFY_BATCH of the oldest
+// verified rows — a hard budget that keeps API usage controlled.
+export const REVERIFY_BATCH = Math.max(0, Math.min(500, Number(process.env.REVERIFY_BATCH) || 150))
+export const REVERIFY_MAX_AGE_DAYS = Math.max(1, Math.min(90, Number(process.env.REVERIFY_MAX_AGE_DAYS) || 10))
+
+/**
+ * Pure selection: oldest-first, never touch jobs already queued
+ * (pending/processing), bounded by budget. Deterministic for tests.
+ */
+export function planReverification(
+  candidates: Array<{ job_id: string; last_verified_at: string | null }>,
+  inFlightJobIds: Set<string>,
+  budget: number,
+): Array<{ job_id: string }> {
+  if (budget <= 0) return []
+  return candidates
+    .filter((c) => c.job_id && !inFlightJobIds.has(c.job_id))
+    .sort((a, b) => (a.last_verified_at || "").localeCompare(b.last_verified_at || ""))
+    .slice(0, budget)
+    .map((c) => ({ job_id: c.job_id }))
+}
+
 
 
 const cache = new Map<string, { result: { intelligence: JobAIIntelligence; diags: any[] }; timestamp: number }>()
@@ -471,6 +496,60 @@ export async function processAIQueue(batchSize = 100) {
     }
   } catch (e) {
     console.log(JSON.stringify({ scope: "ai_engine", event: "orphan_heal_error", error: (e instanceof Error ? e.message : String(e)).slice(0,150) }))
+  }
+
+  // ── [PHASE-4] Stale-first re-verification (bounded budget) ────────
+  // Re-queue the oldest verified intelligence for active jobs so evidence
+  // does not rot forever. Runs only when the queue is not already backlogged
+  // (pending <= 500) and never hijacks rows that are pending/processing.
+  try {
+    if (REVERIFY_BATCH > 0) {
+      const { count: pendingCountNow } = await supabase
+        .from("ai_processing_queue")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "pending")
+      if ((pendingCountNow ?? 0) <= 500) {
+        const cutoff = new Date(Date.now() - REVERIFY_MAX_AGE_DAYS * 86_400_000).toISOString()
+        const { data: staleRows } = await supabase
+          .from("job_ai_intelligence")
+          .select("job_id, last_verified_at, jobs!inner(is_active)")
+          .eq("jobs.is_active", true)
+          .lt("last_verified_at", cutoff)
+          .order("last_verified_at", { ascending: true })
+          .limit(REVERIFY_BATCH * 3)
+        const candidates = (staleRows || []) as Array<{ job_id: string; last_verified_at: string | null }>
+        if (candidates.length > 0) {
+          const ids = candidates.map((c) => c.job_id)
+          const { data: inFlight } = await supabase
+            .from("ai_processing_queue")
+            .select("job_id")
+            .in("job_id", ids)
+            .in("status", ["pending", "processing"])
+          const inFlightSet = new Set((inFlight || []).map((r: any) => r.job_id))
+          const chosen = planReverification(candidates, inFlightSet, REVERIFY_BATCH)
+          for (const c of chosen) {
+            await supabase.from("ai_processing_queue").upsert(
+              {
+                job_id: c.job_id,
+                status: "pending",
+                priority: 0, // new ingested jobs (priority 10) always go first
+                attempts: 0,
+                error: "Reverify: stale intelligence (>" + REVERIFY_MAX_AGE_DAYS + "d)",
+                completed_at: null,
+                started_at: null,
+                next_retry_at: new Date().toISOString(),
+              },
+              { onConflict: "job_id" },
+            )
+          }
+          if (chosen.length > 0) {
+            console.log(JSON.stringify({ scope: "ai_engine", event: "reverify_queued", count: chosen.length, budget: REVERIFY_BATCH, maxAgeDays: REVERIFY_MAX_AGE_DAYS }))
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.log(JSON.stringify({ scope: "ai_engine", event: "reverify_error", error: (e instanceof Error ? e.message : String(e)).slice(0, 150) }))
   }
 
   const nowIso = new Date().toISOString()

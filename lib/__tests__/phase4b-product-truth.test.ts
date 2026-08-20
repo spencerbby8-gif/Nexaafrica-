@@ -21,29 +21,41 @@ const row = (over: Record<string, any> = {}): any => ({
 })
 
 describe('company legitimacy reconciliation (UI truth)', () => {
-  it('keeps real AI verdicts untouched', () => {
-    expect(reconciledCompany(row({ company_legitimacy: 'verified' }), { total_jobs: 500, trust_avg: 95, scam_reports: 0, verification_rate: 0.9 }, false).label).toBe('Company verified')
-    expect(reconciledCompany(row({ company_legitimacy: 'suspicious' }), { total_jobs: 500, trust_avg: 95, scam_reports: 0, verification_rate: 0.9 }, false).label).toBe('Needs verification')
+  const strong = { total_jobs: 500, trust_avg: 95, scam_reports: 0, verification_rate: 0.9 }
+
+  it('uses a STABLE employer-level headline when the record is strong (consistency)', () => {
+    // Two jobs at the same strong employer get the SAME headline even though
+    // their listing-level verdicts differ — this is the consistency fix.
+    const a = reconciledCompany(row({ company_legitimacy: 'verified' }), strong, false)
+    const b = reconciledCompany(row({ company_legitimacy: 'unknown' }), strong, false)
+    expect(a.label).toBe('Established employer')
+    expect(b.label).toBe('Established employer')
+    expect(a.detail).toContain('500 postings')
+    expect(a.detail).toContain('trust 95/100')
   })
 
-  it('presents strong measured track record when AI abstained', () => {
-    const r = reconciledCompany(row({ company_legitimacy: 'unknown', company_confidence: 0 }), { total_jobs: 196, trust_avg: 93, scam_reports: 0, verification_rate: 0.06 }, false)
-    expect(r.label).toBe('Unverified by AI — strong employer record')
-    expect(r.detail).toContain('196 postings')
-    expect(r.detail).toContain('trust 93/100')
-    expect(r.detail).toContain('0 scam reports')
+  it('surfaces the listing-level verdict as detail, never as an overclaim', () => {
+    const withVerdict = reconciledCompany(row({ company_legitimacy: 'verified' }), strong, false)
+    expect(withVerdict.detail).toContain('This listing: company verified')
+    const abstained = reconciledCompany(row({ company_legitimacy: 'unknown' }), strong, false)
+    expect(abstained.detail).toContain('not yet verified by AI')
+  })
+
+  it('falls back to the listing-level verdict when there is no strong employer record', () => {
+    expect(reconciledCompany(row({ company_legitimacy: 'verified' }), null, false).label).toBe('Company verified')
+    expect(reconciledCompany(row({ company_legitimacy: 'suspicious' }), null, false).label).toBe('Needs verification')
+    expect(reconciledCompany(row({ company_legitimacy: 'unknown' }), null, false).label).toBe('Company legitimacy unknown')
   })
 
   it('does NOT upgrade on weak or scam-tainted records', () => {
     expect(reconciledCompany(row({ company_legitimacy: 'unknown' }), { total_jobs: 5, trust_avg: 99, scam_reports: 0, verification_rate: 0 }, false).label).toBe('Company legitimacy unknown')
     expect(reconciledCompany(row({ company_legitimacy: 'unknown' }), { total_jobs: 500, trust_avg: 99, scam_reports: 2, verification_rate: 0.9 }, false).label).toBe('Company legitimacy unknown')
-    expect(reconciledCompany(row({ company_legitimacy: 'unknown' }), null, false).label).toBe('Company legitimacy unknown')
   })
 
-  it('never claims AI verification it does not have', () => {
-    const r = reconciledCompany(row({ company_legitimacy: 'unknown' }), { total_jobs: 196, trust_avg: 93, scam_reports: 0, verification_rate: 0.5 }, false)
-    expect(r.label.startsWith('Company verified')).toBe(false)
-    expect(r.label).toContain('Unverified by AI')
+  it('employer reputation never claims the specific listing is AI-verified', () => {
+    const r = reconciledCompany(row({ company_legitimacy: 'unknown' }), strong, false)
+    expect(r.label).not.toBe('Company verified')
+    expect(r.detail).toContain('not yet verified by AI')
   })
 })
 

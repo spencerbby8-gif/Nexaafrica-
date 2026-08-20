@@ -54,14 +54,15 @@ function africaFitLabel(elig: string | null | undefined, fallbackElig?: string |
   }
 }
 
-function remoteLabel(elig: string | null | undefined, isRemote?: boolean | null, evidence?: string | null) {
+function remoteLabel(elig: string | null | undefined, isRemote?: boolean | null, evidence?: string | null, basis?: string | null) {
   // P6: metadata-sourced truth gets an honest provenance marker.
   const metadataTag = ' (from feed)' // signals the claim comes from ATS metadata, not page verification
   if (elig) {
     switch (elig) {
       case 'fully_remote':
-        // If the only evidence is the ATS metadata marker, label it honestly
-        if (evidence?.startsWith('Marked as remote in source feed')) return 'Fully remote' + metadataTag
+        // [PHASE-4D] A 'metadata' basis (or the legacy static marker on old rows)
+        // means no page text backs this — label it honestly, never as a quote.
+        if (basis === 'metadata' || evidence?.startsWith('Marked as remote in source feed')) return 'Fully remote' + metadataTag
         return 'Fully remote'
       case 'hybrid':
         return 'Hybrid – some onsite'
@@ -110,6 +111,11 @@ function salaryTruthLabel(row: JobAIIntelligenceRow | null | undefined, job?: Jo
  * the dimension abstained). Clearly labeled as AI analysis, distinct from the
  * verbatim evidence quote.
  */
+// [PHASE-4D] Read the per-dimension evidence basis (quote|regex|metadata|null).
+function basisOf(intelligence: JobAIIntelligenceRow | null | undefined): { africa?: string|null; remote?: string|null; salary?: string|null; company?: string|null } {
+  return (intelligence?.evidence_refs as any)?.basis || {}
+}
+
 function ReasoningLine({ text }: { text?: string | null }) {
   if (!text || typeof text !== 'string') return null
   return (
@@ -138,26 +144,44 @@ const EVIDENCE_SOURCE_LABEL: Record<string, string> = {
  * reports). This helper presents that record, clearly labeled, instead of a
  * bare "unknown 0%" that contradicts the trust strip on the same page.
  */
+// [PHASE-4D] Company legitimacy has TWO separate layers that must not be
+// conflated, and the headline must be STABLE across a company's listings:
+//   • Employer-level track record (company_intelligence): history/signals about
+//     the EMPLOYER — stable per company, never proves a specific job is legit
+//     or Africa-open.
+//   • Listing-level AI verdict (job_ai_intelligence.company_legitimacy): what the
+//     verifier concluded for THIS posting from its own fetch — can differ per job.
+// The headline uses the stable employer-level foundation when it is strong, so
+// two jobs at the same employer do not randomly show different legitimacy just
+// because one happened to fetch a company page. The listing-level verdict is
+// surfaced as detail, never used to overstate the employer.
 export function reconciledCompany(
   intelligence: JobAIIntelligenceRow | null | undefined,
   companyIntel: Record<string, any> | null | undefined,
   hasLogo: boolean | null | undefined,
 ): { label: string; tone: 'positive' | 'caution' | 'neutral'; detail?: string } {
-  const base = companyLabel(intelligence?.company_legitimacy, hasLogo)
-  const legit = intelligence?.company_legitimacy
-  if (legit && legit !== 'unknown') return base
+  const jobVerdict = companyLabel(intelligence?.company_legitimacy, hasLogo)
+  const jobLegit = intelligence?.company_legitimacy
   const total = Number(companyIntel?.total_jobs) || 0
   const scam = Number(companyIntel?.scam_reports) || 0
   const trustAvg = Number(companyIntel?.trust_avg) || 0
   const verifRate = Number(companyIntel?.verification_rate) || 0
-  const strong = total >= 10 && scam === 0 && (trustAvg >= 70 || verifRate >= 0.3)
-  if (!strong) return base
-  const verifPct = Math.round(verifRate * 100)
-  return {
-    label: 'Unverified by AI — strong employer record',
-    tone: 'caution',
-    detail: `Nexa measured ${total} postings from this employer: ${verifPct}% verified${trustAvg ? `, trust ${trustAvg}/100` : ''}, 0 scam reports. Website could not be fetched, so AI abstains.`,
+  const strongEmployer = total >= 10 && scam === 0 && (trustAvg >= 70 || verifRate >= 0.3)
+
+  // Stable employer-level foundation as the headline when available.
+  if (strongEmployer) {
+    const verifPct = Math.round(verifRate * 100)
+    const employerLine = `Employer track record: ${total} postings measured, ${verifPct}% verified${trustAvg ? `, trust ${trustAvg}/100` : ''}, ${scam} scam reports.`
+    // Listing-level verdict is supplementary; described honestly either way.
+    const listingLine =
+      jobLegit && jobLegit !== 'unknown'
+        ? ` This listing: ${jobVerdict.label.toLowerCase()}. Does not by itself confirm this specific role.`
+        : ' This listing: not yet verified by AI.'
+    return { label: 'Established employer', tone: 'positive', detail: employerLine + listingLine }
   }
+
+  // No strong employer record -> fall back to the listing-level verdict only.
+  return jobVerdict
 }
 
 function companyLabel(legit: string | null | undefined, hasLogo?: boolean | null) {
@@ -194,12 +218,15 @@ function expLabel(level: string | null | undefined, title?: string | null) {
   return 'Experience unknown'
 }
 
+// [PHASE-4D] Verbatim source evidence is INPUT data, kept visually distinct from
+// AI-written analysis and explicitly labeled so it is never read as Nexa's own words.
 function EvidenceQuote({ text, url, allowLink = true }: { text?: string | null; url?: string | null; allowLink?: boolean }) {
   if (!text) return null
   const cleaned = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220)
   if (!cleaned) return null
   return (
     <blockquote className="mt-1.5 break-words border-l-2 border-border pl-2.5 text-[11.5px] italic leading-relaxed text-foreground/70">
+      <span className="not-italic text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">Source quote · </span>
       “{cleaned}”
       {url && allowLink && (
         <>
@@ -226,7 +253,8 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
   const state = intelligenceState(intelligence, (job as any)?._queueStatus, (job as any)?._queueError)
   const degraded = hasAI && state.status === 'degraded' // regex/legacy fallback rows — not real AI output
   const africa = africaFitLabel(intelligence?.africa_eligibility, job?.eligibility)
-  const remote = remoteLabel(intelligence?.remote_eligibility, job?.is_remote, intelligence?.remote_evidence)
+  const basis = basisOf(intelligence)
+  const remote = remoteLabel(intelligence?.remote_eligibility, job?.is_remote, intelligence?.remote_evidence, basis.remote)
   const salary = salaryTruthLabel(intelligence, job || null)
   const company = reconciledCompany(intelligence, companyIntel, job?.company_logo ? true : false)
   const exp = expLabel(intelligence?.experience_level, job?.title)
@@ -352,7 +380,10 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons, 
 
         <div className="rounded-md border border-border/60 bg-secondary/30 p-3">
           <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"><Clock className="h-3 w-3" aria-hidden /> Remote Policy</p>
-          <p className="mt-1.5 text-sm font-medium text-foreground/90">{remoteLabel(intelligence?.remote_eligibility, job?.is_remote, intelligence?.remote_evidence)}</p>
+          <p className="mt-1.5 text-sm font-medium text-foreground/90">{remoteLabel(intelligence?.remote_eligibility, job?.is_remote, intelligence?.remote_evidence, basisOf(intelligence).remote)}</p>
+          {basisOf(intelligence).remote === 'metadata' && !intelligence?.remote_evidence && (
+            <p className="mt-1 text-[11px] text-muted-foreground">Based on the ATS feed&apos;s remote flag — the posting text does not state a remote policy.</p>
+          )}
           {intelligence?.timezone_requirements && <p className="mt-1 text-[11px] text-muted-foreground">Timezone: {intelligence.timezone_requirements}</p>}
           {intelligence?.remote_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.remote_confidence}% confidence</p>}
           <ReasoningLine text={intelligence?.evidence_refs?.reasoning?.remote} />

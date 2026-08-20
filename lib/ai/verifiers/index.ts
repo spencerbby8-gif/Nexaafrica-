@@ -86,7 +86,7 @@ export async function verifyJobReal(job: Job): Promise<VerificationBundle> {
       lastVerified: now,
       modelVersion,
     },
-    _diags: Object.assign(diags, { _pageStatus: consolidated.pageStatus, _evidenceProvenance: (consolidated as any).ai ? "page" : "regex" }),
+    _diags: Object.assign(diags, { _pageStatus: consolidated.pageStatus, _evidenceProvenance: (consolidated as any).ai ? "page" : "regex", _evidenceBasis: consolidated.evidenceBasis ?? null }),
     _consolidated: consolidated,
   }
   } catch (e) {

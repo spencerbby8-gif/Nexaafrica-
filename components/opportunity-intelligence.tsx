@@ -227,17 +227,31 @@ function expLabel(level: string | null | undefined, title?: string | null) {
 function cleanEvidenceFragment(raw: string): string {
   let t = raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
   if (!t) return ''
+  // Drop a cut LEADING word-tail ("ss Europe…" -> "Europe…").
   const firstSpace = t.indexOf(' ')
   if (firstSpace > 0 && firstSpace <= 4 && /^[a-z]+$/.test(t.slice(0, firstSpace))) {
     t = t.slice(firstSpace + 1).trim()
   }
+  // Cap length at a word boundary.
+  let ellipsis = ''
   if (t.length > 220) {
     let cut = t.slice(0, 220)
     const ls = cut.lastIndexOf(' ')
     if (ls > 120) cut = cut.slice(0, ls)
-    t = cut + '…'
+    t = cut
+    ellipsis = '…'
   }
-  return t
+  // Drop a cut TRAILING word-tail ("…team work, h" -> "…team work…").
+  const tokens = t.split(' ')
+  if (tokens.length > 2) {
+    const last = tokens[tokens.length - 1].replace(/[.,;:!?"']+$/,'')
+    if (/^[a-z]{1,2}$/.test(last)) {
+      tokens.pop()
+      t = tokens.join(' ').replace(/[\s,;:]+$/,'')
+      ellipsis = '…'
+    }
+  }
+  return t + ellipsis
 }
 
 function EvidenceQuote({ text, url, allowLink = true }: { text?: string | null; url?: string | null; allowLink?: boolean }) {

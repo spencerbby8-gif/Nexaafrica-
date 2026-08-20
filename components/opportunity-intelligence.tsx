@@ -232,7 +232,7 @@ function cleanEvidenceFragment(raw: string): string {
     try { const arr = JSON.parse(trimmed); if (Array.isArray(arr)) t = arr.join(' ') } catch {}
   }
   // Strip markdown links [text](url) -> text, and bold/italic markers.
-  t = t.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+  t = t.replace(/\[([^\]]*)\]\([^)]*\)?/g, '$1')
   t = t.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/(^|[^*])\*([^*]+)\*(?![*])/g, '$1$2').replace(/__([^_]+)__/g, '$1')
   t = t.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
   if (!t) return ''

@@ -220,9 +220,52 @@ function expLabel(level: string | null | undefined, title?: string | null) {
 
 // [PHASE-4D] Verbatim source evidence is INPUT data, kept visually distinct from
 // AI-written analysis and explicitly labeled so it is never read as Nexa's own words.
+// [PHASE-4E] Clean a stored evidence fragment for display. Extraction can
+// leave a quote starting on a cut word-tail ("ss Europe…") or ending mid-word.
+// Drop a short all-lowercase leading token (a cut tail) and cap length at a
+// word boundary with an ellipsis, so every quote reads as whole words.
+function cleanEvidenceFragment(raw: string): string {
+  let t = raw
+  // A few rows stored a JSON array serialized to a string; flatten to text.
+  const trimmed = t.trim()
+  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+    try { const arr = JSON.parse(trimmed); if (Array.isArray(arr)) t = arr.join(' ') } catch {}
+  }
+  // Strip markdown links [text](url) -> text, and bold/italic markers.
+  t = t.replace(/\[([^\]]*)\]\([^)]*\)?/g, '$1')
+  t = t.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/(^|[^*])\*([^*]+)\*(?![*])/g, '$1$2').replace(/__([^_]+)__/g, '$1')
+  t = t.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!t) return ''
+  // Drop a cut LEADING word-tail ("ss Europe…" -> "Europe…").
+  const firstSpace = t.indexOf(' ')
+  if (firstSpace > 0 && firstSpace <= 4 && /^[a-z]+$/.test(t.slice(0, firstSpace))) {
+    t = t.slice(firstSpace + 1).trim()
+  }
+  // Cap length at a word boundary.
+  let ellipsis = ''
+  if (t.length > 220) {
+    let cut = t.slice(0, 220)
+    const ls = cut.lastIndexOf(' ')
+    if (ls > 120) cut = cut.slice(0, ls)
+    t = cut
+    ellipsis = '…'
+  }
+  // Drop a cut TRAILING word-tail ("…team work, h" -> "…team work…").
+  const tokens = t.split(' ')
+  if (tokens.length > 2) {
+    const last = tokens[tokens.length - 1].replace(/[.,;:!?"']+$/,'')
+    if (/^[a-z]{1,2}$/.test(last)) {
+      tokens.pop()
+      t = tokens.join(' ').replace(/[\s,;:]+$/,'')
+      ellipsis = '…'
+    }
+  }
+  return t + ellipsis
+}
+
 function EvidenceQuote({ text, url, allowLink = true }: { text?: string | null; url?: string | null; allowLink?: boolean }) {
   if (!text) return null
-  const cleaned = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220)
+  const cleaned = cleanEvidenceFragment(text)
   if (!cleaned) return null
   return (
     <blockquote className="mt-1.5 break-words border-l-2 border-border pl-2.5 text-[11.5px] italic leading-relaxed text-foreground/70">

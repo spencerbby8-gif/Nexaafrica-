@@ -790,6 +790,9 @@ export async function processAIQueue(batchSize = 100) {
             pageStatus: (aiResult as any).diags?._pageStatus ?? null,
             // [PHASE-4C] grounded per-dimension reasoning from the model.
             reasoning: (aiResult as any).diags?._reasoning ?? null,
+            // [PHASE-4D] evidence basis per dimension (quote|regex|metadata|null)
+            // so the UI separates source data from AI analysis.
+            basis: (aiResult as any).diags?._evidenceBasis ?? null,
             sources: Array.from(new Set<string>([
               job.apply_url,
               ...(intelligence.africa.sourceUrls || []),

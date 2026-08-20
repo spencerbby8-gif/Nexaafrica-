@@ -11,6 +11,7 @@ import { fetchRecruitee } from '@/lib/ingest/sources/recruitee'
 import { fetchSmartRecruiters } from '@/lib/ingest/sources/smartrecruiters'
 import { fetchWorkable } from '@/lib/ingest/sources/workable'
 import type { NormalizedJob } from '@/lib/ingest/normalize'
+import { computeContentHash } from '@/lib/ingest/normalize'
 import { auditClassification, validateNormalizedJob } from '@/lib/ingest/validate'
 import {
   extractIntelligence,
@@ -133,7 +134,7 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
 
     // Batch fetch existing jobs for this source to avoid N+1 + cross-source duplicate detection by apply_url
     const sourceIds = jobs.map(j => j.source_id).filter(Boolean) as string[]
-    let existingMap = new Map<string, { id: string; first_seen_at: string | null; refresh_count: number | null }>()
+    let existingMap = new Map<string, { id: string; first_seen_at: string | null; refresh_count: number | null; content_hash: string | null; has_jai: boolean }>()
     let duplicateUrlMap = new Map<string, string>() // apply_url -> existing id from different source
 
     if (sourceIds.length > 0) {
@@ -143,11 +144,11 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
           const chunk = sourceIds.slice(i, i + chunkSize)
           const { data } = await supabase
             .from('jobs')
-            .select('source_id, id, first_seen_at, refresh_count')
+            .select('source_id, id, first_seen_at, refresh_count, content_hash')
             .eq('source', s.ats)
             .in('source_id', chunk)
           for (const row of (data || []) as any[]) {
-            existingMap.set(row.source_id, { id: row.id, first_seen_at: row.first_seen_at, refresh_count: row.refresh_count })
+            existingMap.set(row.source_id, { id: row.id, first_seen_at: row.first_seen_at, refresh_count: row.refresh_count, content_hash: row.content_hash ?? null, has_jai: false })
           }
         }
       } catch {}
@@ -244,6 +245,15 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
 
       const existing = existingMap.get(job.source_id) || null
       const nowIso = new Date().toISOString()
+      // [PHASE-4D] Content fingerprint for material-change detection.
+      const newContentHash = computeContentHash({
+        title: job.title,
+        description_md: job.description_md,
+        location: job.location,
+        country: job.country,
+        salary_range: intel.salary_range,
+        is_remote: job.is_remote,
+      })
       const companyJobCount = companyCountMap.get(job.company.toLowerCase()) || 0
 
       let trustResult: ReturnType<typeof calculateTrustScore> | null = null
@@ -312,6 +322,10 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
         last_refreshed_at: nowIso,
         refresh_count: existing ? (existing.refresh_count || 0) + 1 : 1,
         first_seen_at: existing?.first_seen_at || nowIso,
+        content_hash: newContentHash,
+        // [PHASE-4D] Material change: prior hash known and differs -> source
+        // content actually changed; timestamp the event for re-verification.
+        materially_changed_at: (existing?.content_hash && existing.content_hash !== newContentHash) ? nowIso : null,
         trust_score: trustResult?.score ?? null,
         trust_confidence: trustResult?.confidence ?? "unknown",
         trust_signals: trustResult?.signals ?? [],
@@ -343,6 +357,21 @@ async function runSource(s: IngestSource): Promise<SourceResult> {
             .update({ status: 'pending', error: null })
             .eq('job_id', data[0].id)
             .eq('status', 'failed')
+          // [PHASE-4D] Material source change -> force prompt re-verification.
+          // Only fires when a PRIOR hash is known and differs; a first sighting
+          // or NULL prior hash never triggers extra AI (it just records the hash).
+          if (existing?.content_hash && existing.content_hash !== newContentHash) {
+            await supabase.from('ai_processing_queue').upsert({
+              job_id: data[0].id,
+              status: 'pending',
+              priority: 15, // above new (10) and refresh (0) so changed content re-verifies soon
+              attempts: 0,
+              error: 'Material source change detected — re-verification scheduled',
+              started_at: null,
+              completed_at: null,
+              next_retry_at: new Date().toISOString(),
+            }, { onConflict: 'job_id' })
+          }
         } catch {}
       }
       else result.skipped += 1
@@ -495,7 +524,7 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
 
     // Batch existing lookup for dedup across all connectors (by source_id AND by apply_url hash for cross-source dedup)
     const sourceIds = jobs.map(j => j.source_id).filter(Boolean) as string[]
-    let existingMap = new Map<string, { id: string; first_seen_at: string | null; refresh_count: number | null }>()
+    let existingMap = new Map<string, { id: string; first_seen_at: string | null; refresh_count: number | null; content_hash: string | null; has_jai: boolean }>()
     if (sourceIds.length > 0) {
       try {
         const chunkSize = 100
@@ -503,11 +532,11 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
           const chunk = sourceIds.slice(i, i + chunkSize)
           const { data } = await supabase
             .from('jobs')
-            .select('source_id, id, first_seen_at, refresh_count')
+            .select('source_id, id, first_seen_at, refresh_count, content_hash')
             .eq('source', source.id.split(':')[0])
             .in('source_id', chunk)
           for (const row of (data || []) as any[]) {
-            existingMap.set(row.source_id, { id: row.id, first_seen_at: row.first_seen_at, refresh_count: row.refresh_count })
+            existingMap.set(row.source_id, { id: row.id, first_seen_at: row.first_seen_at, refresh_count: row.refresh_count, content_hash: row.content_hash ?? null, has_jai: false })
           }
         }
       } catch {}
@@ -587,6 +616,15 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
       const slug = buildJobSlug(job.title, job.company, job.country)
       const existing = existingMap.get(job.source_id) || null
       const nowIso = new Date().toISOString()
+      // [PHASE-4D] Content fingerprint for material-change detection.
+      const newContentHash = computeContentHash({
+        title: job.title,
+        description_md: job.description_md,
+        location: job.location,
+        country: job.country,
+        salary_range: intel.salary_range,
+        is_remote: job.is_remote,
+      })
 
       let trustResult: ReturnType<typeof calculateTrustScore> | null = null
       try {
@@ -654,6 +692,10 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
         last_refreshed_at: nowIso,
         refresh_count: existing ? (existing.refresh_count || 0) + 1 : 1,
         first_seen_at: existing?.first_seen_at || nowIso,
+        content_hash: newContentHash,
+        // [PHASE-4D] Material change: prior hash known and differs -> source
+        // content actually changed; timestamp the event for re-verification.
+        materially_changed_at: (existing?.content_hash && existing.content_hash !== newContentHash) ? nowIso : null,
         trust_score: trustResult?.score ?? source.trustScore,
         trust_confidence: trustResult?.confidence ?? "medium",
         trust_signals: trustResult?.signals ?? [],
@@ -691,6 +733,21 @@ async function runRemoteBoard(source: { id: string; name: string; fetch: () => P
             .update({ status: 'pending', error: null })
             .eq('job_id', data[0].id)
             .eq('status', 'failed')
+          // [PHASE-4D] Material source change -> force prompt re-verification.
+          // Only fires when a PRIOR hash is known and differs; a first sighting
+          // or NULL prior hash never triggers extra AI (it just records the hash).
+          if (existing?.content_hash && existing.content_hash !== newContentHash) {
+            await supabase.from('ai_processing_queue').upsert({
+              job_id: data[0].id,
+              status: 'pending',
+              priority: 15, // above new (10) and refresh (0) so changed content re-verifies soon
+              attempts: 0,
+              error: 'Material source change detected — re-verification scheduled',
+              started_at: null,
+              completed_at: null,
+              next_retry_at: new Date().toISOString(),
+            }, { onConflict: 'job_id' })
+          }
         } catch {}
       }
       else result.skipped += 1

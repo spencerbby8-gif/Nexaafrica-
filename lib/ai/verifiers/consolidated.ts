@@ -452,7 +452,9 @@ export function enforceTruthfulness(merged: AIResp, opts: { job: Job; truth: str
   if (out.remote_eligibility === "fully_remote") {
     if (job.is_remote) {
       if (!out.remote_evidence) {
-        out.remote_evidence = "Marked as remote in source feed"
+        // [PHASE-4D] Do NOT fabricate a quote. The verdict rests on the feed's
+        // is_remote flag; the evidence field stays null and the basis is
+        // recorded as 'metadata' downstream so the UI labels it honestly.
         out.remote_confidence = Math.max(out.remote_confidence, 40)
       }
     } else {
@@ -517,7 +519,15 @@ export function enforceTruthfulness(merged: AIResp, opts: { job: Job; truth: str
   return out
 }
 
-export interface ConsolidatedResult { ai: AIResp; diags: ProviderCallDiag[]; modelVersion: string; pageFetched: boolean; pageLen: number; pageStatus: number | null; aiUsed: boolean; companyPageFetched: boolean; companyPageLen: number }
+// [PHASE-4D] Per-dimension evidence basis. Distinguishes genuine source data
+// from AI analysis so the UI never presents scraped/static text as if it were
+// Nexa Intelligence:
+//   'quote'    — verbatim quote the model copied from the source text
+//   'regex'    — deterministic extraction sliced from the source text
+//   'metadata' — verdict backed only by ATS feed flags (is_remote/salary), no quote
+//   null       — no evidence / dimension abstained
+export type EvidenceBasis = { africa: string|null; remote: string|null; salary: string|null; company: string|null }
+export interface ConsolidatedResult { ai: AIResp; diags: ProviderCallDiag[]; modelVersion: string; pageFetched: boolean; pageLen: number; pageStatus: number | null; aiUsed: boolean; companyPageFetched: boolean; companyPageLen: number; evidenceBasis: EvidenceBasis }
 
 export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult> {
   const diags: ProviderCallDiag[] = []
@@ -558,6 +568,10 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
     `"hiring_urgency":"high|medium|low|unknown","hiring_urgency_confidence":0,"africa_reasoning":"..."|null,"remote_reasoning":"..."|null,"salary_reasoning":"..."|null,"company_reasoning":"..."|null,"experience_reasoning":"..."|null,"quality_reasoning":"..."|null}`
 
   let aiResp: AIResp = AF; let modelVersion = "no-ai-providers"; let aiUsed = false
+  // [PHASE-4D] Per-dimension "did the AI supply this" tracker, set once the
+  // model response is parsed. Used to classify evidence basis after the
+  // truthfulness guard (which may abstain a dimension the AI had answered).
+  const aiSupplied = { africa: false, remote: false, salary: false, company: false }
   const VERIFIER_SYSTEM = "You extract job intelligence ONLY from the provided text. Never use outside knowledge. Evidence fields must be EXACT quotes from the text, or null. Prefer 'unknown' whenever proof is missing. Output only JSON."
   try {
     let gw = await aiGateway({ prompt, systemInstruction: VERIFIER_SYSTEM, agentId: "verifier:consolidated", jobId: job.id, temperature: 0.2, maxTokens: 2500 }) // [PHASE-4C] was 1400: the 30-field schema + verbatim quotes + per-dimension reasoning truncated mid-JSON, discarding reasoning and degrading rows to regex fallback
@@ -610,6 +624,11 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
       aiResp = parsed
       modelVersion = gw.response.provider + ":" + gw.response.model
       aiUsed = true
+      // [PHASE-4D] Record which dimensions the model actually answered (pre-guard).
+      aiSupplied.africa = aiResp.africa_eligibility !== "unknown"
+      aiSupplied.remote = aiResp.remote_eligibility !== "unknown"
+      aiSupplied.salary = aiResp.salary_min != null || aiResp.salary_max != null
+      aiSupplied.company = aiResp.company_legitimacy !== "unknown"
     }
   } catch (e: any) { if (e?.diag && Array.isArray(e.diag)) for (const d of e.diag) diags.push(d) }
 
@@ -746,5 +765,19 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
     jobTruth: combined + "\n" + (job.salary_range || ""),
     hasCompanyPage: companyText.length >= 100,
   })
-  return { ai: hardened, diags, modelVersion, pageFetched: pageText.length > 0, pageLen: pageText.length, pageStatus, aiUsed, companyPageFetched: companyText.length > 0, companyPageLen: companyText.length }
+  // [PHASE-4D] Classify the evidence basis for each dimension from the FINAL
+  // (truth-guarded) values. A non-null *_evidence is source text — 'quote' when
+  // the AI supplied the dimension, 'regex' when deterministic extraction did.
+  // A null evidence with a feed-backed verdict is 'metadata'. Unknown abstains.
+  const evidenceBasis: EvidenceBasis = {
+    africa: hardened.africa_evidence ? (aiSupplied.africa ? "quote" : "regex") : null,
+    remote: hardened.remote_evidence
+      ? (aiSupplied.remote ? "quote" : "regex")
+      : (hardened.remote_eligibility === "fully_remote" && job.is_remote ? "metadata" : null),
+    salary: hardened.salary_evidence
+      ? (aiSupplied.salary ? "quote" : "regex")
+      : ((hardened.salary_min != null || hardened.salary_max != null) ? "metadata" : null),
+    company: hardened.company_evidence ? (aiSupplied.company ? "quote" : "regex") : null,
+  }
+  return { ai: hardened, diags, modelVersion, pageFetched: pageText.length > 0, pageLen: pageText.length, pageStatus, aiUsed, companyPageFetched: companyText.length > 0, companyPageLen: companyText.length, evidenceBasis }
 }

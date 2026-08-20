@@ -1,12 +1,40 @@
 import type { EmploymentType } from '@/lib/types'
 import type { JobIntelligence } from '@/lib/intelligence'
 import { evaluateLocationPolicy } from '@/lib/locationPolicy'
+import { createHash } from 'node:crypto'
 
 /**
  * Shared normalization for ingested jobs. Every ATS adapter should run its
  * raw output through these helpers so the upserted rows are consistent
  * regardless of source.
  */
+
+/**
+ * [PHASE-4D] Deterministic content fingerprint of the fields that materially
+ * drive Intelligence (eligibility, remote, salary, location, role). Used for
+ * change detection on refresh: when a re-ingested job's hash differs from the
+ * stored one, the source content actually changed and the job becomes eligible
+ * for re-verification — a timestamp alone never triggers AI.
+ */
+export function computeContentHash(input: {
+  title?: string | null
+  description_md?: string | null
+  location?: string | null
+  country?: string | null
+  salary_range?: string | null
+  is_remote?: boolean | null
+}): string {
+  const norm = (v: unknown) => (v == null ? '' : String(v)).replace(/\s+/g, ' ').trim().toLowerCase()
+  const payload = [
+    norm(input.title),
+    norm(input.description_md),
+    norm(input.location),
+    norm(input.country),
+    norm(input.salary_range),
+    input.is_remote ? 'remote' : 'onsite',
+  ].join('\u0000')
+  return createHash('sha256').update(payload).digest('hex').slice(0, 32)
+}
 
 // Placeholder/bad company names that should be rejected
 const BAD_COMPANY_NAMES = [

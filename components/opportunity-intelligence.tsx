@@ -220,9 +220,29 @@ function expLabel(level: string | null | undefined, title?: string | null) {
 
 // [PHASE-4D] Verbatim source evidence is INPUT data, kept visually distinct from
 // AI-written analysis and explicitly labeled so it is never read as Nexa's own words.
+// [PHASE-4E] Clean a stored evidence fragment for display. Extraction can
+// leave a quote starting on a cut word-tail ("ss Europe…") or ending mid-word.
+// Drop a short all-lowercase leading token (a cut tail) and cap length at a
+// word boundary with an ellipsis, so every quote reads as whole words.
+function cleanEvidenceFragment(raw: string): string {
+  let t = raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!t) return ''
+  const firstSpace = t.indexOf(' ')
+  if (firstSpace > 0 && firstSpace <= 4 && /^[a-z]+$/.test(t.slice(0, firstSpace))) {
+    t = t.slice(firstSpace + 1).trim()
+  }
+  if (t.length > 220) {
+    let cut = t.slice(0, 220)
+    const ls = cut.lastIndexOf(' ')
+    if (ls > 120) cut = cut.slice(0, ls)
+    t = cut + '…'
+  }
+  return t
+}
+
 function EvidenceQuote({ text, url, allowLink = true }: { text?: string | null; url?: string | null; allowLink?: boolean }) {
   if (!text) return null
-  const cleaned = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220)
+  const cleaned = cleanEvidenceFragment(text)
   if (!cleaned) return null
   return (
     <blockquote className="mt-1.5 break-words border-l-2 border-border pl-2.5 text-[11.5px] italic leading-relaxed text-foreground/70">

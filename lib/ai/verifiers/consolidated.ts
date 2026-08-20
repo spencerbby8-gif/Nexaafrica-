@@ -194,9 +194,28 @@ async function fetchCompanyPage(job: Job): Promise<string> {
   return ""
 }
 
+// [PHASE-4E] Word-boundary context extraction. The old version sliced a fixed
+// +-120 chars around the match, so evidence began/ended MID-WORD ("ss Europe…",
+// "…work of yo"). That read as chopped, untrustworthy fragments. Snap both ends
+// outward/inward to the nearest whitespace so every quote starts and ends on a
+// whole word. Evidence content only — verdicts/confidence are untouched.
 function extractCtx(text: string, re: RegExp): string|null {
-  const m=text.match(re); if(!m)return null
-  const i=m.index||0; return text.slice(Math.max(0,i-120),Math.min(text.length,i+(m[0]?.length||0)+120)).replace(/\s+/g,' ').trim().slice(0,200)||null
+  const m = text.match(re); if (!m) return null
+  const i = m.index || 0
+  let start = Math.max(0, i - 120)
+  let end = Math.min(text.length, i + (m[0]?.length || 0) + 120)
+  if (start > 0) {
+    const seg = text.slice(start, Math.min(text.length, start + 60))
+    let ws = -1; for (let k = 0; k < seg.length; k++) { if (/\s/.test(seg[k])) { ws = k; break } }
+    if (ws >= 0) start += ws + 1
+  }
+  if (end < text.length) {
+    const segStart = Math.max(0, end - 60)
+    const seg = text.slice(segStart, end)
+    let ws = -1; for (let k = seg.length - 1; k >= 0; k--) { if (/\s/.test(seg[k])) { ws = k; break } }
+    if (ws > 0) end = segStart + ws
+  }
+  return text.slice(start, end).replace(/\s+/g, ' ').trim().slice(0, 240) || null
 }
 
 // [V2] Full African country/demonym list — explicit Africa mention detection.

@@ -225,7 +225,16 @@ function expLabel(level: string | null | undefined, title?: string | null) {
 // Drop a short all-lowercase leading token (a cut tail) and cap length at a
 // word boundary with an ellipsis, so every quote reads as whole words.
 function cleanEvidenceFragment(raw: string): string {
-  let t = raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+  let t = raw
+  // A few rows stored a JSON array serialized to a string; flatten to text.
+  const trimmed = t.trim()
+  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+    try { const arr = JSON.parse(trimmed); if (Array.isArray(arr)) t = arr.join(' ') } catch {}
+  }
+  // Strip markdown links [text](url) -> text, and bold/italic markers.
+  t = t.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+  t = t.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/(^|[^*])\*([^*]+)\*(?![*])/g, '$1$2').replace(/__([^_]+)__/g, '$1')
+  t = t.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
   if (!t) return ''
   // Drop a cut LEADING word-tail ("ss Europe…" -> "Europe…").
   const firstSpace = t.indexOf(' ')

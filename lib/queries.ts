@@ -267,6 +267,11 @@ export const getVerifiedJobs = cache(async function getVerifiedJobs(limit = 8): 
       .eq('is_active', true)
       .not('eligibility', 'eq', 'restricted')
       .eq('is_open_to_africa', true)
+      // [PHASE-4F] Onsite jobs are not remote — they don't belong on a
+      // remote-for-Africa homepage. The hubs already apply this filter
+      // (getJobs); the homepage verified feed was missing it, letting ~125
+      // onsite roles surface as if they were remote.
+      .neq('is_remote', false)
     // [INCIDENT-FIX] Attach the REAL AI intelligence rows and the REAL queue
     // status. The ids came from job_ai_intelligence, so the AI row exists —
     // fabricating aiIntelligence:null + _queueStatus:'completed' made verified

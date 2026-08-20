@@ -38,6 +38,21 @@ function intelligenceState(row: any | null | undefined, queueStatus?: string | n
       return { status: "pending", label: "Pending", tone: "amber" }
   }
 }
+// [PHASE-4G] Truthfulness: a row only counts as "AI-analysed" when the model
+// actually produced reasoning. A real provider:model row where the AI ABSTAINED
+// on a dimension leaves that dimension's verdict to the regex heuristic
+// (e.g. the blanket "likely / 55%"). Presenting that as "Nexa Intelligence"
+// was the duplicate-score bug. Reasoning presence is the truthful signal.
+export function hasAIReasoning(intelligence: JobAIIntelligenceRow | null | undefined): boolean {
+  const r = (intelligence?.evidence_refs as any)?.reasoning
+  if (!r || typeof r !== 'object') return false
+  return Object.values(r).some((v) => typeof v === 'string' && (v as string).trim().length > 0)
+}
+export function hasAfricaAIReasoning(intelligence: JobAIIntelligenceRow | null | undefined): boolean {
+  const v = (intelligence?.evidence_refs as any)?.reasoning?.africa
+  return typeof v === 'string' && v.trim().length > 0
+}
+
 function africaFitLabel(elig: string | null | undefined, fallbackElig?: string | null): { label: string; tone: 'positive' | 'caution' | 'neutral' } {
   const effective = elig || fallbackElig || null
   switch (effective) {
@@ -349,7 +364,7 @@ export function OpportunityIntelligenceSummary({ intelligence, job, matchReasons
         </span>
       </div>
       <ul className="mt-2 grid gap-1.5 text-[11px] leading-snug">
-        <li className="flex gap-1.5"><Globe className="mt-[1px] h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /><span className={africa.tone === 'positive' ? 'text-foreground font-medium' : 'text-muted-foreground'}>{africa.label}{intelligence.africa_confidence ? ` • ${intelligence.africa_confidence}%` : ''}</span></li>
+        <li className="flex gap-1.5"><Globe className="mt-[1px] h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /><span className={africa.tone === 'positive' ? 'text-foreground font-medium' : 'text-muted-foreground'}>{africa.label}{hasAfricaAIReasoning(intelligence) ? (intelligence.africa_confidence ? ` • ${intelligence.africa_confidence}%` : '') : (intelligence.africa_eligibility && intelligence.africa_eligibility !== 'unknown' ? ' • auto-estimate' : '')}</span></li>
         <li className="flex gap-1.5"><Clock className="mt-[1px] h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /><span className="text-muted-foreground">{remote}{intelligence.timezone_requirements ? ` • ${intelligence.timezone_requirements}` : ''}{intelligence.remote_confidence ? ` • ${intelligence.remote_confidence}%` : ''}</span></li>
         <li className="flex gap-1.5"><Banknote className="mt-[1px] h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /><span className="text-muted-foreground">{salary.label}{intelligence.salary_confidence ? ` • ${intelligence.salary_confidence}%` : ''}</span></li>
         <li className="flex gap-1.5"><Building2 className="mt-[1px] h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /><span className={company.tone === 'positive' ? 'text-foreground' : 'text-muted-foreground'}>{company.label}{intelligence.company_confidence ? ` • ${intelligence.company_confidence}%` : ''}</span></li>
@@ -400,7 +415,7 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons, 
           <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${overallConf >= 70 ? 'border-green-500/20 bg-green-500/10 text-green-700 dark:text-green-300' : overallConf >= 40 ? 'border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'border-border bg-secondary text-muted-foreground'}`}>
             {(hasAI && overallConf > 0) ? `${overallConf}% overall confidence` : 'Pending – using feed fallback'}
           </span>
-          {intelligence?.last_verified_at && <span className="text-[11px] text-muted-foreground">Verified {new Date(intelligence.last_verified_at).toLocaleDateString()}</span>}
+          {intelligence?.last_verified_at && <span className="text-[11px] text-muted-foreground">{hasAIReasoning(intelligence) ? 'AI-verified' : 'Auto-estimated'} · {new Date(intelligence.last_verified_at).toLocaleDateString()}</span>}
         </div>
       </header>
 
@@ -412,8 +427,10 @@ export function OpportunityIntelligencePanel({ intelligence, job, matchReasons, 
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         <div className="rounded-md border border-border/60 bg-secondary/30 p-3">
           <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"><Globe className="h-3 w-3" aria-hidden /> Africa Fit</p>
-          <p className={`mt-1.5 text-sm font-medium ${africa.tone === 'positive' ? 'text-foreground' : africa.tone === 'caution' && (intelligence?.africa_eligibility === 'restricted' || job?.eligibility === 'restricted') ? 'text-amber-700 dark:text-amber-400' : 'text-foreground/80'}`}>{africa.label}</p>
-          {intelligence?.africa_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.africa_confidence}% confidence</p>}
+          <p className={`mt-1.5 text-sm font-medium ${africa.tone === 'positive' ? 'text-foreground' : africa.tone === 'caution' && (intelligence?.africa_eligibility === 'restricted' || job?.eligibility === 'restricted') ? 'text-amber-700 dark:text-amber-400' : 'text-foreground/80'}`}>{africa.label}{!hasAfricaAIReasoning(intelligence) && intelligence?.africa_eligibility && intelligence.africa_eligibility !== 'unknown' ? <span className="ml-1 text-[10px] font-normal text-muted-foreground">(auto-estimate)</span> : null}</p>
+          {hasAfricaAIReasoning(intelligence)
+            ? (intelligence?.africa_confidence != null && <p className="mt-1 text-[11px] text-muted-foreground">{intelligence.africa_confidence}% confidence (AI)</p>)
+            : (intelligence?.africa_confidence != null && intelligence.africa_eligibility !== 'unknown' && <p className="mt-1 text-[11px] text-muted-foreground">heuristic signal · not AI-verified</p>)}
           {intelligence?.country_restrictions && intelligence.country_restrictions.length > 0 && <p className="mt-1 text-[11px] text-muted-foreground">Restrictions: {intelligence.country_restrictions.join(', ')}</p>}
           {intelligence?.visa_sponsorship && intelligence.visa_sponsorship !== 'unknown' && <p className="mt-1 text-[11px] text-muted-foreground">Visa: {intelligence.visa_sponsorship.replace('_', ' ')}</p>}
           <ReasoningLine text={intelligence?.evidence_refs?.reasoning?.africa} />

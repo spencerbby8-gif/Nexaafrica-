@@ -10,6 +10,8 @@ export const maxDuration=300
  * creates a budget, runs discovery probes, or chains into the global queue. */
 export async function POST(req:Request) {
  if(!isPipelineAuthorized(req))return NextResponse.json({error:'Unauthorized'},{status:401})
+ const expected=req.headers.get('x-nexa-expected-commit')
+ if(expected && expected!==process.env.VERCEL_GIT_COMMIT_SHA)return NextResponse.json({error:'Deployment mismatch'},{status:409})
  const body=await req.json().catch(()=>null)
  if(!body || !/^[a-f0-9-]{36}$/i.test(body.run_id||''))return NextResponse.json({error:'Invalid run'},{status:400})
  const sb=createServiceClient()
@@ -18,4 +20,9 @@ export async function POST(req:Request) {
  const result=await withPilotBudget(run.id,()=>processAIQueue(Math.min(20,run.job_ids.length),{jobIds:run.job_ids,maintenance:false}))
  const {data:budget}=await sb.from('ai_pilot_runs').select('id,requests_reserved,max_requests,status').eq('id',run.id).single()
  return NextResponse.json({result,budget})
+}
+
+export async function GET(req:Request){
+ if(!isPipelineAuthorized(req))return NextResponse.json({error:'Unauthorized'},{status:401})
+ return NextResponse.json({commit:process.env.VERCEL_GIT_COMMIT_SHA||null,publication:'editorial_gate',version:'research-v4.4'})
 }

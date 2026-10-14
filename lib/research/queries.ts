@@ -2,7 +2,7 @@ import 'server-only'
 import {createServiceClient} from '@/lib/supabase/service'
 export async function getCompanyInvestigation(id:string,byJob=false){
  const sb=createServiceClient()
- let query=sb.from('company_investigations').select('id,job_id,company,created_at,completed_at,status,report,provider_model').eq('status','reviewed')
+ let query=sb.from('company_investigations').select('id,job_id,company,created_at,completed_at,status,report,provider_model,published_at,editorial_review').eq('status','reviewed').not('published_at','is',null)
  query=byJob?query.eq('job_id',id).order('created_at',{ascending:false}).limit(1):query.eq('id',id)
  const {data:rows,error}=await query
  if(error||!rows?.length)return null

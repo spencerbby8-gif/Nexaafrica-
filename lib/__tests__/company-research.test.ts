@@ -13,6 +13,7 @@ const report=()=>({identity:'unresolved',job_authenticity:'unresolved',reputatio
 describe('documented company research',()=>{
  it('holds machine-validated drafts until a separate editorial decision',()=>{
   expect(fs.readFileSync('lib/research/queries.ts','utf8')).toContain(".not('published_at','is',null)")
+  expect(fs.readFileSync('lib/research/queries.ts','utf8')).toContain(".not('publication_report','is',null)")
   expect(fs.readFileSync('lib/research/investigate.ts','utf8')).toContain("publication:'held_for_semantic_review'")
  })
  it('resolves only real retained excerpts without allowing fabricated quotations',()=>{

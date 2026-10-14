@@ -12,6 +12,7 @@ export type AdmissionDecision =
   | { admitted: false; reason: string; gate: string }
 
 import { evaluateLocationPolicy } from '@/lib/locationPolicy'
+import { roleRestriction } from '@/lib/eligibility-evidence'
 
 // Work-authorization restrictions that exclude African applicants
 const RESTRICTION_RE = /must be (?:based|located|residing|licensed|registered) in|work authorization for|authorized to work in the (?:us|uk|eu|canada)|citizens? of|residents? of (?:the )?(?:us|uk|eu|canada) only|(?:us|uk|eu) (?:only|residents only|citizens only|based only)|(?:based|located|residing|licensed|registered) in (?:the )?(?:us|usa|united states|uk|u\.?k\.?|united kingdom|canada|eu|europe|germany|france|spain|italy|netherlands|poland|sweden|norway|denmark|finland|belgium|austria|switzerland|ireland|portugal|australia|new zealand|india|singapore|japan|israel|uae|dubai|qatar|saudi arabia|turkey|brazil|mexico|argentina|colombia|chile|philippines|indonesia|vietnam|thailand|malaysia|south korea|taiwan|hong kong|latam|apac)|(?:based|located|residing|licensed|registered|board[- ]certified) in (?:the )?(?:state of )?(?:connecticut|california|texas|new york|florida|illinois|pennsylvania|ohio|georgia|north carolina|south carolina|michigan|new jersey|virginia|washington|arizona|massachusetts|tennessee|indiana|missouri|maryland|wisconsin|colorado|minnesota|alabama|louisiana|kentucky|oregon|oklahoma|utah|iowa|nevada|arkansas|mississippi|kansas|new mexico|nebraska|west virginia|idaho|hawaii|maine|new hampshire|montana|rhode island|delaware|south dakota|north dakota|alaska|vermont|wyoming)|(?:us|united states) (?:work )?(?:authorization|eligibility|citizenship|resident|remote|only)|(?:must )?(?:be|hold|have) (?:a )?(?:valid )?(?:us|state|medical|nursing|law|attorney|teaching) licen[cs]e|licensed to (?:work|practice) in (?:the )?(?:us|usa|united states|uk|canada)|(?:within|inside) the (?:us|united states|uk|united kingdom|eu|canada)|(?:candidates?|applicants?) (?:must be|need to be|should be|will be) (?:based|located|residing|in)|no (?:visa )?(?:sponsorship|sponsoring)|(?:cannot|cannot|can'?t|do not|don'?t) (?:provide )?(?:visa )?sponsorship|(?:work|employment) authorization (?:is )?required|(?:location|locations?)\s*[:—-]\s*(?:us|usa|united states|uk|u\.?k\.?|canada|eu)/i
@@ -32,6 +33,7 @@ interface AdmissionJob {
   source: string | null
   source_id: string | null
   expires_at: string | null
+  is_active?: boolean | null
 }
 
 /**
@@ -39,13 +41,14 @@ interface AdmissionJob {
  * Each check is O(1) or O(text-scan) — no network, no AI.
  */
 export function admit(job: AdmissionJob): AdmissionDecision {
+  if (job.is_active === false) return { admitted: false, reason: 'Listing is inactive', gate: 'inactive' }
   // 1. Africa eligibility (from ingest-time classifier)
   if (job.eligibility === 'restricted' || job.is_open_to_africa === false) {
     return { admitted: false, reason: 'Not open to African applicants', gate: 'africa_eligibility' }
   }
 
   // 2. Work authorization restrictions in description
-  if (RESTRICTION_RE.test(job.description_md)) {
+  if (roleRestriction(job.description_md)) {
     return { admitted: false, reason: 'Requires work authorization unavailable to African applicants', gate: 'work_authorization' }
   }
 

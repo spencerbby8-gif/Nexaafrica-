@@ -3,8 +3,8 @@ import { createClient } from '@/lib/supabase/server'
 import type { Job } from '@/lib/types'
 import { getAIIntelligenceWithQueueStatus, type JobWithAI } from '@/lib/ai/queries'
 
-const JOB_COLUMNS =
-  'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, salary_min, salary_max, salary_currency, salary_period, employment_type, intelligence, tags, is_remote, is_open_to_africa, eligibility, posted_at, created_at, expires_at, trust_score, trust_confidence, trust_signals, trust_version, is_flagged, flagged_reason, source, source_id'
+import { JOB_COLUMNS } from '@/lib/jobs/columns'
+import { isPublicJob } from '@/lib/jobs/public-policy'
 
 /**
  * Returns the set of job ids the current user has saved.
@@ -79,10 +79,10 @@ export async function getSavedJobs(): Promise<JobWithAI<Job>[]> {
   // exactly like the Home/Jobs feeds (getJobsWithAI).
   if (jobs.length === 0) return []
   try {
-    const { aiMap, queueStatus } = await getAIIntelligenceWithQueueStatus(jobs.map((j) => j.id))
-    return jobs.map((j) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null } as any))
+    const { aiMap, queueStatus, queueError } = await getAIIntelligenceWithQueueStatus(jobs.map((j) => j.id))
+    return jobs.map((j) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null, _queueError:queueError.get(j.id) || null } as any)).filter(j=>isPublicJob(j))
   } catch {
-    return jobs.map((j) => ({ ...j, aiIntelligence: null }))
+    return []
   }
 }
 

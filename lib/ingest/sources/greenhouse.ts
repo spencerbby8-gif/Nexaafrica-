@@ -20,6 +20,7 @@ interface GreenhouseJob {
   absolute_url: string
   content: string // HTML
   updated_at: string
+  first_published?: string | null
   location: { name: string } | null
   departments?: Array<{ name: string }>
   metadata?: Array<{ name: string; value: string | null }> | null
@@ -69,7 +70,7 @@ export async function fetchGreenhouse(
       is_remote: true,
       is_open_to_africa: isOpenToAfrica(eligibility),
       eligibility,
-      posted_at: parsePostedDate(j.updated_at),
+      posted_at: j.first_published ? parsePostedDate(j.first_published) : null,
       source: 'greenhouse',
       source_id: `greenhouse:${boardSlug}:${j.id}`,
       expires_at: null,

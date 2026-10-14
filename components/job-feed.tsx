@@ -5,21 +5,14 @@ import { JobCard } from '@/components/job-card'
 import { EmptyState } from '@/components/empty-state'
 import { useJobFeed } from '@/hooks/useJobFeed'
 import type { JobWithAI } from '@/lib/ai/queries'
-import type { Job } from '@/lib/types'
+import type { Job, JobFilters } from '@/lib/types'
 
 interface JobFeedProps {
   // New props for infinite scroll mode
   initialJobs?: JobWithAI<Job>[]
+  initialHasMore?: boolean
   initialCursor?: string | null
-  filters?: {
-    category?: string
-    country?: string
-    remote?: boolean
-    africa?: boolean
-    usd?: boolean
-    employmentType?: string
-    q?: string
-  }
+  filters?: JobFilters
   // Legacy props for static mode
   jobs?: (Job | JobWithAI<Job>)[]
   empty?: React.ReactNode
@@ -29,6 +22,7 @@ interface JobFeedProps {
 export function JobFeed({
   initialJobs,
   initialCursor,
+  initialHasMore,
   filters,
   jobs: staticJobs,
   empty,
@@ -40,6 +34,7 @@ export function JobFeed({
   const { jobs: infiniteJobs, isLoadingMore, error, hasMore, loadMore } = useJobFeed({
     initialJobs: initialJobs || [],
     initialCursor: initialCursor || null,
+    initialHasMore,
     filters,
     pageSize: 20,
   })
@@ -77,7 +72,7 @@ export function JobFeed({
     }
   }, [isInfiniteScrollMode, hasMore, isLoadingMore, loadMore])
   
-  if (jobs.length === 0) {
+  if (jobs.length === 0 && !(isInfiniteScrollMode && hasMore)) {
     return (
       empty ?? (
         <EmptyState

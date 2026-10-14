@@ -1,6 +1,7 @@
 import type { EmploymentType } from '@/lib/types'
 import type { JobIntelligence } from '@/lib/intelligence'
-import { evaluateLocationPolicy } from '@/lib/locationPolicy'
+import { evaluateLocationPolicy, AFRICA_LOCATION_RE } from '@/lib/locationPolicy'
+import { roleRestriction, globalHiringEvidence, africanHiringEvidence } from '@/lib/eligibility-evidence'
 import { createHash } from 'node:crypto'
 
 /**
@@ -333,26 +334,14 @@ const RESTRICTION = [
  */
 
 export function classifyEligibility(...fields: Array<string | null | undefined>): Eligibility {
-  const text = fields.filter(Boolean).join(' ').toLowerCase()
-  if (!text) return 'unknown'
-
-  const explicit = AFRICA_EXPLICIT.some((re) => re.test(text))
-  const restricted = RESTRICTION.some((re) => re.test(text))
-  const global = GLOBAL_REMOTE.some((re) => re.test(text))
-
-  // Explicit Africa mention wins — even over a region carve-out, since the
-  // employer has named Africa/an African country as welcome.
-  if (explicit) return 'explicit'
-  // Any restriction without explicit Africa support => restricted.
-  if (restricted) return 'restricted'
-  // Location lock — ONE shared rule with the admission gate (Phase 2,
-  // lib/locationPolicy.ts): Western restrictions AND the generic
-  // specific-location rule. A posting bound to a specific place without
-  // strong global outreach is restricted — never 'likely'.
-  const locVerdict = evaluateLocationPolicy(fields[0], undefined, text)
+  const text = fields.filter(Boolean).join(' ')
+  if (!text.trim()) return 'unknown'
+  if (roleRestriction(text)) return 'restricted'
+  const location = fields[0] || ''
+  if (AFRICA_LOCATION_RE.test(location) || africanHiringEvidence(text)) return 'explicit'
+  const locVerdict = evaluateLocationPolicy(location, undefined, text)
   if (locVerdict.bound) return 'restricted'
-  // Global remote with no restriction => moderate confidence.
-  if (global) return 'likely'
+  if (globalHiringEvidence(text)) return 'likely'
   return 'unknown'
 }
 

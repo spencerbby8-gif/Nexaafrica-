@@ -1,3 +1,4 @@
+import { getPublicJobsPage } from '@/lib/jobs/public-feed'
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { SiteShell } from '@/components/site-shell'
@@ -47,47 +48,15 @@ export default async function JobsPage({
     verifiedOnly: sp.verified === '1',
   }
   
-  // Fetch a wider window (50) so verified jobs have room to surface above
-  // the newest pending jobs. Display only 20 after verified-first sort.
-  const [jobs, categories] = await Promise.all([
-    getJobsWithAI({
-      ...filters,
-      limit: 50,
-    }),
-    getCategories(),
+  const [page, categories] = await Promise.all([
+    getPublicJobsPage({...filters,limit:20}), getCategories(),
   ])
-
-  // Intelligence Ranking Engine: rank verified + eligible + remote jobs
-  // first, then fill remaining slots with other jobs below.
-  const { rankAndFilter } = await import('@/lib/ranking')
-  const companies = Array.from(new Set(jobs.map((j: any) => j.company).filter(Boolean)))
-  const companyCounts = new Map<string, number>()
-  try {
-    const svc = (await import('@/lib/supabase/service')).createServiceClient()
-    const { data: cc } = await svc.from('jobs').select('company').in('company', companies.slice(0, 30)).eq('is_active', true)
-    for (const r of (cc || [])) companyCounts.set(r.company, (companyCounts.get(r.company) || 0) + 1)
-  } catch {}
-
-  const ranked = rankAndFilter(jobs as any, companyCounts)
-  const rankedJobs = ranked.map((r) => r.job as any)
-  const rankedIds = new Set(rankedJobs.map((j: any) => j.id))
-  const fillJobs = jobs.filter((j: any) => !rankedIds.has(j.id))
-
-  // Fill ONLY with eligible jobs (never restricted/not-Africa).
-  // Verified eligible jobs rank first; other eligible jobs fill below.
-  const eligibleFill = fillJobs.filter((j: any) =>
-    j.eligibility !== 'restricted' && j.is_open_to_africa !== false && j.is_remote !== false
-  )
-  const sortedJobs = filters.verifiedOnly
-    ? rankedJobs.slice(0, 20)
-    : [...rankedJobs, ...eligibleFill].slice(0, 20)
-
-  // Cursor continues from the OLDEST job in the full fetch (not the
-  // displayed slice) so pagination picks up where the initial window ended.
-  const initialCursor = jobs.length > 0 ? jobs[jobs.length - 1].posted_at : null
+  const jobs=page.jobs
+  const sortedJobs=jobs
+  const initialCursor=page.nextCursor
 
   const hasFilters = Boolean(
-    sp.q || sp.category || sp.employment_type || sp.remote || sp.africa || sp.usd,
+    sp.q || sp.category || sp.employment_type || sp.remote || sp.africa || sp.usd || sp.verified,
   )
 
   // Real, data-derived freshness signals using posted_at (real provider date) not created_at
@@ -179,6 +148,7 @@ export default async function JobsPage({
           <JobFeed
             initialJobs={sortedJobs}
             initialCursor={initialCursor}
+            initialHasMore={page.hasMore}
             filters={filters}
             empty={
               <EmptyState

@@ -228,12 +228,10 @@ export default async function RolePage({ params }: { params: Promise<Params> }) 
   // [STABILIZATION] Google Jobs eligibility claims cross-checked against the
   // AI verdict: 'restricted'/'unknown' AI never asserts Africa; the broad
   // African-country list requires deterministic explicit OR AI explicit/likely.
-  const aiElig = (aiIntelligence as any)?.africa_eligibility
-  const eligibleForAfrica = job.eligibility === 'explicit' || aiElig === 'explicit' || aiElig === 'likely'
-  const applicantLocations =
-    eligibleForAfrica && job.eligibility === 'explicit'
-      ? AFRICA_COUNTRIES.map((name) => ({ '@type': 'Country', name }))
-      : [{ '@type': 'Country', name: job.country || 'Worldwide' }]
+  // Never turn one African-country permission into continent-wide eligibility.
+  const applicantLocations = job.eligibility === 'explicit' && AFRICA_COUNTRIES.includes(job.country)
+    ? [{ '@type': 'Country', name: job.country }]
+    : undefined
 
   // [V2.1] Learning-layer data for the Company Intelligence panel.
   const [companyIntel, sourceIntel] = await Promise.all([

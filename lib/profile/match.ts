@@ -238,41 +238,10 @@ export async function getMatchedJobs(
 ): Promise<MatchedJob[]> {
   if (!signals.hasSignal) return []
 
-  const supabase = await createClient()
-  const { data, error } = await supabase
-    .from('jobs')
-    .select(
-      'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, employment_type, tags, is_remote, is_open_to_africa, eligibility, posted_at, created_at, expires_at',
-    )
-    .eq('is_active', true)
-    .neq('is_remote', false)
-    .not('eligibility', 'eq', 'restricted')
-    // [REGION-LOCK] Matching Your Experience stays verified-only AND never
-    // surfaces jobs the system marks as not open to Africa.
-    .eq('is_open_to_africa', true)
-    .order('posted_at', { ascending: false })
-    .limit(200)
-
-  if (error || !data) return []
-
-  // [STABILIZATION] Matching Your Experience uses the newest VERIFIED jobs
-  // only: AI rows from a real provider, never AI-restricted, never stale.
-  let aiMap = new Map<string, any>()
-  try {
-    const { getAIIntelligenceForJobs } = await import('@/lib/ai/queries')
-    aiMap = await getAIIntelligenceForJobs((data as Job[]).map((j) => j.id))
-  } catch {}
-
-  // [PHASE-2] Canonical verified contract (lib/ai/verified.ts).
-  const { isVerifiedIntelligence } = await import('@/lib/ai/verified')
-  const scored: MatchedJob[] = []
-  for (const j of data as Job[]) {
-    const ai = aiMap.get(j.id)
-    if (!isVerifiedIntelligence(ai)) continue // verified jobs only
-    if (ai?.africa_eligibility === 'restricted') continue // never restricted
-    const m = scoreJob(j, signals)
-    if (m) scored.push(m)
-  }
+  const { getPublicJobsPage } = await import('@/lib/jobs/public-feed')
+  const { jobs } = await getPublicJobsPage({limit:100,verifiedOnly:true})
+  const scored: MatchedJob[]=[]
+  for (const job of jobs) { const match=scoreJob(job,signals); if(match) scored.push(match) }
   // Stable sort: score desc, then newer first.
   scored.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score

@@ -1,3 +1,4 @@
+import { roleRestriction, globalHiringEvidence, africanHiringEvidence } from './eligibility-evidence'
 /**
  * [PHASE-2] ONE shared location-eligibility policy, used by both the ingest
  * classifier (lib/ingest/normalize.ts) and the pre-AI admission gate
@@ -51,15 +52,11 @@ const GLOBAL_COUNTRY_VALUES = new Set([
 ])
 
 export function hasStrongGlobalOutreach(descriptionText: string): boolean {
-  return (
-    STRONG_GLOBAL_RE.test(descriptionText) &&
-    !LOCAL_QUALIFIER_RE.test(descriptionText) &&
-    !FALSE_TOKEN_RE.test(descriptionText)
-  )
+  return !roleRestriction(descriptionText) && Boolean(globalHiringEvidence(descriptionText) || africanHiringEvidence(descriptionText))
 }
 
 function isGlobalPart(part: string): boolean {
-  return GLOBAL_LOCATION_RE.test(part)
+  return /^(?:worldwide|anywhere|remote|africa|emea|global|international|earth|world)$/i.test(part.trim())
 }
 
 function isAfricaPart(part: string): boolean {
@@ -82,6 +79,7 @@ export function evaluateLocationPolicy(
   countryField: string | null | undefined,
   descriptionText: string,
 ): LocationVerdict {
+  if (roleRestriction(descriptionText)) return { bound: true, kind: 'restricted_region' }
   const outreach = hasStrongGlobalOutreach(descriptionText)
 
   // ── Legacy Western restriction lock (behavior preserved) ─────────────

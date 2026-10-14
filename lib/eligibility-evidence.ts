@@ -19,6 +19,7 @@ const GLOBAL_HIRING = /\b(?:(?:hire|hiring|recruiting|recruit)\s+(?:remotely\s+|
 const AFRICAN_HIRING = /\b(?:hire|hiring|recruiting|recruit|open\s+to|accepting|welcome|candidates?\s+(?:in|from)|applicants?\s+(?:in|from)|(?:must\s+be\s+)?(?:based|located)\s+in|remote\s+(?:in|from)|work\s+from|location\s*:)\b[^.!?\n]{0,65}\b(?:africa|african|nigeria|kenya|ghana|south\s+africa|egypt|morocco|rwanda|uganda|ethiopia|tanzania|senegal|cameroon|zambia|zimbabwe|tunisia|algeria)\b/i
 
 export function globalHiringEvidence(text: string): string | null {
+  if (/\b(?:within|in)\s+(?:your|the)\s+country\s+of\s+employment\b/i.test(text)) return null
   if (roleRestriction(text) || /\banywhere\s+compan(?:y|ies)\b/i.test(text)) return null
   const match = GLOBAL_HIRING.exec(text)
   if (!match) return null

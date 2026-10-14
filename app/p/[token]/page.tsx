@@ -1,7 +1,8 @@
 import type { Metadata } from "next"
 import { notFound } from "next/navigation"
 import { createServiceClient as createPublicClient } from "@/lib/supabase/service"
-import { ProfileView } from "@/components/profile-view"
+import { toSharedProfile } from "@/lib/profile/public"
+import { SharedProfile } from "@/components/shared-profile"
 import { SiteShell } from "@/components/site-shell"
 import { siteUrl } from "@/lib/site"
 
@@ -20,7 +21,7 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
     alternates: { canonical: `/p/${token}` },
     openGraph: {
       title: "Remote-ready profile on Nexa",
-      description: "Verified for global remote hiring",
+      description: "Shared professional profile",
       url: siteUrl(`/p/${token}`),
       type: "profile",
     },
@@ -36,7 +37,7 @@ export default async function SharedProfilePage({ params }: { params: Promise<Pa
   const supabase = createPublicClient()
   const { data: profile, error } = await supabase
     .from("profiles")
-    .select("*")
+    .select("id, full_name, country, headline, summary")
     .eq("share_token", token)
     .eq("status", "ready")
     .maybeSingle()
@@ -45,7 +46,7 @@ export default async function SharedProfilePage({ params }: { params: Promise<Pa
 
   const [skillsRes, expRes] = await Promise.all([
     supabase.from("profile_skills").select("name").eq("profile_id", profile.id).order("name"),
-    supabase.from("profile_experience").select("*").eq("profile_id", profile.id).order("position"),
+    supabase.from("profile_experience").select("title,company,start_date,end_date,description,position").eq("profile_id", profile.id).order("position"),
   ])
 
   const skills = (skillsRes.data ?? []).map((r: any) => r.name as string)
@@ -58,7 +59,7 @@ export default async function SharedProfilePage({ params }: { params: Promise<Pa
           Shared profile • View only
         </div>
       </div>
-      <ProfileView profile={profile as any} skills={skills} experience={experience} email={null} />
+      <SharedProfile profile={toSharedProfile(profile)} skills={skills} experience={experience} />
     </SiteShell>
   )
 }

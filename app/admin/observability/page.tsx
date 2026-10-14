@@ -1,6 +1,5 @@
+import { requireAdmin } from "@/lib/server/admin"
 import { createServiceClient } from "@/lib/supabase/service"
-import { createClient } from "@/lib/supabase/server"
-import { redirect } from "next/navigation"
 import { SiteShell } from "@/components/site-shell"
 
 export const dynamic = "force-dynamic"
@@ -14,9 +13,7 @@ export const metadata = { title: "Observability — Admin", robots: { index: fal
  * All numbers come straight from the database — nothing fabricated.
  */
 export default async function ObservabilityPage() {
-  const authClient = await createClient()
-  const { data: { user } } = await authClient.auth.getUser()
-  if (!user) redirect("/sign-in?next=/admin/observability")
+  await requireAdmin("/admin/observability")
 
   const sb = createServiceClient()
 

@@ -1,18 +1,13 @@
+import { requireAdmin } from "@/lib/server/admin"
 import { createServiceClient } from "@/lib/supabase/service"
-import { createClient } from "@/lib/supabase/server"
-import { redirect } from "next/navigation"
 import { SiteShell } from "@/components/site-shell"
 import { calculateSourceHealth } from "@/lib/ingest/sourceHealth"
 
 export const dynamic = "force-dynamic"
 export const metadata = { title: "Refresh Admin — Nexa", robots: { index: false, follow: false } }
 
-const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "spencerbby8@gmail.com").split(",").map(s=>s.trim().toLowerCase()).filter(Boolean)
-
 export default async function RefreshAdminPage() {
-  const authClient = await createClient()
-  const { data: { user } } = await authClient.auth.getUser()
-  if (!user) redirect("/sign-in?next=/admin/refresh")
+  await requireAdmin("/admin/refresh")
 
   const supabase = createServiceClient()
 

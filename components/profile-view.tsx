@@ -67,14 +67,14 @@ function readinessGuidance(args: {
   if (hasStrongSummary && hasMinSkills && hasMinExperience) {
     return {
       label: "Elite • Remote-ready",
-      hint: exp >= 3 ? "Top 10% structure for global hiring" : "Add one more role and you're top 5%",
+      hint: exp >= 3 ? "Includes a summary, skills, and work history" : "Add another relevant role for more detail",
       level: 100,
     }
   }
   if (hasMinSkills && hasMinExperience) {
     return {
       label: "Strong • Global format",
-      hint: "You're above 70% of profiles. Longer summary = elite",
+      hint: "Your profile includes skills and experience; a clear summary adds context",
       level: 75,
     }
   }
@@ -132,6 +132,22 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
     [profile.summary, skills, experience],
   )
 
+  const [activeTab, setActiveTab] = useState<"you" | "recruiter">("you")
+  const [showBeforeAfter, setShowBeforeAfter] = useState(false)
+
+  const ats = useMemo(() => {
+    return calculateAtsScore(
+      {
+        headline: profile.headline || "",
+        summary: profile.summary || "",
+        skills,
+        experience,
+      },
+      (profile as any).raw_cv_text || "",
+    )
+  }, [profile.headline, profile.summary, skills, experience, (profile as any).raw_cv_text])
+
+
   if (editing) {
     return (
       <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
@@ -168,20 +184,6 @@ export function ProfileView({ profile, skills, experience, email }: Props) {
     } catch {}
   }
 
-  const [activeTab, setActiveTab] = useState<"you" | "recruiter">("you")
-  const [showBeforeAfter, setShowBeforeAfter] = useState(false)
-
-  const ats = useMemo(() => {
-    return calculateAtsScore(
-      {
-        headline: profile.headline || "",
-        summary: profile.summary || "",
-        skills,
-        experience,
-      },
-      (profile as any).raw_cv_text || "",
-    )
-  }, [profile.headline, profile.summary, skills, experience, (profile as any).raw_cv_text])
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6">

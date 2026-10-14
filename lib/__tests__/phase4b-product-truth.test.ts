@@ -62,18 +62,18 @@ describe('company legitimacy reconciliation (UI truth)', () => {
 describe('engine coverage repairs', () => {
   it('regex-only outcomes are treated as provider failures (retried, never finalized)', () => {
     const engine = read('lib/ai/engine.ts')
-    const m = engine.match(/const allProvidersFailed = [^\n]+/)
-    expect(m).toBeTruthy()
-    expect(m![0]).toContain('regex-extracted')
-    expect(m![0]).toContain('verifyJobReal-threw')
-    expect(m![0]).toContain('no-ai-providers')
+    expect(engine).toContain('!isProviderResult(intelligence.modelVersion)')
+    expect(engine).toContain('prior intelligence retained')
+    const policy=read('lib/ai/queue-policy.ts')
+    expect(policy).toContain('regex|no-ai|failed|verifyJobReal')
   })
 
   it('repair sweep re-queues junk-marker rows for eligible jobs', () => {
     const engine = read('lib/ai/engine.ts')
-    expect(engine).toContain('model_version.like.regex-extracted%')
-    expect(engine).toContain('model_version.eq.verifyJobReal-threw')
-    // still restricted to public-eligible jobs (no reject-loop regression)
-    expect(engine).toContain('.in("jobs.eligibility", ["explicit", "likely"])')
+    expect(engine).toContain("rpc('requeue_stale_ai'")
+    const sql=read('supabase/migrations/20261014000200_ai_attempt_integrity.sql')
+    expect(sql).toContain("a.model_version LIKE 'regex%'")
+    expect(sql).toContain("a.model_version='verifyJobReal-threw'")
+    expect(sql).toContain("j.eligibility IN('explicit','likely')")
   })
 })

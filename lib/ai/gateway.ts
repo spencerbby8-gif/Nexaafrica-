@@ -1,3 +1,4 @@
+import { reserveModelRequest, finishModelRequest } from './request-budget'
 /**
  * AI Gateway — Single entry point for every AI request
  * Supports automatic routing, retries, fallback, health checks, cost tracking
@@ -23,6 +24,7 @@ export interface AIResponse {
 }
 
 export interface ProviderCallDiag {
+  requestId?: string;
   provider: string; model: string; event: 'attempt' | 'success' | 'failure'
   httpStatus?: number; errorCode?: string; errorMessage?: string; errorBody?: string
   retryCount: number; durationMs?: number; promptLen?: number; responseLen?: number
@@ -48,6 +50,21 @@ function gwLog(jobId: string | undefined, agentId: string, event: string, data: 
 }
 
 export async function callProvider(providerId: ProviderId, req: AIRequest, retryCount: number, diag: ProviderCallDiag[]): Promise<AIResponse> {
+  const cfg=getProvider(providerId)
+  if(!cfg?.enabled || !process.env[cfg.envKey]) throw new Error('Provider unavailable')
+  const reservation=await reserveModelRequest({jobId:req.jobId,agentId:req.agentId,provider:providerId,model:cfg.model})
+  const start=diag.length
+  try {
+    const response=await callProviderTransport(providerId,req,retryCount,diag)
+    await finishModelRequest(reservation,'success')
+    return response
+  } catch(error) {
+    await finishModelRequest(reservation,'failure',error instanceof Error?error.name:'Error')
+    throw error
+  } finally { for(let i=start;i<diag.length;i++) diag[i].requestId=reservation.id }
+}
+
+async function callProviderTransport(providerId: ProviderId, req: AIRequest, retryCount: number, diag: ProviderCallDiag[]): Promise<AIResponse> {
   const cfg = getProvider(providerId)
   if (!cfg) throw new Error(`Provider ${providerId} not found`)
   if (!cfg.enabled) throw new Error(`Provider ${providerId} is disabled`)

@@ -1,3 +1,4 @@
+import {normalizeProviderText} from '@/lib/ai/provider-text'
 import {describe,it,expect} from 'vitest'
 import {isPublicAddress,researchURL} from '@/lib/research/public-fetch'
 import {validateResearchReport,type CitableSource} from '@/lib/research/contract'
@@ -7,6 +8,11 @@ const source:CitableSource={id,source_kind:'official',status:'fetched',content:'
 const paragraph={topic:'identity',claim_type:'assessment',text:'The site describes a trading education service; independent employer identity is unresolved.',citations:[{source_id:id,quote:'Acme offers a paid trading education community.'}]}
 const report=()=>({identity:'unresolved',job_authenticity:'unresolved',reputation:'unresolved',paragraphs:[paragraph,{...paragraph,topic:'job'}],limitations:['Payroll terms have not been independently established.','This is a limited public-web investigation, not a background check.']})
 describe('documented company research',()=>{
+ it('normalizes Cloudflare object responses and rejects empty provider output',()=>{
+  expect(JSON.parse(normalizeProviderText({identity:'unresolved'}))).toEqual({identity:'unresolved'})
+  expect(normalizeProviderText([{type:'text',text:'hello'}])).toBe('hello')
+  expect(()=>normalizeProviderText(null)).toThrow()
+ })
  it('blocks private, loopback, link-local and disguised IP destinations',()=>{
   for(const ip of ['127.0.0.1','10.0.0.1','169.254.169.254','172.20.0.1','192.168.0.1','::1','::ffff:127.0.0.1','fc00::1','fe80::1'])expect(isPublicAddress(ip)).toBe(false)
   expect(isPublicAddress('8.8.8.8')).toBe(true)

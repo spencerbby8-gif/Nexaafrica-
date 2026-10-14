@@ -1,3 +1,4 @@
+import { normalizeProviderText } from './provider-text'
 import { reserveModelRequest, finishModelRequest } from './request-budget'
 /**
  * AI Gateway — Single entry point for every AI request
@@ -56,8 +57,9 @@ export async function callProvider(providerId: ProviderId, req: AIRequest, retry
   const start=diag.length
   try {
     const response=await callProviderTransport(providerId,req,retryCount,diag)
+    const text=normalizeProviderText(response.text)
     await finishModelRequest(reservation,'success')
-    return response
+    return {...response,text}
   } catch(error) {
     await finishModelRequest(reservation,'failure',error instanceof Error?error.name:'Error')
     throw error

@@ -1,3 +1,4 @@
+import {synthesizeResearch} from '@/lib/research/synthesis'
 import {normalizeProviderText} from '@/lib/ai/provider-text'
 import {describe,it,expect} from 'vitest'
 import {isPublicAddress,researchURL} from '@/lib/research/public-fetch'
@@ -8,6 +9,13 @@ const source:CitableSource={id,source_kind:'official',status:'fetched',content:'
 const paragraph={topic:'identity',claim_type:'assessment',text:'The site describes a trading education service; independent employer identity is unresolved.',citations:[{source_id:id,quote:'Acme offers a paid trading education community.'}]}
 const report=()=>({identity:'unresolved',job_authenticity:'unresolved',reputation:'unresolved',paragraphs:[paragraph,{...paragraph,topic:'job'}],limitations:['Payroll terms have not been independently established.','This is a limited public-web investigation, not a background check.']})
 describe('documented company research',()=>{
+ it('retains failed drafts and performs only bounded repairs without weakening citation checks',async()=>{
+  const retained:any[]=[];let n=0
+  const generate=async()=>({response:{text:n++===0?'{}':JSON.stringify(report()),provider:'mistral',model:'test'},diag:[]} as any)
+  const result=await synthesizeResearch('test',[source],'Acme',generate,async attempts=>{retained.push(JSON.parse(JSON.stringify(attempts)))})
+  expect(n).toBe(2);expect(retained[0][0].validation_error).toBeTruthy();expect(result.report.identity).toBe('unresolved')
+  n=0;await expect(synthesizeResearch('test',[source],'Acme',async()=>{n++;return {response:{text:'{}',provider:'mistral',model:'test'},diag:[]} as any},async()=>{})).rejects.toThrow('three bounded attempts');expect(n).toBe(3)
+ })
  it('normalizes Cloudflare object responses and rejects empty provider output',()=>{
   expect(JSON.parse(normalizeProviderText({identity:'unresolved'}))).toEqual({identity:'unresolved'})
   expect(normalizeProviderText([{type:'text',text:'hello'}])).toBe('hello')

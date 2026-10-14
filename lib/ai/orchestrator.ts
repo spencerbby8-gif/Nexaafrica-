@@ -61,13 +61,13 @@ export async function orchestrate(req: AIRequest): Promise<GatewayResult> {
   await ensureHealthSynced()
 
   const taskType = detectTaskType(req.agentId)
-  const ranked = routeTaskAll(taskType)
+  const ranked = routeTaskAll(taskType).filter(d=>!req.allowedProviders || req.allowedProviders.includes(d.provider.id))
 
   if (ranked.length === 0) {
     // Force a health re-sync and retry once
     lastHealthSync = 0
     await ensureHealthSynced()
-    const retryRanked = routeTaskAll(taskType)
+    const retryRanked = routeTaskAll(taskType).filter(d=>!req.allowedProviders || req.allowedProviders.includes(d.provider.id))
     if (retryRanked.length === 0) {
       const err: any = new Error("All providers unhealthy — no routing candidates")
       err.diag = []

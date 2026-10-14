@@ -1,3 +1,5 @@
+import {CompanyResearchPanel} from '@/components/company-research-panel'
+import {getCompanyInvestigation} from '@/lib/research/queries'
 import { cache } from 'react'
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
@@ -234,9 +236,10 @@ export default async function RolePage({ params }: { params: Promise<Params> }) 
     : undefined
 
   // [V2.1] Learning-layer data for the Company Intelligence panel.
-  const [companyIntel, sourceIntel] = await Promise.all([
+  const [companyIntel, sourceIntel, companyInvestigation] = await Promise.all([
     getCompanyIntel(job.company),
     getSourceIntel(job.source),
+    getCompanyInvestigation(job.id,true),
   ])
 
   // Determine apply gate state.
@@ -312,7 +315,7 @@ export default async function RolePage({ params }: { params: Promise<Params> }) 
       />
 
       <div className="mx-auto mt-6 max-w-6xl px-4 sm:px-6">
-        <CompanyIntelPanel companyIntel={companyIntel} sourceIntel={sourceIntel} company={job.company} />
+        <CompanyResearchPanel investigation={companyInvestigation} />
       </div>
     </SiteShell>
   )

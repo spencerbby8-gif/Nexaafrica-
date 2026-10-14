@@ -257,7 +257,7 @@ function regexAfrica(text: string, job: Job): Partial<AIResp> {
   }
   // EMEA / global outreach → likely.
   if (globalHiringEvidence(text)) {
-    return { africa_eligibility: "likely", africa_confidence: 55, africa_evidence: extractCtx(text, /emea|worldwide|global|anywhere/i) }
+    return { africa_eligibility: "likely", africa_confidence: 55, africa_evidence: globalHiringEvidence(text) }
   }
   return {}
 }
@@ -468,6 +468,12 @@ export function enforceTruthfulness(merged: AIResp, opts: { job: Job; truth: str
     out.africa_eligibility = 'unknown'; out.africa_confidence = 0; out.africa_evidence = null; out.africa_reasoning = null
   } else if (out.africa_eligibility === 'likely' && !globalHiringEvidence(jobTruth) && !africanHiringEvidence(jobTruth)) {
     out.africa_eligibility = 'unknown'; out.africa_confidence = 0; out.africa_evidence = null; out.africa_reasoning = null
+  }
+
+  // The cited passage itself must support the positive eligibility verdict.
+  if ((out.africa_eligibility === 'explicit' || out.africa_eligibility === 'likely') &&
+      !(africanHiringEvidence(out.africa_evidence || '') || globalHiringEvidence(out.africa_evidence || ''))) {
+    out.africa_eligibility='unknown';out.africa_confidence=0;out.africa_evidence=null;out.africa_reasoning=null
   }
 
   // 4) Remote: metadata-backed stays; text-required otherwise
@@ -689,8 +695,8 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
   // AI overrides ONLY when AI returns non-unknown/non-null values
   // This ensures regex-extracted salary is preserved when AI returns null
   if (aiUsed) {
-    // Africa: AI overrides only if not "unknown"
-    if (aiResp.africa_eligibility !== "unknown") {
+    // The model's abstention is not overwritten by an affirmative regex guess.
+    {
       merged.africa_eligibility = aiResp.africa_eligibility
       merged.africa_confidence = aiResp.africa_confidence
       merged.africa_evidence = aiResp.africa_evidence

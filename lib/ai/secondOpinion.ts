@@ -45,43 +45,7 @@ export async function getSecondOpinion(
   const check = shouldVerify(firstResult.ai)
   if (!check.needed) return { used: false, auditNote: check.reason }
 
-  // Build verification prompt
-  const prompt = `Verify this job intelligence. Fix errors, strengthen evidence, reduce unknowns.
-  
-Previous analysis (provider: ${firstResult.modelVersion}):
-${JSON.stringify(firstResult.ai, null, 1).slice(0, 3000)}
-
-Return improved JSON with the SAME structure. Keep correct values. Fix weak/uncertain ones.
-Quote verbatim evidence from the description. Never invent facts. Use \"unknown\" only when
-evidence is truly missing.`
-
-  try {
-    const second = await orchestrate({
-      prompt, agentId: "verifier:second-opinion", jobId: job.id,
-      systemInstruction: "Verify and improve job intelligence. Evidence-based. Never guess. Output only JSON.",
-      temperature: 0.15, maxTokens: 1500,
-    })
-
-    const m = second.response.text.match(/\{[\s\S]*\}/)
-    if (!m) return { used: true, auditNote: `second opinion requested but unparseable from ${second.response.provider}` }
-
-    const reconciled = JSON.parse(m[0])
-    // Persist the dual-provider audit
-    try {
-      const supabase = createServiceClient()
-      await supabase.from("ai_provider_log").insert([{
-        agent_id: "second-opinion", provider: second.response.provider,
-        model: second.response.model, event: "success",
-        retry_count: 0, duration_ms: second.response.latencyMs, fallback_used: second.fallbackUsed,
-      }, {
-        agent_id: "second-opinion", provider: firstResult.modelVersion.split(":")[0],
-        model: firstResult.modelVersion, event: "success",
-        retry_count: 0, duration_ms: 0, fallback_used: false,
-      }]).then(()=>{},()=>{})
-    } catch {}
-
-    return { used: true, provider: second.response.provider, reconciled, auditNote: `verified by ${second.response.provider}` }
-  } catch (e: any) {
-    return { used: false, auditNote: `second opinion failed: ${e?.message?.slice(0,100) || "unknown"}` }
-  }
+  // Disabled until the second reviewer receives the same immutable source packet,
+  // passes quote/eligibility validation and records its own provider/model history.
+  return {used:false,auditNote:'Second opinion unavailable: source-grounded reconciliation not implemented'}
 }

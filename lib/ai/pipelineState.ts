@@ -40,13 +40,16 @@ export function isRuleBasedModel(mv: string | null | undefined): boolean {
 }
 
 export function pipelineState(input: PipelineStateInput): PipelineState {
-  const mv = input.modelVersion || ""
-  if (isVerifiedModel(mv)) return "verified"
-  if (isRuleBasedModel(mv)) return "rule_based"
-
-  const qs = input.queueStatus || null
-  const err = (input.queueError || "").toLowerCase()
-  const isRejected = err.startsWith("rejected") || err.startsWith("skipped")
+  const mv=input.modelVersion || ''
+  const qs=input.queueStatus || null
+  const err=(input.queueError || '').toLowerCase()
+  const isRejected=err.startsWith('rejected') || err.startsWith('skipped')
+  if(isRejected || qs==='rejected')return 'rejected'
+  if(qs==='failed')return 'failed'
+  if(qs==='processing')return 'processing'
+  if(qs==='pending')return input.nextRetryAt && Date.parse(input.nextRetryAt)>Date.now()?'retrying':'queued'
+  if(isVerifiedModel(mv))return 'verified'
+  if(isRuleBasedModel(mv))return 'rule_based'
 
   switch (qs) {
     case "failed":

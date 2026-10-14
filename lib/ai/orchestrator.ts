@@ -132,13 +132,7 @@ async function executeRoutingChain(
 
     if (attempt > 0) fallbackUsed = true
 
-    diag.push({
-      provider: cfg.id,
-      model: cfg.model,
-      event: "attempt",
-      retryCount: attempt,
-      promptLen: req.prompt.length,
-    })
+
 
     try {
       const response = await rawCallProvider(cfg.id, req, attempt, diag)
@@ -179,15 +173,9 @@ async function executeRoutingChain(
       // Record failure in smart router (triggers cooldown + re-scoring)
       recordRouterFailure(cfg.id, errMsg)
 
-      diag.push({
-        provider: cfg.id,
-        model: cfg.model,
-        event: "failure",
-        errorMessage: errMsg.slice(0, 300),
-        retryCount: attempt,
-        durationMs: Date.now() - startTime,
-        promptLen: req.prompt.length,
-      })
+      // Transport owns attempt/outcome telemetry. Do not count routing failures twice.
+      if (e?.name === 'PilotBudgetError') { e.diag=diag; throw e }
+
 
       console.log(JSON.stringify({
         scope: "orchestrator",

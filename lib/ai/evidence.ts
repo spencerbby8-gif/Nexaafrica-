@@ -99,22 +99,22 @@ export async function collectPageEvidence(sb: any, job: Job): Promise<{ state: E
   const atsHosts = ["boards.greenhouse.io", "jobs.ashbyhq.com", "jobs.lever.co", "apply.workable.com", "jobs.smartrecruiters.com", "recruitee.com", "comeet.com", "personio.com"]
   let host = ""
   try { host = new URL(job.apply_url).hostname } catch {}
-  const isAts = atsHosts.some((h) => host.includes(h))
+  const isAts = atsHosts.some((h) => host === h || host.endsWith("."+h))
 
   // 1) ATS API / ATS-page evidence (from ingest) — always available when desc exists.
   if (job.description_md && job.description_md.length >= 100) {
     await upsertEvidence(sb, job.id, {
-      evidence_type: "ats_api",
+      evidence_type: "stored_description",
       source_url: job.apply_url,
-      source_kind: "ats_api",
-      status: "verified",
-      http_status: 200,
+      source_kind: isAts ? "stored_ats_description" : "stored_feed_description",
+      status: "partial",
+      http_status: null,
       content_hash: sha256(job.description_md),
       excerpt: job.description_md.replace(/\s+/g, " ").slice(0, 800),
       detail: { bytes: job.description_md.length, via: isAts ? "ats_page" : "feed" },
       fetched_at: new Date().toISOString(),
     })
-    refs.push({ type: "ats_api", sourceKind: "ats_api", url: job.apply_url, hash: sha256(job.description_md), status: "verified", httpStatus: 200, excerptLen: job.description_md.length })
+    refs.push({ type: "stored_description", sourceKind: isAts ? "stored_ats_description" : "stored_feed_description", url: job.apply_url, hash: sha256(job.description_md), status: "partial", httpStatus: null, excerptLen: job.description_md.length })
   }
 
   // 2) Live page fetch (public source) — real evidence with honest status.

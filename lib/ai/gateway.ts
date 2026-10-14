@@ -10,6 +10,7 @@ import type { ProviderId } from './providers/types'
 import { createHash } from "crypto"
 
 export interface AIRequest {
+  allowedProviders?: ProviderId[];
   prompt: string
   systemInstruction?: string
   responseSchema?: any

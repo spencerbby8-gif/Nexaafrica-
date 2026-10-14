@@ -34,5 +34,6 @@ describe('real production eligibility failures', () => {
     expect(classifyEligibility('Remote','This is a globally remote role.')).toBe('likely')
     expect(classifyEligibility('Remote','Location: Remote (EMEA)')).toBe('likely')
     expect(classifyEligibility('Remote','Our global platform serves customers worldwide.')).toBe('unknown')
+    expect(classifyEligibility('Worldwide','Work from anywhere - enjoy remote work within the country of employment. Candidates must reside and have the legal right to work in the locations mentioned.')).toBe('unknown')
   })
 })

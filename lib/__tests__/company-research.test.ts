@@ -1,3 +1,4 @@
+import {researchExcerptPacket} from '@/lib/research/excerpts'
 import {synthesizeResearch} from '@/lib/research/synthesis'
 import {normalizeProviderText} from '@/lib/ai/provider-text'
 import {describe,it,expect} from 'vitest'
@@ -9,6 +10,11 @@ const source:CitableSource={id,source_kind:'official',status:'fetched',content:'
 const paragraph={topic:'identity',claim_type:'assessment',text:'The site describes a trading education service; independent employer identity is unresolved.',citations:[{source_id:id,quote:'Acme offers a paid trading education community.'}]}
 const report=()=>({identity:'unresolved',job_authenticity:'unresolved',reputation:'unresolved',paragraphs:[paragraph,{...paragraph,topic:'job'}],limitations:['Payroll terms have not been independently established.','This is a limited public-web investigation, not a background check.']})
 describe('documented company research',()=>{
+ it('resolves only real retained excerpts without allowing fabricated quotations',()=>{
+  const {packet,resolve}=researchExcerptPacket([source]);const raw=report();raw.paragraphs=raw.paragraphs.map(p=>({...p,citations:[{source_id:'S1',excerpt_id:'E1'} as any]}))
+  const resolved:any=resolve(raw);expect(resolved.paragraphs[0].citations[0]).toEqual({source_id:source.id,quote:packet[0].excerpts[0].text})
+  raw.paragraphs[0].citations[0]={source_id:'S1',excerpt_id:'E999'} as any;expect(()=>resolve(raw)).toThrow('Unknown retained excerpt')
+ })
  it('retains failed drafts and performs only bounded repairs without weakening citation checks',async()=>{
   const retained:any[]=[];let n=0
   const generate=async()=>({response:{text:n++===0?'{}':JSON.stringify(report()),provider:'mistral',model:'test'},diag:[]} as any)

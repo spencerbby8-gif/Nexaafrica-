@@ -12,20 +12,17 @@ export default async function AIControlPlanePage() {
 
   const supabase = createServiceClient()
 
-  const [queueRes, aiCount, reportsRes, trustAuditRes] = await Promise.all([
-    supabase.from("ai_processing_queue").select("status, count").order("status"),
+  const [aiCount, reportsRes, trustAuditRes] = await Promise.all([
     supabase.from("job_ai_intelligence").select("id", { count: "exact", head: true }),
     supabase.from("job_reports").select("id, reason, status, created_at, jobs!inner(title, company)").eq("status","pending").limit(10),
     supabase.from("trust_audit_log").select("id, action, reason, created_at").order("created_at", { ascending: false }).limit(20),
   ])
 
-  // Get queue stats
-  const { data: queueStats } = await supabase.from("ai_processing_queue").select("status")
-  const queueByStatus: Record<string, number> = {}
-  for (const r of (queueStats as any) || []) {
-    const s = (r as any).status
-    queueByStatus[s] = (queueByStatus[s] || 0) + 1
-  }
+  // Exact server counts; never read a nonexistent count column or a truncated row window.
+  const statuses=['pending','processing','completed','failed'] as const
+  const counts=await Promise.all(statuses.map(status=>supabase.from('ai_processing_queue').select('id',{count:'exact',head:true}).eq('status',status)))
+  const queueByStatus:Record<string,number>={}
+  counts.forEach((result,i)=>{if(result.error)throw new Error('Queue counts unavailable');queueByStatus[statuses[i]]=result.count ?? 0})
 
   const providerHealth = getAllProviderHealth()
   const registry = AI_REGISTRY
@@ -43,8 +40,8 @@ export default async function AIControlPlanePage() {
             <p className="mt-1 text-[11px] text-zinc-500">Queue pending: {queueByStatus['pending'] || 0} • Failed: {queueByStatus['failed'] || 0}</p>
           </div>
           <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-            <p className="text-[11px] uppercase tracking-wider text-zinc-500">Providers Healthy</p>
-            <p className="mt-2 text-2xl font-semibold">{providerHealth.filter(p=>p.isHealthy).length} / {providerHealth.length}</p>
+            <p className="text-[11px] uppercase tracking-wider text-zinc-500">Providers observed healthy in this instance</p>
+            <p className="mt-2 text-2xl font-semibold">{providerHealth.filter(p=>p.isHealthy && p.totalRequests > 0).length} / {providerHealth.length}</p>
             <p className="mt-1 text-[11px] text-zinc-500">Fallback ready: {providerHealth.filter(p=>!p.isHealthy).length} failing</p>
           </div>
           <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
@@ -57,11 +54,11 @@ export default async function AIControlPlanePage() {
         <div className="mt-8 rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
           <h2 className="text-[13px] font-semibold uppercase tracking-wider">Provider Health, Fallbacks, Cost Tracking</h2>
           <div className="mt-4 overflow-x-auto">
+            <p className="mb-3 text-xs text-zinc-400">These are per-instance routing observations, not proof that every configured provider has passed live inference.</p>
             <table className="w-full text-[11px]">
               <thead className="text-[10px] text-zinc-500 uppercase">
                 <tr className="border-b border-zinc-800">
                   <th className="text-left py-2">Provider</th>
-                  <th className="text-left py-2">Model</th>
                   <th className="text-left py-2">Healthy</th>
                   <th className="text-left py-2">Fail Rate</th>
                   <th className="text-left py-2">Consec Fail</th>
@@ -75,7 +72,7 @@ export default async function AIControlPlanePage() {
                 {providerHealth.map((p:any)=>(
                   <tr key={p.id} className="border-b border-zinc-800/50">
                     <td className="py-2 font-medium">{p.id}</td>
-                    <td className="py-2"><span className={`px-2 py-0.5 rounded-full text-[10px] ${p.isHealthy?'bg-green-500/10 text-green-400':'bg-red-500/10 text-red-400'}`}>{p.isHealthy?'healthy':'failing'}</span></td>
+                    <td className="py-2"><span className={`px-2 py-0.5 rounded-full text-[10px] ${p.isHealthy?'bg-green-500/10 text-green-400':'bg-red-500/10 text-red-400'}`}>{p.totalRequests===0?'unobserved':p.isHealthy?'healthy':'failing'}</span></td>
                     <td className="py-2">{p.failureRate}%</td>
                     <td className="py-2">{p.consecutiveFailures}</td>
                     <td className="py-2">{p.avgLatencyMs ? `${p.avgLatencyMs}ms` : '-'}</td>

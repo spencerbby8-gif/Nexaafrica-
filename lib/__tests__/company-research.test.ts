@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import {researchExcerptPacket} from '@/lib/research/excerpts'
 import {synthesizeResearch} from '@/lib/research/synthesis'
 import {normalizeProviderText} from '@/lib/ai/provider-text'
@@ -10,6 +11,10 @@ const source:CitableSource={id,source_kind:'official',status:'fetched',content:'
 const paragraph={topic:'identity',claim_type:'assessment',text:'The site describes a trading education service; independent employer identity is unresolved.',citations:[{source_id:id,quote:'Acme offers a paid trading education community.'}]}
 const report=()=>({identity:'unresolved',job_authenticity:'unresolved',reputation:'unresolved',paragraphs:[paragraph,{...paragraph,topic:'job'}],limitations:['Payroll terms have not been independently established.','This is a limited public-web investigation, not a background check.']})
 describe('documented company research',()=>{
+ it('holds machine-validated drafts until a separate editorial decision',()=>{
+  expect(fs.readFileSync('lib/research/queries.ts','utf8')).toContain(".not('published_at','is',null)")
+  expect(fs.readFileSync('lib/research/investigate.ts','utf8')).toContain("publication:'held_for_semantic_review'")
+ })
  it('resolves only real retained excerpts without allowing fabricated quotations',()=>{
   const {packet,resolve}=researchExcerptPacket([source]);const raw=report();raw.paragraphs=raw.paragraphs.map(p=>({...p,citations:[{source_id:'S1',excerpt_id:'E1'} as any]}))
   const resolved:any=resolve(raw);expect(resolved.paragraphs[0].citations[0]).toEqual({source_id:source.id,quote:packet[0].excerpts[0].text})

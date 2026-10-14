@@ -1,5 +1,5 @@
 import {z} from 'zod'
-export const researchInput=z.object({run_id:z.string().uuid(),job_id:z.string().uuid(),sources:z.array(z.object({url:z.string().url(),kind:z.enum(['official','job_listing','independent','transaction_party','registry'])})).min(2).max(6),search_queries:z.array(z.string().min(3).max(250)).max(12),excluded_matches:z.array(z.object({url:z.string().url(),reason:z.string().max(400)})).max(12).default([])})
+export const researchInput=z.object({operator_guidance:z.string().max(2000).optional(),run_id:z.string().uuid(),job_id:z.string().uuid(),sources:z.array(z.object({url:z.string().url(),kind:z.enum(['official','job_listing','independent','transaction_party','registry'])})).min(2).max(6),search_queries:z.array(z.string().min(3).max(250)).max(12),excluded_matches:z.array(z.object({url:z.string().url(),reason:z.string().max(400)})).max(12).default([])})
 export const reportSchema=z.object({
  identity:z.enum(['documented','unresolved','conflicting']),
  job_authenticity:z.enum(['unresolved','conflicting']),

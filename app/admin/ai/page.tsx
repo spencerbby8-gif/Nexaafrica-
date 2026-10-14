@@ -1,6 +1,5 @@
+import { requireAdmin } from "@/lib/server/admin"
 import { createServiceClient } from "@/lib/supabase/service"
-import { createClient } from "@/lib/supabase/server"
-import { redirect } from "next/navigation"
 import { SiteShell } from "@/components/site-shell"
 import { getProofStats } from "@/lib/queries"
 
@@ -8,9 +7,7 @@ export const dynamic = "force-dynamic"
 export const metadata = { title: "AI Intelligence — Admin", robots: { index: false, follow: false } }
 
 export default async function AIAdminPage() {
-  const authClient = await createClient()
-  const { data: { user } } = await authClient.auth.getUser()
-  if (!user) redirect("/sign-in?next=/admin/ai")
+  await requireAdmin("/admin/ai")
 
   const supabase = createServiceClient()
   const proofStats = await getProofStats()

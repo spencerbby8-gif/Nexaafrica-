@@ -1,0 +1,22 @@
+# Production intelligence repair plan — 14 October 2026
+
+Baseline: live audit at commit 53d913676f885eb18ee16b3fe0f1217d99cc834e.
+Authorized: non-destructive schema/security changes, code changes and deployment; existing providers only; pilot at most 20 jobs and 100 model requests. No new paid subscription. Track requests before calls, including retries and second opinions.
+
+## Acceptance contract
+- Separate company identity/legitimacy, specific-job authenticity, and applicant eligibility.
+- A real model call is not proof that a conclusion is correct.
+- Every affirmative research claim must link retained evidence, retrieval time, source identity, and the responsible provider/model/run.
+- Company narrative must be AI-written from a documented investigation, not marketing copy relabelled as intelligence. Historical reputation requires dated independent evidence. Lack of negative findings is not a clean-reputation guarantee.
+- Unknown, blocked, contradicted, rejected, expired, and inactive states must remain explicit throughout storage and presentation.
+- Public views, search, matching, and structured data must use the same eligibility contract.
+- A release is complete only after tests, deployment identity verification, and production checks. Record limitations rather than claim success without evidence.
+
+## Release stages
+1. Privacy/security boundary and CV metadata schema. Regression tests; preserve all existing rows.
+2. Eligibility, visibility, source identity/freshness, search pagination and filter continuity. Use actual audited job fixtures; prevent a repeated source refresh from undoing rejection.
+3. Queue outcomes, atomic claims/retries, bounded re-verification, deduplicated provider accounting and immutable evidence provenance. Remove unsupported second-opinion claims.
+4. Company investigations: authoritative identity discovery, explicit job/employer linkage, bounded public-source research, dated independent reputation evidence, model-authored cited review, uncertainty and conflict reporting. Never guess domains or infer legitimacy from a logo/ATS alone.
+5. At most 20-job/100-model-request production pilot. Trace source -> admission -> evidence -> inference -> persisted claims -> public output; verify all claims against retained sources. Publish successes and failures separately.
+
+Status: release 1 implementation in progress. Nothing is yet claimed fixed in production.

@@ -1,18 +1,13 @@
+import { requireAdmin } from "@/lib/server/admin"
 import { createServiceClient } from "@/lib/supabase/service"
-import { createClient } from "@/lib/supabase/server"
-import { redirect } from "next/navigation"
 import { SiteShell } from "@/components/site-shell"
 import { buildSourceRegistry, getAcquisitionReport } from "@/lib/ingest/sourceRegistry"
 
 export const dynamic = "force-dynamic"
 export const metadata = { title: "Acquisition Engine — Admin", robots: { index: false, follow: false } }
 
-const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "spencerbby8@gmail.com").split(",").map(s=>s.trim().toLowerCase()).filter(Boolean)
-
 export default async function AcquisitionAdminPage() {
-  const authClient = await createClient()
-  const { data: { user } } = await authClient.auth.getUser()
-  if (!user) redirect("/sign-in?next=/admin/acquisition")
+  await requireAdmin("/admin/acquisition")
 
   const supabase = createServiceClient()
 

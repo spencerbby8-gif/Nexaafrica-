@@ -1,6 +1,5 @@
+import { requireAdmin } from "@/lib/server/admin"
 import { createServiceClient } from "@/lib/supabase/service"
-import { createClient } from "@/lib/supabase/server"
-import { redirect } from "next/navigation"
 import { SiteShell } from "@/components/site-shell"
 import { getAllProviderHealth } from "@/lib/ai/providers/manager"
 import { AI_REGISTRY } from "@/lib/ai/registry/registry"
@@ -9,9 +8,7 @@ export const dynamic = "force-dynamic"
 export const metadata = { title: "AI Control Plane — Admin", robots: { index: false, follow: false } }
 
 export default async function AIControlPlanePage() {
-  const authClient = await createClient()
-  const { data: { user } } = await authClient.auth.getUser()
-  if (!user) redirect("/sign-in?next=/admin/ai-control")
+  await requireAdmin("/admin/ai-control")
 
   const supabase = createServiceClient()
 

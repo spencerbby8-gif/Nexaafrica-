@@ -57,6 +57,7 @@ export interface Job {
   // Trust Engine + ingestion metadata (optional, not always selected)
   source?: string | null
   source_id?: string | null
+  last_seen_at?: string | null
   is_active?: boolean | null
   trust_score?: number | null
   trust_confidence?: string | null
@@ -87,6 +88,7 @@ export interface JobFilters {
   country?: string
   remoteOnly?: boolean
   openToAfrica?: boolean
+  verifiedOnly?: boolean
   usdOnly?: boolean
   employmentType?: EmploymentType
   q?: string

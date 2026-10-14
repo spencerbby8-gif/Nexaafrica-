@@ -1,9 +1,10 @@
+import { getAIIntelligenceWithQueueStatus } from '@/lib/ai/queries'
+import { isPublicJob } from '@/lib/jobs/public-policy'
 import 'server-only'
 import { createClient } from '@/lib/supabase/server'
 import type { Job } from '@/lib/types'
 
-const JOB_COLUMNS =
-  'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, salary_min, salary_max, salary_currency, salary_period, employment_type, intelligence, tags, is_remote, is_open_to_africa, eligibility, posted_at, created_at, expires_at, trust_score, trust_confidence, is_flagged'
+import { JOB_COLUMNS } from '@/lib/jobs/columns'
 
 /**
  * Derived company directory.
@@ -45,7 +46,7 @@ export async function getCompanies(limit = 500): Promise<CompanyAggregate[]> {
   const { data, error } = await supabase
     .from('jobs')
     .select(
-      'company, company_logo, category, country, is_open_to_africa, is_remote, posted_at, created_at',
+      JOB_COLUMNS,
     )
     .eq('is_active', true)
     // [REGION-LOCK] Company hubs only aggregate jobs that are open to Africa.
@@ -57,8 +58,9 @@ export async function getCompanies(limit = 500): Promise<CompanyAggregate[]> {
     return []
   }
 
+  const safeRows = await publicCompanyRows((data || []) as unknown as Job[])
   const map = new Map<string, CompanyAggregate>()
-  for (const row of data ?? []) {
+  for (const row of safeRows) {
     const name = (row as { company: string }).company
     if (!name) continue
     const slug = companyToSlug(name)
@@ -128,7 +130,8 @@ export async function getCompanyBySlug(
     console.error('[v0] getCompanyBySlug error', error.message)
     return null
   }
-  const matches = (rows ?? []).filter(
+  const safeRows = await publicCompanyRows((rows || []) as unknown as Job[])
+  const matches = safeRows.filter(
     (r) => companyToSlug((r as Job).company) === slug,
   ) as Job[]
   if (matches.length === 0) return null
@@ -148,4 +151,17 @@ export async function getCompanyBySlug(
   }
 
   return { company, jobs: matches }
+}
+
+async function publicCompanyRows(rows: Job[]): Promise<Job[]> {
+  const safe: Job[]=[]
+  for(let i=0;i<rows.length;i+=100) {
+    const batch=rows.slice(i,i+100)
+    const {aiMap,queueStatus,queueError}=await getAIIntelligenceWithQueueStatus(batch.map(j=>j.id))
+    for(const j of batch) {
+      const job={...j,aiIntelligence:aiMap.get(j.id)||null,_queueStatus:queueStatus.get(j.id)||null,_queueError:queueError.get(j.id)||null}
+      if(isPublicJob(job)) safe.push(job)
+    }
+  }
+  return safe
 }

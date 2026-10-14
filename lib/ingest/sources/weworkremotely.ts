@@ -1,3 +1,4 @@
+import { stableSourceId } from '@/lib/ingest/source-id'
 import {
   categorizeTitle,
   classifyEligibility,
@@ -88,7 +89,7 @@ export async function fetchWeWorkRemotely(category: string = 'remote-jobs'): Pro
       eligibility,
       posted_at: parsePostedDate(pubDate),
       source: 'weworkremotely',
-      source_id: `weworkremotely:${Buffer.from(link).toString('base64').slice(0,32)}`,
+      source_id: stableSourceId('weworkremotely', link),
       expires_at: null,
     })
   }

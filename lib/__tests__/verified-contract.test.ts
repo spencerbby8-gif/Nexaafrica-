@@ -9,6 +9,9 @@ import {
 /** [PHASE-2] The canonical "verified" contract — one rule everywhere. */
 
 const row = (model_version: string | null, quality_score: number | null, africa: string | null = 'likely') => ({
+  overall_confidence: 80,
+  africa_evidence: africa === "explicit" ? "We hire candidates in Nigeria." : "We hire worldwide.",
+  africa_confidence: 80,
   model_version,
   quality_score,
   africa_eligibility: africa,

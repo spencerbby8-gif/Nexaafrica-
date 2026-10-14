@@ -6,8 +6,9 @@ import type { Category, Job, JobFilters } from '@/lib/types'
 import { getAIIntelligenceForJobs, getAIIntelligenceWithQueueStatus, type JobAIIntelligenceRow, type JobWithAI } from '@/lib/ai/queries'
 import { VERIFIED_MIN_QUALITY } from '@/lib/ai/verified'
 
-const JOB_COLUMNS =
-  'id, slug, title, company, company_logo, description_md, apply_url, category, location, country, salary_range, salary_min, salary_max, salary_currency, salary_period, employment_type, intelligence, tags, is_remote, is_open_to_africa, eligibility, posted_at, created_at, expires_at, trust_score, trust_confidence, trust_signals, trust_version, is_flagged, flagged_reason, source, source_id, evidence_state'
+import { JOB_COLUMNS } from '@/lib/jobs/columns'
+import { getPublicJobsPage } from '@/lib/jobs/public-feed'
+import { isPublicJob } from '@/lib/jobs/public-policy'
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
 
@@ -16,48 +17,7 @@ function freshIso(days: number): string {
 }
 
 export async function getJobs(filters: JobFilters = {}): Promise<Job[]> {
-  const supabase = await createClient()
-  let query = supabase
-    .from('jobs')
-    .select(JOB_COLUMNS)
-    .eq('is_active', true)
-    // [PHASE-2] Nexa is a remote board: listings the evidence marks as not
-    // remote (hybrid/onsite write-back) never surface in public lists.
-    .neq('is_remote', false)
-    // [STABILIZATION] Ineligible (location-restricted) jobs never appear in UI lists.
-    .not('eligibility', 'eq', 'restricted')
-    // [REGION-LOCK] Jobs not open to Africa never surface in UI lists (feeds,
-    // hubs, search) — the system's own flag is the gate.
-    .eq('is_open_to_africa', true)
-    // Order by the real posting date so the freshest *actual* postings lead,
-    // not whichever rows Nexa happened to ingest most recently.
-    .order('posted_at', { ascending: false })
-    .limit(filters.limit ?? 50)
-
-  if (filters.category) query = query.eq('category', filters.category)
-  if (filters.country) query = query.ilike('country', filters.country)
-  if (filters.remoteOnly) query = query.eq('is_remote', true)
-  if (filters.openToAfrica) query = query.eq('is_open_to_africa', true)
-  // USD-paying is a core positioning pillar. salary_range is free text, so
-  // match the common ways USD compensation is expressed ($ symbol or "USD").
-  if (filters.usdOnly) {
-    query = query.or('salary_range.ilike.%$%,salary_range.ilike.%USD%')
-  }
-  if (filters.employmentType) query = query.eq('employment_type', filters.employmentType)
-  if (filters.freshDays && filters.freshDays > 0) {
-    query = query.gte('posted_at', freshIso(filters.freshDays))
-  }
-  if (filters.q) {
-    const term = `%${filters.q}%`
-    query = query.or(`title.ilike.${term},company.ilike.${term}`)
-  }
-
-  const { data, error } = await query
-  if (error) {
-    console.error('[v0] getJobs error', error.message)
-    return []
-  }
-  return (data ?? []) as Job[]
+  return (await getPublicJobsPage(filters)).jobs
 }
 
 export async function getJobBySlug(slug: string): Promise<Job | null> {
@@ -68,6 +28,7 @@ export async function getJobBySlug(slug: string): Promise<Job | null> {
     .from('jobs')
     .select(JOB_COLUMNS)
     .eq('slug', slug)
+    .eq('is_active', true)
     .maybeSingle()
   if (error) {
     console.error('[v0] getJobBySlug error', error.message)
@@ -81,56 +42,21 @@ export async function getJobBySlugWithAI(slug: string): Promise<JobWithAI<Job> |
   if (!job) return null
   try {
     const { aiMap, queueStatus, queueError } = await getAIIntelligenceWithQueueStatus([job.id])
-    return { ...job, aiIntelligence: aiMap.get(job.id) || null, _queueStatus: queueStatus.get(job.id) || null, _queueError: queueError.get(job.id) ?? null } as any
+    const result = { ...job, aiIntelligence: aiMap.get(job.id) || null, _queueStatus: queueStatus.get(job.id) || null, _queueError: queueError.get(job.id) ?? null }
+    return isPublicJob(result) ? result as any : null
   } catch {
-    return { ...job, aiIntelligence: null, _queueStatus: null } as any
+    return null // fail closed if eligibility cannot be checked
   }
 }
 
 export async function getRelatedJobs(job: Job, limit = 4): Promise<Job[]> {
-  const supabase = await createClient()
-  const { data, error } = await supabase
-    .from('jobs')
-    .select(JOB_COLUMNS)
-    .eq('is_active', true)
-    .neq('is_remote', false)
-    .eq('category', job.category)
-    .neq('id', job.id)
-    .not('eligibility', 'eq', 'restricted')
-    .eq('is_open_to_africa', true)
-    .order('posted_at', { ascending: false })
-    .limit(limit)
-  if (error) {
-    console.error('[v0] getRelatedJobs error', error.message)
-    return []
-  }
-  return (data ?? []) as Job[]
+  return (await getPublicJobsPage({category: job.category, limit: limit + 1})).jobs.filter(j => j.id !== job.id).slice(0, limit)
 }
-
 export async function getRelatedJobsWithAI(job: Job, limit = 4): Promise<JobWithAI<Job>[]> {
-  const jobs = await getRelatedJobs(job, limit)
-  if (jobs.length === 0) return []
-  try {
-    const aiMap = await getAIIntelligenceForJobs(jobs.map((j) => j.id))
-    return jobs.map((j) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null }))
-  } catch {
-    return jobs.map((j) => ({ ...j, aiIntelligence: null }))
-  }
+  return getRelatedJobs(job, limit) as Promise<JobWithAI<Job>[]>
 }
-
 export async function getJobsWithAI(filters: JobFilters = {}): Promise<JobWithAI<Job>[]> {
-  const jobs = await getJobs(filters)
-  if (jobs.length === 0) return []
-  try {
-    const { aiMap, queueStatus, queueError } = await getAIIntelligenceWithQueueStatus(jobs.map((j) => j.id))
-    // [STABILIZATION] AI-restricted verdicts override the deterministic flag:
-    // a job the AI says is restricted never appears in UI lists.
-    return jobs
-      .filter((j) => (aiMap.get(j.id) as any)?.africa_eligibility !== 'restricted')
-      .map((j) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null, _queueError: queueError.get(j.id) ?? null } as any))
-  } catch {
-    return jobs.map((j) => ({ ...j, aiIntelligence: null, _queueStatus: null } as any))
-  }
+  return (await getPublicJobsPage(filters)).jobs
 }
 
 export async function getCategories(): Promise<Category[]> {
@@ -152,6 +78,7 @@ export async function getCategory(slug: string): Promise<Category | null> {
     .from('categories')
     .select('slug, title, description')
     .eq('slug', slug)
+    .eq('is_active', true)
     .maybeSingle()
   if (error) {
     console.error('[v0] getCategory error', error.message)
@@ -240,54 +167,7 @@ export const getFreshnessPulse = cache(async function getFreshnessPulse(): Promi
  * model_version contains ':' (provider:model) and is not regex-era.
  */
 export const getVerifiedJobs = cache(async function getVerifiedJobs(limit = 8): Promise<JobWithAI<Job>[]> {
-  const supabase = await createClient()
-  const svc = createServiceClient()
-  // [STABILIZATION] Homepage freshness: the newest REAL postings that are
-  // AI-verified AND AI-confirmed Africa-eligible (explicit/likely). No stale
-  // jobs, no 'unknown', no 'restricted' — newest posted_at always wins.
-  const { data: rows } = await svc
-    .from('job_ai_intelligence')
-    .select('job_id')
-    .like('model_version', '%:%')
-    .not('model_version', 'like', 'regex%')
-    // [PHASE-2] Canonical verified contract (lib/ai/verified.ts): real
-    // provider rows AND quality_score >= ${VERIFIED_MIN_QUALITY} — the same bar the
-    // learning layer has always applied.
-    .gte('quality_score', VERIFIED_MIN_QUALITY)
-    .in('africa_eligibility', ['explicit', 'likely'])
-    .order('last_verified_at', { ascending: false })
-    .limit(300)
-  const ids = (rows || []).map((r: any) => r.job_id).filter(Boolean)
-  if (ids.length === 0) return []
-  try {
-    const { data: jobs } = await supabase
-      .from('jobs')
-      .select(JOB_COLUMNS)
-      .in('id', ids)
-      .eq('is_active', true)
-      .not('eligibility', 'eq', 'restricted')
-      .eq('is_open_to_africa', true)
-      // [PHASE-4F] Onsite jobs are not remote — they don't belong on a
-      // remote-for-Africa homepage. The hubs already apply this filter
-      // (getJobs); the homepage verified feed was missing it, letting ~125
-      // onsite roles surface as if they were remote.
-      .neq('is_remote', false)
-    // [INCIDENT-FIX] Attach the REAL AI intelligence rows and the REAL queue
-    // status. The ids came from job_ai_intelligence, so the AI row exists —
-    // fabricating aiIntelligence:null + _queueStatus:'completed' made verified
-    // cards render fake red "Error" / amber "Pending" states.
-    // [PERF] Newest by the REAL posting date — never a stale job while a newer
-    // verified eligible job exists. Slice FIRST so the AI/queue fetch covers
-    // only the final `limit` jobs instead of the full candidate pool.
-    const finalJobs = (jobs || [])
-      .sort((a: any, b: any) => new Date(b.posted_at || b.created_at).getTime() - new Date(a.posted_at || a.created_at).getTime())
-      .slice(0, limit)
-    const { aiMap, queueStatus, queueError } = await getAIIntelligenceWithQueueStatus(finalJobs.map((j: any) => j.id))
-    return finalJobs
-      .map((j: any) => ({ ...j, aiIntelligence: aiMap.get(j.id) || null, _queueStatus: queueStatus.get(j.id) || null, _queueError: queueError.get(j.id) ?? null } as any))
-  } catch {
-    return []
-  }
+  return (await getPublicJobsPage({limit, verifiedOnly: true})).jobs
 })
 
 export const getProofStats = cache(async function getProofStats(): Promise<{

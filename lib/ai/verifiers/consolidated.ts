@@ -1,3 +1,5 @@
+import { roleRestriction, africanHiringEvidence, globalHiringEvidence } from '@/lib/eligibility-evidence'
+import { evaluateLocationPolicy, AFRICA_LOCATION_RE } from '@/lib/locationPolicy'
 import type { Job } from "@/lib/types"
 import { cleanDescription } from "@/lib/cleanDescription"
 import { extractIntelligence as deterministicExtract } from "@/lib/intelligence"
@@ -235,10 +237,12 @@ const GLOBAL_OUTREACH_RE = /\b(worldwide|anywhere|emea|\bafrica\b|any\s+(time\s*
 function regexAfrica(text: string, job: Job): Partial<AIResp> {
   const t = text.toLowerCase()
   // Explicit Africa mention — highest tier.
-  const af = AFRICA_RE.exec(text)
-  if (af) return { africa_eligibility: "explicit", africa_confidence: 75, africa_evidence: extractCtx(text, AFRICA_RE) }
+  const bound = evaluateLocationPolicy(job.location, job.country, text)
+  if (bound.bound) return { africa_eligibility: 'restricted', africa_confidence: 0, africa_evidence: roleRestriction(text) }
+  const af = africanHiringEvidence(text)
+  if (af) return { africa_eligibility: "explicit", africa_confidence: 75, africa_evidence: af }
   // Hard restriction language — restricted before any "likely" inference.
-  if (RESTRICT_RE.test(t)) return {
+  if (roleRestriction(text)) return {
     africa_eligibility: "restricted", africa_confidence: 70, africa_evidence: extractCtx(text, RESTRICT_RE),
     country_restrictions: extractRestrictions(text),
   }
@@ -252,7 +256,7 @@ function regexAfrica(text: string, job: Job): Partial<AIResp> {
     return { africa_eligibility: "restricted", africa_confidence: 60, africa_evidence: extractCtx(text, /(remote|location)/i) }
   }
   // EMEA / global outreach → likely.
-  if (EMEA_RE.test(text) || GLOBAL_OUTREACH_RE.test(t)) {
+  if (globalHiringEvidence(text)) {
     return { africa_eligibility: "likely", africa_confidence: 55, africa_evidence: extractCtx(text, /emea|worldwide|global|anywhere/i) }
   }
   return {}
@@ -453,13 +457,17 @@ export function enforceTruthfulness(merged: AIResp, opts: { job: Job; truth: str
     out.visa_sponsorship = "unknown"; out.visa_confidence = 0
   }
 
-  // 3) Africa: every tier needs textual support, otherwise abstain
-  if (out.africa_eligibility === "explicit" && !TR.africa.test(jt)) {
-    out.africa_eligibility = "unknown"; out.africa_confidence = 0; out.africa_evidence = null
-  } else if (out.africa_eligibility === "restricted" && !TR.restrict.test(jt)) {
-    out.africa_eligibility = "unknown"; out.africa_confidence = 0; out.africa_evidence = null
-  } else if (out.africa_eligibility === "likely" && !TR.worldwide.test(jt) && !TR.africa.test(jt)) {
-    out.africa_eligibility = "unknown"; out.africa_confidence = 0; out.africa_evidence = null
+  // Role-specific eligibility guard. Employer markets are not applicant eligibility.
+  const locationVerdict = evaluateLocationPolicy(job.location, job.country, jobTruth)
+  if (locationVerdict.bound) {
+    out.africa_eligibility = 'restricted'
+    out.africa_confidence = 0
+    out.africa_evidence = roleRestriction(jobTruth)
+    out.africa_reasoning = null
+  } else if (out.africa_eligibility === 'explicit' && !africanHiringEvidence(jobTruth) && !AFRICA_LOCATION_RE.test(job.location || '')) {
+    out.africa_eligibility = 'unknown'; out.africa_confidence = 0; out.africa_evidence = null; out.africa_reasoning = null
+  } else if (out.africa_eligibility === 'likely' && !globalHiringEvidence(jobTruth) && !africanHiringEvidence(jobTruth)) {
+    out.africa_eligibility = 'unknown'; out.africa_confidence = 0; out.africa_evidence = null; out.africa_reasoning = null
   }
 
   // 4) Remote: metadata-backed stays; text-required otherwise
@@ -570,7 +578,7 @@ export async function extractWithSingleAI(job: Job): Promise<ConsolidatedResult>
     : ""
 
   // P5: abstention-first prompt — models must not guess from priors.
-  const prompt = `Extract intelligence from this job posting as JSON. STRICT RULES: (1) Use ONLY the provided text — never outside knowledge about the company or market. (2) For every *_evidence field, copy an EXACT quote from the text do not paraphrase, do not join fragments, do not invent sentences. (3) If the text does not directly prove a field, return "unknown" and null evidence — abstaining is correct, guessing is a violation. (4) visa_sponsorship = "available" ONLY when the text explicitly offers visa sponsorship/relocation support; otherwise "unknown". (5) company_legitimacy = "unknown" unless the provided company website text proves it. (6) africa_eligibility: "explicit" only if the text mentions Africa or an African country; "restricted" only if the text imposes location/work-authorization limits; "likely" only if the text says worldwide/global/EMEA hiring; else "unknown". (7) *_reasoning fields: ONE short sentence (max 25 words) explaining your conclusion using SPECIFIC details from THIS posting (the actual role, location, requirements, or quoted phrase). No generic prose, no facts outside the text, and null whenever the field is unknown.\n\n` +
+  const prompt = `Extract intelligence from this job posting as JSON. STRICT RULES: (1) Use ONLY the provided text — never outside knowledge about the company or market. (2) For every *_evidence field, copy an EXACT quote from the text do not paraphrase, do not join fragments, do not invent sentences. (3) If the text does not directly prove a field, return "unknown" and null evidence — abstaining is correct, guessing is a violation. (4) visa_sponsorship = "available" ONLY when the text explicitly offers visa sponsorship/relocation support; otherwise "unknown". (5) company_legitimacy = "unknown" unless the provided company website text proves it. (6) africa_eligibility: "explicit" only if the role explicitly accepts applicants located in Africa or a named African country; company customers, products and business markets NEVER establish applicant eligibility; "restricted" only if the text imposes location/work-authorization limits; "likely" only if the text says worldwide/global/EMEA hiring; else "unknown". (7) *_reasoning fields: ONE short sentence (max 25 words) explaining your conclusion using SPECIFIC details from THIS posting (the actual role, location, requirements, or quoted phrase). No generic prose, no facts outside the text, and null whenever the field is unknown.\n\n` +
     `${job.title} @ ${job.company} | ${job.location||""} | ${job.country} | src=${job.source||""} | emp=${job.employment_type}\n` +
     `Salary: ${job.salary_range||""} ${job.salary_min||""}-${job.salary_max||""} ${job.salary_currency||""} | Tags: ${(job.tags||[]).join(",")}\n\n` +
     `Description:\n${combined.slice(0,5000)}${companyContext}\n\n` +

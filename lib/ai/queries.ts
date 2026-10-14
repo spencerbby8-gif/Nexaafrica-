@@ -95,7 +95,7 @@ export async function getAIIntelligenceWithQueueStatus(jobIds: string[]): Promis
     const { data } = await supabase.from("ai_processing_queue").select("job_id, status, error").in("job_id", jobIds)
     if (data) for (const row of data as any[]) {
       queueStatus.set(row.job_id, row.status)
-      queueError.set(row.job_id, row.error ?? null)
+      queueError.set(row.job_id, /^Rejected:/i.test(row.error || '') ? 'Rejected: admission policy' : row.error ? 'Processing needs attention' : null)
     }
   } catch {}
   return { aiMap, queueStatus, queueError }

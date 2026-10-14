@@ -1,3 +1,4 @@
+import { globalHiringEvidence, africanHiringEvidence } from '@/lib/eligibility-evidence'
 /**
  * [PHASE-2] The ONE canonical definition of "verified" intelligence.
  *
@@ -22,6 +23,7 @@ export const VERIFIED_MIN_QUALITY = 40
 export interface VerifiedCandidate {
   model_version: string | null | undefined
   quality_score?: number | null | undefined
+  overall_confidence?: number | null | undefined
 }
 
 /** Canonical "real, quality-checked AI verification" predicate. */
@@ -30,7 +32,7 @@ export function isVerifiedIntelligence(ai: VerifiedCandidate | null | undefined)
   if (!mv.includes(':')) return false // no provider:model provenance
   if (mv.startsWith('regex')) return false // deterministic fallback era
   if (mv.startsWith('no-ai')) return false // provider-less fallback
-  return (ai?.quality_score ?? 0) >= VERIFIED_MIN_QUALITY
+  return (ai?.quality_score ?? 0) >= VERIFIED_MIN_QUALITY && (ai?.overall_confidence ?? 0) >= 40
 }
 
 /** Africa tiers that count as genuinely open (never promote 'unknown'). */
@@ -38,6 +40,8 @@ export const AFRICA_OPEN_TIERS = ['explicit', 'likely'] as const
 
 export interface VerifiedEligibleCandidate extends VerifiedCandidate {
   africa_eligibility?: string | null | undefined
+  africa_evidence?: string | null
+  africa_confidence?: number | null
 }
 
 /**
@@ -47,7 +51,9 @@ export interface VerifiedEligibleCandidate extends VerifiedCandidate {
  */
 export function isVerifiedAfricaOpen(ai: VerifiedEligibleCandidate | null | undefined): boolean {
   if (!isVerifiedIntelligence(ai)) return false
-  return (AFRICA_OPEN_TIERS as readonly string[]).includes(ai?.africa_eligibility || '')
+  if (!(AFRICA_OPEN_TIERS as readonly string[]).includes(ai?.africa_eligibility || '')) return false
+  const quote=ai?.africa_evidence || ''
+  return (ai?.africa_confidence ?? 0) >= 60 && Boolean(globalHiringEvidence(quote) || africanHiringEvidence(quote))
 }
 
 /**

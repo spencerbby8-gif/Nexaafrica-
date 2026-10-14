@@ -1,21 +1,15 @@
 'use client'
 
+import { jobFilterParams } from '@/lib/jobs/filters'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import type { JobWithAI } from '@/lib/ai/queries'
-import type { Job } from '@/lib/types'
+import type { Job, JobFilters } from '@/lib/types'
 
 interface UseJobFeedOptions {
   initialJobs: JobWithAI<Job>[]
+  initialHasMore?: boolean
   initialCursor: string | null
-  filters?: {
-    category?: string
-    country?: string
-    remote?: boolean
-    africa?: boolean
-    usd?: boolean
-    employmentType?: string
-    q?: string
-  }
+  filters?: JobFilters
   pageSize?: number
 }
 
@@ -31,12 +25,13 @@ interface UseJobFeedReturn {
 export function useJobFeed({
   initialJobs,
   initialCursor,
+  initialHasMore,
   filters = {},
   pageSize = 20,
 }: UseJobFeedOptions): UseJobFeedReturn {
   const [jobs, setJobs] = useState<JobWithAI<Job>[]>(initialJobs)
   const [cursor, setCursor] = useState<string | null>(initialCursor)
-  const [hasMore, setHasMore] = useState(initialJobs.length === pageSize)
+  const [hasMore, setHasMore] = useState(initialHasMore ?? Boolean(initialCursor))
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -55,17 +50,9 @@ export function useJobFeed({
     
     try {
       // Build query params
-      const params = new URLSearchParams()
+      const params = jobFilterParams(filters)
       params.set('cursor', cursor)
       params.set('limit', String(pageSize))
-      
-      if (filters.category) params.set('category', filters.category)
-      if (filters.country) params.set('country', filters.country)
-      if (filters.remote) params.set('remote', '1')
-      if (filters.africa) params.set('africa', '1')
-      if (filters.usd) params.set('usd', '1')
-      if (filters.employmentType) params.set('employment_type', filters.employmentType)
-      if (filters.q) params.set('q', filters.q)
       
       const response = await fetch(`/api/jobs?${params.toString()}`)
       
@@ -76,7 +63,7 @@ export function useJobFeed({
       const data = await response.json()
       
       // Append new jobs
-      setJobs(prev => [...prev, ...data.jobs])
+      setJobs(prev => { const ids=new Set(prev.map(j=>j.id)); return [...prev, ...data.jobs.filter((j: Job)=>!ids.has(j.id))] })
       setCursor(data.nextCursor)
       setHasMore(data.hasMore)
     } catch (err) {
@@ -92,9 +79,9 @@ export function useJobFeed({
   useEffect(() => {
     setJobs(initialJobs)
     setCursor(initialCursor)
-    setHasMore(initialJobs.length === pageSize)
+    setHasMore(initialHasMore ?? Boolean(initialCursor))
     setError(null)
-  }, [initialJobs, initialCursor, pageSize])
+  }, [initialJobs, initialCursor, initialHasMore, pageSize])
   
   return {
     jobs,

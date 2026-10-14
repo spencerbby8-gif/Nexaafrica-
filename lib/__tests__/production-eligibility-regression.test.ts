@@ -31,6 +31,8 @@ describe('real production eligibility failures', () => {
   })
   it('allows explicit worldwide recruiting, not bare marketing language', () => {
     expect(classifyEligibility('Remote','We hire worldwide. Work from anywhere.')).toBe('likely')
+    expect(classifyEligibility('Remote','This is a globally remote role.')).toBe('likely')
+    expect(classifyEligibility('Remote','Location: Remote (EMEA)')).toBe('likely')
     expect(classifyEligibility('Remote','Our global platform serves customers worldwide.')).toBe('unknown')
   })
 })

@@ -15,7 +15,7 @@ export function roleRestriction(text: string): string | null {
   return null
 }
 
-const GLOBAL_HIRING = /\b(?:(?:hire|hiring|recruiting|recruit)\s+(?:remotely\s+|candidates?\s+|talent\s+|people\s+|from\s+|across\s+)*(?:worldwide|globally|anywhere|any\s+time\s*zone)|(?:open\s+to|accepting|welcome)\s+(?:remote\s+)?(?:candidates?|applicants?|applications|talent)\s+(?:from\s+|across\s+|in\s+)*(?:worldwide|globally|anywhere|emea|africa)|(?:you\s+can\s+)?work\s+from\s+anywhere|remote\s*[-—,:]?\s*(?:worldwide|global|anywhere|international))\b/i
+const GLOBAL_HIRING = /\b(?:(?:hire|hiring|recruiting|recruit)\s+(?:remotely\s+|candidates?\s+|talent\s+|people\s+|from\s+|across\s+)*(?:worldwide|globally|anywhere|emea|any\s+time\s*zone)|(?:open\s+to|accepting|welcome)\s+(?:remote\s+)?(?:candidates?|applicants?|applications|talent)\s+(?:from\s+|across\s+|in\s+)*(?:worldwide|globally|anywhere|emea|africa)|(?:you\s+can\s+)?work\s+from\s+anywhere|globally\s+remote\s+(?:role|position|job)|remote\s*[\[(—,:-]?\s*(?:worldwide|global|anywhere|international|emea))\b/i
 const AFRICAN_HIRING = /\b(?:hire|hiring|recruiting|recruit|open\s+to|accepting|welcome|candidates?\s+(?:in|from)|applicants?\s+(?:in|from)|(?:must\s+be\s+)?(?:based|located)\s+in|remote\s+(?:in|from)|work\s+from|location\s*:)\b[^.!?\n]{0,65}\b(?:africa|african|nigeria|kenya|ghana|south\s+africa|egypt|morocco|rwanda|uganda|ethiopia|tanzania|senegal|cameroon|zambia|zimbabwe|tunisia|algeria)\b/i
 
 export function globalHiringEvidence(text: string): string | null {

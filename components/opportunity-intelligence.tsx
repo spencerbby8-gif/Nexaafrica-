@@ -1,4 +1,5 @@
 import { ShieldCheck, Globe, Banknote, Building2, Wrench, GraduationCap, Clock } from 'lucide-react'
+import {companyAssessment} from '@/lib/company-assessment'
 import type { JobAIIntelligenceRow } from '@/lib/ai/queries'
 import type { Job } from '@/lib/types'
 import { pipelineState } from '@/lib/ai/pipelineState'
@@ -148,72 +149,12 @@ const EVIDENCE_SOURCE_LABEL: Record<string, string> = {
   ats_metadata: 'ATS feed metadata',
 }
 
-/**
- * [PHASE-4B] Product-truth reconciliation for the company row.
- * The page-fetch verifier can honestly report 'unknown' when the employer's
- * website is unfetchable (e.g. Reddit: reddit.com/careers 403s bots, and the
- * corporate domain redditinc.com is not name-derivable). When that happens,
- * we must NOT fabricate certainty — but we also must not hide the measured
- * evidence Nexa actually has: the learning layer's track record for the
- * employer (postings measured, verification share, trust average, scam
- * reports). This helper presents that record, clearly labeled, instead of a
- * bare "unknown 0%" that contradicts the trust strip on the same page.
- */
-// [PHASE-4D] Company legitimacy has TWO separate layers that must not be
-// conflated, and the headline must be STABLE across a company's listings:
-//   • Employer-level track record (company_intelligence): history/signals about
-//     the EMPLOYER — stable per company, never proves a specific job is legit
-//     or Africa-open.
-//   • Listing-level AI verdict (job_ai_intelligence.company_legitimacy): what the
-//     verifier concluded for THIS posting from its own fetch — can differ per job.
-// The headline uses the stable employer-level foundation when it is strong, so
-// two jobs at the same employer do not randomly show different legitimacy just
-// because one happened to fetch a company page. The listing-level verdict is
-// surfaced as detail, never used to overstate the employer.
+/** Repeated legacy model scores never override unknown company identity. */
 export function reconciledCompany(
-  intelligence: JobAIIntelligenceRow | null | undefined,
-  companyIntel: Record<string, any> | null | undefined,
-  hasLogo: boolean | null | undefined,
-): { label: string; tone: 'positive' | 'caution' | 'neutral'; detail?: string } {
-  const jobVerdict = companyLabel(intelligence?.company_legitimacy, hasLogo)
-  const jobLegit = intelligence?.company_legitimacy
-  const total = Number(companyIntel?.total_jobs) || 0
-  const scam = Number(companyIntel?.scam_reports) || 0
-  const trustAvg = Number(companyIntel?.trust_avg) || 0
-  const verifRate = Number(companyIntel?.verification_rate) || 0
-  const strongEmployer = total >= 10 && scam === 0 && (trustAvg >= 70 || verifRate >= 0.3)
-
-  // Stable employer-level foundation as the headline when available.
-  if (strongEmployer) {
-    const verifPct = Math.round(verifRate * 100)
-    const employerLine = `Employer track record: ${total} postings measured, ${verifPct}% verified${trustAvg ? `, trust ${trustAvg}/100` : ''}, ${scam} scam reports.`
-    // Listing-level verdict is supplementary; described honestly either way.
-    const listingLine =
-      jobLegit && jobLegit !== 'unknown'
-        ? ` This listing: ${jobVerdict.label.toLowerCase()}. Does not by itself confirm this specific role.`
-        : ' This listing: not yet verified by AI.'
-    return { label: 'Established employer', tone: 'positive', detail: employerLine + listingLine }
-  }
-
-  // No strong employer record -> fall back to the listing-level verdict only.
-  return jobVerdict
-}
-
-function companyLabel(legit: string | null | undefined, hasLogo?: boolean | null) {
-  if (legit && legit !== 'unknown') {
-    switch (legit) {
-      case 'verified':
-        return { label: 'Company verified', tone: 'positive' as const }
-      case 'likely_legit':
-        return { label: 'Likely legitimate', tone: 'caution' as const }
-      case 'suspicious':
-        return { label: 'Needs verification', tone: 'caution' as const }
-      default:
-        return { label: legit, tone: 'neutral' as const }
-    }
-  }
-  return { label: 'Company legitimacy unknown', tone: 'neutral' as const }
-}
+ intelligence:JobAIIntelligenceRow|null|undefined,
+ _companyIntel:Record<string,any>|null|undefined,
+ _hasLogo:boolean|null|undefined,
+){return companyAssessment(intelligence)}
 
 function expLabel(level: string | null | undefined, title?: string | null) {
   if (level && level !== 'unknown') {

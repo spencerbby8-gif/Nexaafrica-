@@ -8,19 +8,19 @@ import {
 const FAQ_ITEMS: { q: string; a: string }[] = [
   {
     q: 'Are these jobs legitimate?',
-    a: 'Every listing is reviewed before going live. We remove postings from companies that show signs of fraud, vague descriptions, or unverifiable details.',
+    a: 'Source and AI checks inform which listings are shown, but inclusion is not a guarantee of legitimacy. Company identity, vacancy authenticity and hiring eligibility are separate questions. Read published research and confirm terms with the employer.',
   },
   {
     q: 'Do I need to pay to apply?',
-    a: 'No. Applying is always free. Nexa never charges candidates and does not partner with recruiters who do.',
+    a: 'Nexa does not charge application fees. External employer or platform terms are not guaranteed by Nexa; be cautious of requests for payment.',
   },
   {
     q: 'Are these jobs open to African applicants?',
-    a: 'Most roles on Nexa are remote and open to candidates working from Africa. Where a role has location restrictions, we surface that directly on the listing.',
+    a: 'The public feed requires evidence supporting Africa-based applications. Worldwide-remote wording is a hiring signal, not proof of legal hiring permission in every country. Confirm country-specific terms.',
   },
   {
     q: 'How often are jobs updated?',
-    a: 'New roles are added throughout the week. Closed and expired roles are removed automatically so the feed stays current.',
+    a: 'Listings pass freshness and expiry checks, but closure detection is not instantaneous. Check the original listing before applying.',
   },
   {
     q: 'Do I need previous remote experience?',

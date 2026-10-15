@@ -11,3 +11,9 @@ export async function getCompanyInvestigation(id:string,byJob=false){
  const {data:sources}=await sb.from('company_research_sources').select('id,url,final_url,source_kind,title,fetched_at,published_at,status,http_status,content_hash').eq('investigation_id',record.id)
  return {...record,report:record.publication_report,sources:sources||[]}
 }
+
+export async function getPublishedInvestigations(){
+ const {data,error}=await createServiceClient().from('company_investigations').select('id,company,published_at,publication_report').not('published_at','is',null).not('publication_report','is',null).order('published_at',{ascending:false}).limit(20)
+ if(error)throw new Error('Could not load published research')
+ return data||[]
+}

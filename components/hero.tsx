@@ -20,8 +20,8 @@ export function Hero({
           Real remote jobs for African talent.
         </h1>
         <p className="mt-5 max-w-2xl text-pretty text-base leading-relaxed text-muted-foreground sm:text-lg">
-          Nexa lists reviewed remote roles from companies that hire globally. No
-          fake listings, no recruiter spam, no fees to apply.
+          Nexa checks remote listings for Africa hiring evidence and shows what remains
+          unknown. Read the source and company research before applying. Nexa charges no application fees.
         </p>
 
         <form
@@ -69,7 +69,7 @@ export function Hero({
                 className="h-1.5 w-1.5 rounded-full bg-accent"
                 aria-hidden
               />
-              {jobCount} active role{jobCount === 1 ? '' : 's'} this week
+              {jobCount} visible role{jobCount === 1 ? '' : 's'}
             </span>
           )}
         </div>

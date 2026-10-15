@@ -1,3 +1,4 @@
+import {companyAssessment} from '@/lib/company-assessment'
 import { Building2, Globe, Users, Tag, Briefcase, ExternalLink } from 'lucide-react'
 import type { Job } from '@/lib/types'
 import type { JobAIIntelligenceRow } from '@/lib/ai/queries'
@@ -27,21 +28,19 @@ export function CompanyIntel({
     }
   } catch {}
 
-  const legitimacy = intelligence?.company_legitimacy
-  const legitimacyLabel = legitimacy === 'verified' ? 'Verified company' :
-    legitimacy === 'likely_legit' ? 'Likely legitimate' :
-    legitimacy === 'suspicious' ? 'Needs review' : null
+  const assessment=companyAssessment(intelligence)
+  const legitimacyLabel=assessment.label
 
   const facts: Array<{ icon: typeof Globe; label: string; value: string }> = []
 
   if (website) {
-    facts.push({ icon: Globe, label: 'Website', value: website })
+    facts.push({ icon: Globe, label: 'Application host', value: website })
   }
   if (job.category) {
-    facts.push({ icon: Tag, label: 'Field', value: job.category.replace(/-/g, ' ') })
+    facts.push({ icon: Tag, label: 'Role category', value: job.category.replace(/-/g, ' ') })
   }
   if (companyJobCount != null && companyJobCount > 0) {
-    facts.push({ icon: Briefcase, label: 'Hiring', value: `${companyJobCount} active role${companyJobCount === 1 ? '' : 's'}` })
+    facts.push({ icon: Briefcase, label: 'Feed records', value: `${companyJobCount} listing${companyJobCount === 1 ? '' : 's'}` })
   }
   if (job.source) {
     facts.push({ icon: Users, label: 'Source', value: job.source })
@@ -55,12 +54,10 @@ export function CompanyIntel({
           <h3 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">{job.company}</h3>
           {legitimacyLabel && (
             <p className={`text-[12px] ${
-              legitimacy === 'verified' ? 'text-green-400' :
-              legitimacy === 'likely_legit' ? 'text-amber-400' :
-              'text-red-400'
+              assessment.tone === 'caution' ? 'text-amber-400' : 'text-muted-foreground'
             }`}>
               {legitimacyLabel}
-              {intelligence?.company_confidence != null && ` · ${intelligence.company_confidence}% confidence`}
+
             </p>
           )}
         </div>
@@ -76,6 +73,7 @@ export function CompanyIntel({
         )}
       </div>
 
+      {assessment.detail && <p className="mt-2 text-xs text-muted-foreground">{assessment.detail}</p>}
       {facts.length > 0 && (
         <dl className="mt-4 grid grid-cols-2 gap-3">
           {facts.map((f) => (

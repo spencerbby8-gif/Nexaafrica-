@@ -32,12 +32,12 @@ export async function generateMetadata({
   const title = `${company.name} — open remote roles`
   const description = `${company.jobCount} open remote ${
     company.jobCount === 1 ? 'role' : 'roles'
-  } at ${company.name}. Direct apply on the company&apos;s site. Reviewed by Nexa.`
+  } at ${company.name}. Source-screened listings with external application links.`
   const ogUrl = ogImage({
     kind: 'company',
     title: company.name,
     subtitle: `${company.jobCount} open remote ${company.jobCount === 1 ? 'role' : 'roles'}`,
-    meta: 'Reviewed by Nexa',
+    meta: 'Source-screened listings',
   })
   return {
     title,
@@ -121,10 +121,9 @@ export default async function CompanyDetailPage({
               {company.jobCount} open remote{' '}
               {company.jobCount === 1 ? 'role' : 'roles'} on Nexa
               {company.africaFriendlyCount > 0
-                ? `, ${company.africaFriendlyCount} open to applicants in Africa.`
+                ? `, ${company.africaFriendlyCount} with Africa hiring signals.`
                 : '.'}{' '}
-              Direct apply on {company.name}&apos;s own site. Nexa never
-              handles applications and never charges candidates.
+              Application links may lead to an employer site or a third-party job board. Nexa charges no application fees.
             </p>
           </div>
         </header>
@@ -168,13 +167,10 @@ export default async function CompanyDetailPage({
           </h2>
           <div className="mt-4 max-w-3xl space-y-4 text-[15px] leading-relaxed text-muted-foreground">
             <p>
-              Listings on this page are pulled directly from {company.name}
-              &apos;s public application pages. Each role is reviewed before it
-              goes live, and removed automatically when the role closes.
+              Listings may come from employer pages or third-party boards. Source and AI checks inform visibility; inclusion does not independently authenticate the employer or employment terms. Freshness checks cannot guarantee immediate detection of a closed role.
             </p>
             <p>
-              You apply on {company.name}&apos;s own site. Nexa never collects
-              applications or fees. If a role on this page looks suspicious,{' '}
+              Use the external application link and confirm the recipient and terms. Nexa does not charge application fees. If a role on this page looks suspicious,{' '}
               <Link
                 href="/contact"
                 className="text-foreground underline-offset-4 hover:underline"

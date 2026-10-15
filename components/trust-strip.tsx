@@ -1,10 +1,10 @@
 import { ShieldCheck, Globe2, Coins, EyeOff } from 'lucide-react'
 
 const SIGNALS = [
-  { icon: ShieldCheck, label: 'Reviewed listings' },
-  { icon: Globe2, label: 'Open to Africa' },
-  { icon: Coins, label: 'No fees to apply' },
-  { icon: EyeOff, label: 'No recruiter spam' },
+  { icon: ShieldCheck, label: 'Source-based screening' },
+  { icon: Globe2, label: 'Africa hiring signals' },
+  { icon: Coins, label: 'No Nexa application fees' },
+  { icon: EyeOff, label: 'External application links' },
 ]
 
 export function TrustStrip() {

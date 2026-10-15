@@ -17,5 +17,5 @@ export async function POST(req:Request){
 
 export async function GET(req:Request){
  if(!isPipelineAuthorized(req))return NextResponse.json({error:'Unauthorized'},{status:401})
- return NextResponse.json({commit:process.env.VERCEL_GIT_COMMIT_SHA||null,publication:'editorial_gate',version:'research-v4.5'})
+ return NextResponse.json({commit:process.env.VERCEL_GIT_COMMIT_SHA||null,publication:'editorial_gate',version:'research-v4.6'})
 }

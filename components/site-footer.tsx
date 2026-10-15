@@ -41,6 +41,7 @@ const GROUPS: FooterGroup[] = [
     ariaLabel: 'Resources',
     links: [
       { href: '/companies', label: 'Companies' },
+      { href: '/research', label: 'Company research' },
       { href: '/guides', label: 'Guides' },
       { href: '/saved', label: 'Saved jobs' },
       { href: '/guides/cv-optimization-for-remote-jobs', label: 'CV optimization' },

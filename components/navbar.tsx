@@ -29,6 +29,7 @@ export async function Navbar() {
           >
             Jobs
           </Link>
+          <Link href="/research" className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground">Research</Link>
           {user && (
             <>
               <Link
